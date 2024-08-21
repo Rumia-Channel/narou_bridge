@@ -1,0 +1,29 @@
+[project]
+name = "narou-bridge"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Rumia_Chnnel", email = "github@rumia-ch.uk" }
+]
+dependencies = [
+    "pyotp>=2.9.0",
+    "configparser>=7.1.0",
+    "nuitka>=2.4.7",
+    "pytest-playwright>=0.5.1",
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = []
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/narou_bridge"]
