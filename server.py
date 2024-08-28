@@ -9,12 +9,12 @@ import importlib
 def sprit_url():
     pass
 
-def http_run(interval, site_dic, folder_path, key, ssl, port, domain):
+def http_run(interval, site_dic, folder_path, enc_key, ssl, port, domain):
 
-    for key, value in site_dic.items():
+    for site_key, value in site_dic.items():
         module_name = 'crawler.'+value.replace('.py', '')
         module = importlib.import_module(module_name)
-        globals()[key] = module
+        globals()[site_key] = module
 
     class RequestHandler(BaseHTTPRequestHandler):
         def parse_query_params(self):
@@ -65,9 +65,9 @@ def http_run(interval, site_dic, folder_path, key, ssl, port, domain):
             if add_param is not None:
                 # webサイトの判別
                 site = None
-                for key, value in site_dic.items():
+                for site_key, value in site_dic.items():
                     if value.replace('_', '.').replace('.py', '') in add_param:
-                        site = key
+                        site = site_key
                         break
                 else:
                     self.send_response(400)
@@ -82,7 +82,7 @@ def http_run(interval, site_dic, folder_path, key, ssl, port, domain):
             
 
     # 認証キーを用いるか
-    if key == 1:
+    if enc_key == 1:
 
         script_folder = os.path.dirname(os.path.abspath(__file__))
         auth_file = os.path.join(script_folder, "auth.txt")
