@@ -1,18 +1,20 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.parse
-import ssl
+import ssl as ssl_lib
 import hashlib
 import os
 import importlib
+import random
+import string
+import datetime
 
+# アクセスを制限するファイルやフォルダのリスト
+restricted_items = ['auth.txt', 'cookie.json', '.json']
 
-def sprit_url():
-    pass
-
-def http_run(interval, site_dic, folder_path, enc_key, ssl, port, domain):
+def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
 
     for site_key, value in site_dic.items():
-        module_name = 'crawler.'+value.replace('.py', '')
+        module_name = 'crawler.' + value.replace('.py', '')
         module = importlib.import_module(module_name)
         globals()[site_key] = module
 
@@ -23,13 +25,13 @@ def http_run(interval, site_dic, folder_path, enc_key, ssl, port, domain):
             return req_key
         
         def check_auth(self, req_key):
-                if not req_key == auth_key or auth_key is None:
-                    self.send_response(403)
-                    self.send_header("Content-type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(b"Access denied!")
-                    return False
-                return True
+            if enc_key == 1 and (req_key != auth_key or auth_key is None):
+                self.send_response(403)
+                self.send_header("Content-type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"Access denied!")
+                return False
+            return True
         
         def do_GET(self):
             req_key = self.parse_query_params()
@@ -37,59 +39,79 @@ def http_run(interval, site_dic, folder_path, enc_key, ssl, port, domain):
             if not self.check_auth(req_key):
                 return
 
-            # インデックスページとしてfolder_pathに格納されたパスを登録
-            index_path = os.path.join(folder_path, 'index.html')
-            if os.path.exists(index_path):
+            # リクエストされたパスを取得
+            requested_path = urllib.parse.urlparse(self.path).path.strip('/')
+            file_path = os.path.join(data_path, requested_path)
+
+            # リクエストされたパスが制限されたパスに含まれているかチェック
+            for restricted_item in restricted_items:
+                if requested_path.startswith(restricted_item) or requested_path.endswith(restricted_item):
+                    self.send_response(403)
+                    self.send_header("Content-type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(b"Access to this file or folder is restricted!")
+                    return
+
+            # リクエストされたパスが空の場合は data_path をディレクトリとして扱う
+            if requested_path == '':
+                file_path = os.path.join(data_path, 'index.html')
+            elif os.path.isdir(file_path):
+                file_path = os.path.join(file_path, 'index.html')
+
+            if os.path.exists(file_path):
                 self.send_response(200)
                 self.send_header("Content-type", "text/html")
                 self.end_headers()
-                with open(index_path, 'rb') as file:
+                with open(file_path, 'rb') as file:
                     self.wfile.write(file.read())
             else:
                 self.send_response(404)
                 self.send_header("Content-type", "text/html")
                 self.end_headers()
-                self.wfile.write(b"Index page not found!")
+                self.wfile.write(b"File not found!")
 
         def do_POST(self):
+            print(datetime.datetime.now())
             req_key = self.parse_query_params()
             if not self.check_auth(req_key):
                 return
-            
 
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length).decode('utf-8')
             post_params = urllib.parse.parse_qs(post_data)
             add_param = post_params.get("add", [None])[0]
 
-            if add_param is not None:
-                # webサイトの判別
-                site = None
-                for site_key, value in site_dic.items():
-                    if value.replace('_', '.').replace('.py', '') in add_param:
-                        site = site_key
-                        break
-                else:
-                    self.send_response(400)
-                    self.send_header("Content-type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(b"Invalid add_param value")
-                    return
-                    
-                print(add_param)
-                globals()[site].run(add_param, folder_path)
+            if add_param is None:
+                self.send_response(400)
+                self.send_header("Content-type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"Invalid add_param value")
+                return
 
-            
+            # webサイトの判別
+            site = None
+            for site_key, value in site_dic.items():
+                if value.replace('_', '.').replace('.py', '') in add_param:
+                    site = site_key
+                    break
+            else:
+                self.send_response(400)
+                self.send_header("Content-type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"Invalid add_param value")
+                return
+
+            print(add_param)
+            globals()[site].run(add_param, folder_path)
 
     # 認証キーを用いるか
     if enc_key == 1:
-
         script_folder = os.path.dirname(os.path.abspath(__file__))
         auth_file = os.path.join(script_folder, "auth.txt")
 
         if not os.path.exists(auth_file):
             # Generate random string
-            random_string = "random_string"  # Replace with your random string generation logic
+            random_string = ''.join(random.choices(string.ascii_letters + string.digits + string.punctuation, k=random.randint(64, 512)))
 
             # Hash the random string
             hashed_string = hashlib.sha3_256(random_string.encode('utf-8')).hexdigest()
@@ -114,10 +136,10 @@ def http_run(interval, site_dic, folder_path, enc_key, ssl, port, domain):
     httpd = HTTPServer(server_address, RequestHandler)
 
     #SSL証明書の設定
-    if ssl == 1:
+    if use_ssl == 1:
         cert_path = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
         key_path = f"/etc/letsencrypt/live/{domain}/privkey.pem"
-        httpd.socket = ssl.wrap_socket(httpd.socket, certfile=cert_path, keyfile=key_path, server_side=True)
+        httpd.socket = ssl_lib.wrap_socket(httpd.socket, certfile=cert_path, keyfile=key_path, server_side=True)
 
     print(f"Starting httpd server on port {port}")
     httpd.serve_forever()
