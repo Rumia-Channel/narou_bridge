@@ -42,17 +42,18 @@ def initialize():
         f.write('<head>\n')
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write('<script>function submit() { var input1 = document.getElementById("input1").value; var currentUrl = new URL(window.location.href); var keyParam = currentUrl.searchParams.get("key"); var url = "#?add=" + encodeURIComponent(input1); if (keyParam) { url += "&key=" + encodeURIComponent(keyParam); } var xhr = new XMLHttpRequest(); xhr.open("POST", url, true); xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded"); xhr.onreadystatechange = function() { if (xhr.readyState === 4 && xhr.status === 200) { } }; xhr.send("add=" + encodeURIComponent(input1)); } function redirectWithParams(baseURL) { var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL; } </script>\n')
+        f.write('<script>function generateRequestId() {return "xxxx-xxxx-4xxx-yxxx-xxxx".replace(/[xy]/g, function(c) {var r = Math.random() * 16 | 0, v = c === "x" ? r : (r & 0x3 | 0x8); return v.toString(16);});} function debounce(func, delay) {var timeoutId; return function() {clearTimeout(timeoutId); timeoutId = setTimeout(func, delay);};} var debouncedSubmit = debounce(submit, 1000); function submit() {var input1 = document.getElementById("input1").value; var requestId = generateRequestId(); var currentUrl = new URL(window.location.href); var keyParam = currentUrl.searchParams.get("key"); var url = "#?add=" + encodeURIComponent(input1); if (keyParam) {url += "&key=" + encodeURIComponent(keyParam);} var xhr = new XMLHttpRequest(); xhr.open("POST", url, true); xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded"); xhr.onreadystatechange = function() {if (xhr.readyState === 4 && xhr.status === 200) {}}; xhr.send("add=" + encodeURIComponent(input1) + "&request_id=" + requestId);} function redirectWithParams(baseURL) {var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL;} </script>\n')
         f.write('<title>Index</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
         f.write('<input type="text" id="input1" placeholder="登録URL">\n')
-        f.write('<button onclick="submit()">送信</button>\n')
+        f.write('<button onclick="debouncedSubmit()">送信</button>\n')
         f.write('<br><br><br>\n')
         for key in config['crawler']:
             f.write(f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>\n')
         f.write('</body>\n')
         f.write('</html>\n')
+
 
 
 

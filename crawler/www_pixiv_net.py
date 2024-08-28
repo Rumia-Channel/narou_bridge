@@ -15,7 +15,11 @@ def load_cookies_from_json(input_file):
     cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
     return cookies_dict
 
-def run(url, folder_path):
+def init(folder_path):
+
+    #クッキーとユーザーエージェントはグローバルで宣言
+    global cookie_path
+    global ua_path
 
     cookie_path = os.path.join(folder_path, 'cookie.json')
     ua_path = os.path.join(folder_path, 'ua.txt')
@@ -74,6 +78,7 @@ def run(url, folder_path):
             login(playwright)
 
 
+def download(url, folder_path):
     cookie = load_cookies_from_json(cookie_path)
     ua = open(ua_path, 'r', encoding='utf-8').read()
     header = {
@@ -82,5 +87,7 @@ def run(url, folder_path):
 
     response = requests.get(url, cookies=cookie, headers=header)
 
-    print(response.status_code)
-    #print(response.text)
+    if response.status_code == 404:
+        print("404 Not Found")
+        print("Incorrect URL, Deleted, Private, or My Pics Only.")
+        return

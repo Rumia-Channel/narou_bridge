@@ -11,6 +11,15 @@ import datetime
 # アクセスを制限するファイルやフォルダのリスト
 restricted_items = ['auth.txt', 'cookie.json', '.json']
 
+# リクエストIDの保存用辞書
+recent_request_ids = {}
+
+def cleanup_expired_requests(requests_dict, expiration_time):
+    current_time = datetime.datetime.now()
+    for key in list(requests_dict):
+        if (current_time - requests_dict[key]).total_seconds() > expiration_time:
+            del requests_dict[key]
+
 def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
 
     for site_key, value in site_dic.items():
@@ -71,7 +80,7 @@ def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port,
                 self.wfile.write(b"File not found!")
 
         def do_POST(self):
-            print(datetime.datetime.now())
+            print(f'POST received: {datetime.datetime.now()}')
             req_key = self.parse_query_params()
             if not self.check_auth(req_key):
                 return
@@ -80,29 +89,51 @@ def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port,
             post_data = self.rfile.read(content_length).decode('utf-8')
             post_params = urllib.parse.parse_qs(post_data)
             add_param = post_params.get("add", [None])[0]
+            request_id = post_params.get("request_id", [None])[0]
 
-            if add_param is None:
+            if request_id is None:
                 self.send_response(400)
                 self.send_header("Content-type", "text/html")
                 self.end_headers()
-                self.wfile.write(b"Invalid add_param value")
+                self.wfile.write(b"Invalid add_param or request_id value")
                 return
 
-            # webサイトの判別
-            site = None
-            for site_key, value in site_dic.items():
-                if value.replace('_', '.').replace('.py', '') in add_param:
-                    site = site_key
-                    break
-            else:
-                self.send_response(400)
+            # リクエストIDを表示
+            print(f"Request ID: {request_id}")
+
+            # 重複チェック: すでに同じリクエストIDがあるか確認
+            if request_id in recent_request_ids:
+                self.send_response(429)
                 self.send_header("Content-type", "text/html")
                 self.end_headers()
-                self.wfile.write(b"Invalid add_param value")
+                self.wfile.write(b"Duplicate request detected")
                 return
 
-            print(add_param)
-            globals()[site].run(add_param, folder_path)
+            # リクエストIDを記録
+            recent_request_ids[request_id] = datetime.datetime.now()
+
+            #ダウンロード処理
+            if not add_param is None:
+                # webサイトの判別
+                site = None
+                for site_key, value in site_dic.items():
+                    if value.replace('_', '.').replace('.py', '') in add_param:
+                        site = site_key
+                        break
+                else:
+                    self.send_response(400)
+                    self.send_header("Content-type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(b"Invalid add_param value")
+                    return
+
+                print(f'Web site: {site}')
+                print(f'URL: {add_param}')
+                globals()[site].init(folder_path)
+                globals()[site].download(add_param,folder_path)
+
+            # 古いリクエストIDのクリーンアップ
+            cleanup_expired_requests(recent_request_ids, expiration_time=600)
 
     # 認証キーを用いるか
     if enc_key == 1:
