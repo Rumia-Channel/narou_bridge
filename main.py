@@ -31,7 +31,7 @@ def initialize():
             os.makedirs(folder_path)
         
     # Indexファイルがあるなら削除
-    index_path = os.path.join(folder_path, 'index.html')
+    index_path = os.path.join(data_path, 'index.html')
     if os.path.exists(index_path):
         os.remove(index_path)
         
@@ -42,7 +42,7 @@ def initialize():
         f.write('<head>\n')
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write('<script>function submit() { var input1 = document.getElementById("input1").value; var currentUrl = new URL(window.location.href); var keyParam = currentUrl.searchParams.get("key"); var url = "#?add=" + encodeURIComponent(input1); if (keyParam) { url += "&key=" + encodeURIComponent(keyParam); } var xhr = new XMLHttpRequest(); xhr.open("POST", url, true); xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded"); xhr.onreadystatechange = function() { if (xhr.readyState === 4 && xhr.status === 200) { } }; xhr.send("add=" + encodeURIComponent(input1)); } function redirectWithParams(baseURL) { var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL; } window.onload = function() { var currentUrl = new URL(window.location.href); var keyParam = currentUrl.searchParams.get("key"); for (var key in config["crawler"]) { var link = config["crawler"][key]; if (keyParam) { link += "?key=" + encodeURIComponent(keyParam); } document.write(\'<a href="#" onclick="redirectWithParams(\\\'\' + link + \'\\\')">\' + link + \'</a><br>\'); } } </script>\n')
+        f.write('<script>function submit() { var input1 = document.getElementById("input1").value; var currentUrl = new URL(window.location.href); var keyParam = currentUrl.searchParams.get("key"); var url = "#?add=" + encodeURIComponent(input1); if (keyParam) { url += "&key=" + encodeURIComponent(keyParam); } var xhr = new XMLHttpRequest(); xhr.open("POST", url, true); xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded"); xhr.onreadystatechange = function() { if (xhr.readyState === 4 && xhr.status === 200) { } }; xhr.send("add=" + encodeURIComponent(input1)); } function redirectWithParams(baseURL) { var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL; } </script>\n')
         f.write('<title>Index</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
@@ -58,9 +58,9 @@ def initialize():
 
 
     print("Initialize successfully!")
-    return int(config['setting']['reload']), int(config['setting']['interval']), site_dic, folder_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['ssl']['domain']
+    return int(config['setting']['reload']), int(config['setting']['interval']), site_dic, folder_path, data_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['ssl']['domain']
 
 if __name__ == '__main__':
-    reload_time, interval, site_dic, folder_path, key, ssl, port, domain = initialize()
+    reload_time, interval, site_dic, folder_path, data_path, key, use_ssl, port, domain = initialize()
 
-    server.http_run(interval, site_dic, folder_path, key, ssl, port, domain)
+    server.http_run(interval, site_dic, folder_path, data_path, key, use_ssl, port, domain)
