@@ -12,6 +12,7 @@ wheels/
 data
 *.json
 *.html
+*.js
 auth.txt
 requirements.lock
 requirements-dev.lock
