@@ -23,7 +23,7 @@ def index_file(folder_path, id, title):
             f.write('<script>function redirectWithParams(baseURL) {var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL;}</script>\n')
             f.write('</head>\n')
             f.write('<body>\n')
-            f.write('#" onclick="redirectWithParams(\'../\')">戻る</a>\n')
+            f.write('href="#" onclick="redirectWithParams(\'../\')">戻る</a>\n')
             f.write('<div id="novel">\n')
             f.write('</div>\n')
             f.write('</body>\n')
@@ -72,7 +72,6 @@ def init(folder_path):
         page.goto("https://www.pixiv.net/")
         time.sleep(random.uniform(1,5))
         page.get_by_role("link", name="ログイン").click()
-        print(page.url)
         mail = input("メールアドレスを入力してください: ")
         page.get_by_placeholder("メールアドレスまたはpixiv ID").fill(mail)
         pswd = input("パスワードを入力してください: ")
@@ -83,11 +82,9 @@ def init(folder_path):
         def wait_for_redirects(page):
             while True:
                 page.wait_for_load_state("load")
-                if page.url.startswith("https://accounts.pixiv.net/login/two-factor-authentication?") or page.url == "https://www.pixiv.net/":
-                    print(page.url)
+                if page.url.startswith("https://accounts.pixiv.net/login/two-factor-authentication?") or page.url == "https://www.pixiv.net/":    
                     break
         wait_for_redirects(page)
-        print(page.url)
         if "two-factor-authentication" in page.url:
             time.sleep(random.uniform(1,5))
             page.get_by_label("このブラウザを信頼する").check()
@@ -180,7 +177,7 @@ def download(url, folder_path):
             # seriesNavDataの内部にあるseriesIdを取得
             series_id = series_nav_data.get("seriesId")
             print(f"Series ID: {series_id}")
-            series_title = series_nav_data.get("seriesId")
+            series_title = series_nav_data.get("title")
             print(f"Series Title: {series_title}")
         else:
             novel_id = re.search(r"id=(\d+)", url).group(1)

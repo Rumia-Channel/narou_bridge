@@ -1,9 +1,6 @@
 import configparser
 import os
-import time
-import threading
 import server
-import crawler
 
 def initialize():
     site_dic = {}
