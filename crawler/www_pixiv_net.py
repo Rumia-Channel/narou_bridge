@@ -164,16 +164,29 @@ def md_id(id, folder_path, title):
     index_file(folder_path, id, title)
     return raw_path
 
-def dl_series(series_nav_data, folder_path):
+def dl_series(series_id, folder_path):
     # seriesNavDataの内部にあるseriesIdを取得
-    series_id = series_nav_data.get("seriesId")
     print(f"Series ID: {series_id}")
-    series_title = series_nav_data.get("title")
+    s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
+    print(s_detail)
+    series_title = s_detail.get('title')
+    series_authour = s_detail.get('userName')
+    series_total = s_detail.get('total')
+    series_chara = s_detail.get('publishedTotalCharacterCount')
+    series_caption_data = find_key_recursively(s_detail, 'caption')
+    if series_caption_data:
+        series_caption = series_caption_data
+    else:
+        series_caption = ''
     print(f"Series Title: {series_title}")
-    response = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
-    json_data = json.loads(response.text)
-    print(f"Response Status Code: {response.status_code}")
-    novel_datas = find_key_recursively(json_data, 'novel')
+    print(f"Series Authour: {series_authour}")
+    print(f"Series Caption: {series_caption}")
+    print(f"Series Total Titles: {series_total}")
+    print(f"Series Total Characters: {series_chara}")
+    s_contents = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
+    print(f"Response Status Code: {s_contents.status_code}")
+    con_json_data = json.loads(s_contents.text)
+    novel_datas = find_key_recursively(con_json_data, 'novel')
     print(novel_datas)
 
 
@@ -203,7 +216,8 @@ def download(url, folder_path):
         json_data = json.loads(decoded_content)
         series_nav_data = find_key_recursively(json_data, "seriesNavData")
         if series_nav_data:
-            dl_series(series_nav_data, folder_path)
+            series_id = series_nav_data.get("seriesId")
+            dl_series(series_id, folder_path)
         else:
             novel_id = re.search(r"id=(\d+)", url).group(1)
             print(f"Novel ID: {novel_id}")
