@@ -9,7 +9,7 @@ import string
 import datetime
 
 # アクセスを制限するファイルやフォルダのリスト
-restricted_items = ['auth.txt', 'cookie.json', '.json']
+restricted_items = ['auth.txt', 'cookie.json', '.json', '.js']
 
 # リクエストIDの保存用辞書
 recent_request_ids = {}
@@ -130,7 +130,7 @@ def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port,
                 print(f'Web site: {site}')
                 print(f'URL: {add_param}')
                 globals()[site].init(folder_path)
-                globals()[site].download(add_param,folder_path)
+                globals()[site].download(add_param, folder_path)
 
             # 古いリクエストIDのクリーンアップ
             cleanup_expired_requests(recent_request_ids, expiration_time=600)

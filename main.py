@@ -30,19 +30,15 @@ def initialize():
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         
-    # Indexファイルがあるなら削除
-    index_path = os.path.join(data_path, 'index.html')
-    if os.path.exists(index_path):
-        os.remove(index_path)
-        
     # Indexファイルを作成
-    with open(index_path, 'w', encoding='utf-8') as f:
+    with open(os.path.join(data_path, 'index.html'), 'w', encoding='utf-8') as f:
         f.write('<!DOCTYPE html>\n')
         f.write('<html lang="ja">\n')
         f.write('<head>\n')
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write('<script>function generateRequestId() {return "xxxx-xxxx-4xxx-yxxx-xxxx".replace(/[xy]/g, function(c) {var r = Math.random() * 16 | 0, v = c === "x" ? r : (r & 0x3 | 0x8); return v.toString(16);});} function debounce(func, delay) {var timeoutId; return function() {clearTimeout(timeoutId); timeoutId = setTimeout(func, delay);};} var debouncedSubmit = debounce(submit, 1000); function submit() {var input1 = document.getElementById("input1").value; var requestId = generateRequestId(); var currentUrl = new URL(window.location.href); var keyParam = currentUrl.searchParams.get("key"); var url = "#?add=" + encodeURIComponent(input1); if (keyParam) {url += "&key=" + encodeURIComponent(keyParam);} var xhr = new XMLHttpRequest(); xhr.open("POST", url, true); xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded"); xhr.onreadystatechange = function() {if (xhr.readyState === 4 && xhr.status === 200) {}}; xhr.send("add=" + encodeURIComponent(input1) + "&request_id=" + requestId);} function redirectWithParams(baseURL) {var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL;} </script>\n')
+        f.write('<script>function redirectWithParams(baseURL) {var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL;}</script>\n')
+        f.write('<script>function generateRequestId() {return "xxxx-xxxx-4xxx-yxxx-xxxx".replace(/[xy]/g, function(c) {var r = Math.random() * 16 | 0, v = c === "x" ? r : (r & 0x3 | 0x8); return v.toString(16);});} function debounce(func, delay) {var timeoutId; return function() {clearTimeout(timeoutId); timeoutId = setTimeout(func, delay);};} var debouncedSubmit = debounce(submit, 1000); function submit() {var input1 = document.getElementById("input1").value; var requestId = generateRequestId(); var currentUrl = new URL(window.location.href); var keyParam = currentUrl.searchParams.get("key"); var url = "#?add=" + encodeURIComponent(input1); if (keyParam) {url += "&key=" + encodeURIComponent(keyParam);} var xhr = new XMLHttpRequest(); xhr.open("POST", url, true); xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded"); xhr.onreadystatechange = function() {if (xhr.readyState === 4 && xhr.status === 200) {}}; xhr.send("add=" + encodeURIComponent(input1) + "&request_id=" + requestId);}</script>\n')
         f.write('<title>Index</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
