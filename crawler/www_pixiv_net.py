@@ -166,16 +166,15 @@ def md_id(id, folder_path, title):
 
 def dl_series(series_nav_data, folder_path):
     # seriesNavDataの内部にあるseriesIdを取得
-    print(series_nav_data)
     series_id = series_nav_data.get("seriesId")
     print(f"Series ID: {series_id}")
     series_title = series_nav_data.get("title")
     print(f"Series Title: {series_title}")
-    response = get_with_cookie(f"https://www.pixiv.net/novel/series/{series_id}")
-    with open('test.html', 'w', encoding='utf-8') as f:
-            f.write(response.text)
+    response = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
+    json_data = json.loads(response.text)
     print(f"Response Status Code: {response.status_code}")
-    print(f"Response Content: {response.text}")
+    novel_datas = find_key_recursively(json_data, 'novel')
+    print(novel_datas)
 
 
 #ダウンロード処理
