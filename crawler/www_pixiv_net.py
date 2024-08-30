@@ -186,13 +186,14 @@ def format_survey(survey):
     return result
 
 #ベースフォルダ作成
-def make_dir(id):
-    if not os.path.exists(id):
-        os.makedirs(id)
-    if not os.path.exists(f'{id}/raw'):
-        os.makedirs(f'{id}/raw')
-    if not os.path.exists(f'{id}/images'):
-        os.makedirs(f'{id}/images')
+def make_dir(id, folder_path):
+    full_path = os.path.join(folder_path, id)
+    if not os.path.exists(full_path):
+        os.makedirs(full_path)
+    if not os.path.exists(f'{full_path}/raw'):
+        os.makedirs(f'{full_path}/raw')
+    if not os.path.exists(f'{full_path}/images'):
+        os.makedirs(f'{full_path}/images')
 
 def md_id(id, folder_path, title):
     # ディレクトリが存在しない場合は作成
@@ -203,9 +204,32 @@ def md_id(id, folder_path, title):
     index_file(folder_path, id, title)
     return raw_path
 
-#画像フォーマットの整形
-def format_image(data):
-    pass
+#画像リンク形式の整形
+def format_image(id, data, folder_path):
+    links = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
+    link_dict = {}
+    for i in links:
+        art_id = i[0]
+        img_num = i[1]
+        if art_id not in link_dict:
+            link_dict[art_id] = []  # art_id が存在しない場合に空のリストを初期化
+        link_dict[art_id].append(img_num)
+    #画像リンクの形式を[リンク名](リンク先)に変更
+    for art_id, img_nums in link_dict.items():
+        illust_json = get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages").json()
+        illust_datas = find_key_recursively(illust_json, 'body')
+        for index, i in enumerate(illust_datas):
+            if str(index + 1) in img_nums:
+                img_url = i.get('urls').get('original')
+                img_data = get_with_cookie(img_url)
+                with open(os.path.join(folder_path, str(id), 'images', f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                    f.write(img_data.content)
+                data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image](../images/{art_id}_p{index}{os.path.splitext(img_url)[1]})')
+    return data
+
+#ページに関する整形
+def format_link(data):
+    next_page_tag = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
 
 #シリーズのダウンロードに関する処理
 def dl_series(series_id, folder_path):
@@ -233,7 +257,7 @@ def dl_series(series_id, folder_path):
     print(f"Series Total Characters: {series_chara}")
     print(f"Series Create Date: {series_create_day}")
     print(f"Series Update Date: {series_update_day}")
-    make_dir(series_id)
+    make_dir(series_id, folder_path)
     con_json_data = json.loads(s_contents.text)
     novel_datas = find_key_recursively(con_json_data, 'novel')
     episode = {}
@@ -251,7 +275,8 @@ def dl_series(series_id, folder_path):
         if not introduction:
             introduction = ''
         #挿絵リンクへの置き換え
-
+        text = format_image(series_id, text, folder_path)
+        #ページに関する置き換え
         episode[i] = {
             'id' : entry['id'],
             'title': entry['title'],

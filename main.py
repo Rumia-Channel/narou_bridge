@@ -57,4 +57,4 @@ def initialize():
 if __name__ == '__main__':
     reload_time, interval, site_dic, folder_path, data_path, key, use_ssl, port, domain = initialize()
 
-    server.http_run(interval, site_dic, folder_path, data_path, key, use_ssl, port, domain)
+    server.http_run(site_dic, folder_path, data_path, key, use_ssl, port, domain)

@@ -20,7 +20,7 @@ def cleanup_expired_requests(requests_dict, expiration_time):
         if (current_time - requests_dict[key]).total_seconds() > expiration_time:
             del requests_dict[key]
 
-def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
+def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
 
     for site_key, value in site_dic.items():
         module_name = 'crawler.' + value.replace('.py', '')
