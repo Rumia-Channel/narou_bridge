@@ -13,6 +13,6 @@ data
 *.json
 *.html
 *.js
-auth.txt
+*.key
 requirements.lock
 requirements-dev.lock

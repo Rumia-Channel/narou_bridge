@@ -5,9 +5,7 @@ import json
 from playwright.sync_api import Playwright, sync_playwright, expect
 from html import unescape
 from bs4 import BeautifulSoup
-import gzip
-import zlib
-from io import BytesIO
+from datetime import datetime
 #リキャプチャ対策
 import time
 import random
@@ -130,7 +128,8 @@ def init(folder_path):
         'User-Agent': ua,
         'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive'
+        'Connection': 'keep-alive',
+        'Referer': 'https://www.pixiv.net/',
     }
 
 # 再帰的にキーを探す
@@ -155,6 +154,46 @@ def get_with_cookie(url):
     response = requests.get(url, cookies=pixiv_cookie, headers=pixiv_header)
     return response
 
+# レスポンスからjsonデータ(本文データ)を返却
+def return_content_json(response):
+    soup = BeautifulSoup(str(response.text), 'html.parser')
+    meta_tag = soup.find_all('meta', {'id': 'meta-preload-data'})
+    # meta_tagがリストである場合、最初の要素を取得
+    if isinstance(meta_tag, list):
+        meta_tag = meta_tag[0]
+
+    # content属性の値を取得
+    content_value = meta_tag['content']
+
+    # HTMLエンティティをデコード
+    decoded_content = unescape(content_value)
+    json_data = json.loads(decoded_content)
+    return json_data
+
+#アンケートの整形
+def format_survey(survey):
+    # アンケートの質問と総票数を取得
+    question = survey['question']
+    total_votes = survey['total']
+    
+    # 結果の初期化
+    result = f'アンケート　"{question}"　　票数{total_votes}票\n\n'
+    
+    # 各選択肢とその票数を追加
+    for choice in survey['choices']:
+        result += f'　　　{choice["text"]}　　{choice["count"]}票\n'
+    
+    return result
+
+#ベースフォルダ作成
+def make_dir(id):
+    if not os.path.exists(id):
+        os.makedirs(id)
+    if not os.path.exists(f'{id}/raw'):
+        os.makedirs(f'{id}/raw')
+    if not os.path.exists(f'{id}/images'):
+        os.makedirs(f'{id}/images')
+
 def md_id(id, folder_path, title):
     # ディレクトリが存在しない場合は作成
     full_path = os.path.join(folder_path, id)
@@ -164,30 +203,83 @@ def md_id(id, folder_path, title):
     index_file(folder_path, id, title)
     return raw_path
 
+#画像フォーマットの整形
+def format_image(data):
+    pass
+
+#シリーズのダウンロードに関する処理
 def dl_series(series_id, folder_path):
     # seriesNavDataの内部にあるseriesIdを取得
     print(f"Series ID: {series_id}")
     s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
-    print(s_detail)
+    s_contents = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
     series_title = s_detail.get('title')
     series_authour = s_detail.get('userName')
-    series_total = s_detail.get('total')
+    series_authour_id = s_detail.get('userId')
+    series_episodes = s_detail.get('total')
     series_chara = s_detail.get('publishedTotalCharacterCount')
     series_caption_data = find_key_recursively(s_detail, 'caption')
+    series_create_day = datetime.fromisoformat(s_detail.get('createDate'))
+    series_update_day = datetime.fromisoformat(s_detail.get('updateDate'))
     if series_caption_data:
         series_caption = series_caption_data
     else:
         series_caption = ''
     print(f"Series Title: {series_title}")
     print(f"Series Authour: {series_authour}")
+    print(f"Series Authour ID: {series_authour_id}")
     print(f"Series Caption: {series_caption}")
-    print(f"Series Total Titles: {series_total}")
+    print(f"Series Total Episodes: {series_episodes}")
     print(f"Series Total Characters: {series_chara}")
-    s_contents = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
-    print(f"Response Status Code: {s_contents.status_code}")
+    print(f"Series Create Date: {series_create_day}")
+    print(f"Series Update Date: {series_update_day}")
+    make_dir(series_id)
     con_json_data = json.loads(s_contents.text)
     novel_datas = find_key_recursively(con_json_data, 'novel')
-    print(novel_datas)
+    episode = {}
+    total_text = 0
+    for i, entry in enumerate(reversed(novel_datas), 1):
+        json_data = return_content_json(get_with_cookie(f"https://www.pixiv.net/novel/show.php?id={entry['id']}"))
+        introduction = find_key_recursively(json_data, entry['id']).get('description').replace('<br />', '\n')
+        postscript = find_key_recursively(json_data, entry['id']).get('pollData')
+        text = find_key_recursively(json_data, entry['id']).get('content').replace('\r\n', '\n')
+        if postscript:
+            postscript = format_survey(postscript)
+            #print(postscript)
+        else:
+            postscript = ''
+        if not introduction:
+            introduction = ''
+        #挿絵リンクへの置き換え
+
+        episode[i] = {
+            'id' : entry['id'],
+            'title': entry['title'],
+            'introduction': introduction,
+            'text': text,
+            'postscript': postscript,
+            'createDate': datetime.strptime(entry['createDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M"),
+            'updateDate': datetime.strptime(entry['updateDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
+        }
+        total_text += int(entry['textCount'])
+    
+    novel = {
+        'title': series_title,
+        'authour': series_authour,
+        'authour_url': f"https://www.pixiv.net/users/{series_authour_id}",
+        'caption': series_caption,
+        'total_episodes': len(episode),
+        'all_episodes': series_episodes,
+        'total_characters': total_text,
+        'all_characters': series_chara,
+        'type': '連載中',
+        'createDate': series_create_day.strftime("%Y年 %m月%d日 %H時%M分"),
+        'updateDate': series_update_day.strftime("%Y年 %m月%d日 %H時%M分"),
+        'episodes': episode
+    }
+
+    with open('test_b.json', 'w', encoding='utf-8') as f:
+        json.dump(novel, f, ensure_ascii=False, indent=4)
 
 
 #ダウンロード処理
@@ -199,21 +291,10 @@ def download(url, folder_path):
         print("404 Not Found")
         print("Incorrect URL, Deleted, Private, or My Pics Only.")
         return
-    
+    print(f'Response Status Code: {response.status_code}')
     if "https://www.pixiv.net/novel/show.php?id=" in url:
-        soup = BeautifulSoup(str(response.text), 'html.parser')
-        meta_tag = soup.find_all('meta', {'id': 'meta-preload-data'})
-        # meta_tagがリストである場合、最初の要素を取得
-        if isinstance(meta_tag, list):
-            meta_tag = meta_tag[0]
-
-        # content属性の値を取得
-        content_value = meta_tag['content']
-
-        # HTMLエンティティをデコード
-        decoded_content = unescape(content_value)
         # JSONとして解析
-        json_data = json.loads(decoded_content)
+        json_data = return_content_json(response)
         series_nav_data = find_key_recursively(json_data, "seriesNavData")
         if series_nav_data:
             series_id = series_nav_data.get("seriesId")
@@ -231,4 +312,17 @@ def download(url, folder_path):
             with open(os.path.join(raw_path, f'{novel_id}.json'), 'w', encoding='utf-8') as f:
                 json.dump(json_data, f, ensure_ascii=False, indent=4)
     elif "https://www.pixiv.net/novel/series/" in url:
-        pass
+        series_id = re.search(r"series/(\d+)", url).group(1)
+        dl_series(series_id, folder_path)
+    else:
+        json_data = get_with_cookie(url).json()
+        urls_data = find_key_recursively(json_data, 'body')
+        with open('test_c.json', 'w', encoding='utf-8') as f:
+            json.dump(urls_data, f, ensure_ascii=False, indent=4)
+        i_n = 1
+        for i in urls_data:
+            image_url = find_key_recursively(i, 'urls').get('original')
+            image = get_with_cookie(image_url)
+            with open(os.path.join(folder_path, f'{i_n}.png'), 'wb') as f:
+                f.write(image.content)
+            i_n += 1
