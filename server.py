@@ -9,7 +9,7 @@ import string
 import datetime
 
 # アクセスを制限するファイルやフォルダのリスト
-restricted_items = ['auth.txt', 'cookie.json', '.json', '.js']
+restricted_items = ['cookie.json', '.json', '.js', '.key']
 
 # リクエストIDの保存用辞書
 recent_request_ids = {}
@@ -138,7 +138,7 @@ def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port,
     # 認証キーを用いるか
     if enc_key == 1:
         script_folder = os.path.dirname(os.path.abspath(__file__))
-        auth_file = os.path.join(script_folder, "auth.txt")
+        auth_file = os.path.join(script_folder, "auth.key")
 
         if not os.path.exists(auth_file):
             # Generate random string
@@ -147,7 +147,7 @@ def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port,
             # Hash the random string
             hashed_string = hashlib.sha3_256(random_string.encode('utf-8')).hexdigest()
 
-            # Write hashed string to auth.txt
+            # Write hashed string to auth.key
             with open(auth_file, 'w', encoding='utf-8') as file:
                 file.write(hashed_string)
 
@@ -155,9 +155,9 @@ def http_run(interval, site_dic, folder_path, data_path, enc_key, use_ssl, port,
             auth_key = hashed_string
 
             print(f"Auth key generated: {auth_key}")
-            print("Please check auth.txt for the auth key")
+            print("Please check auth.key for the auth key")
         else:
-            # Read existing auth key from auth.txt
+            # Read existing auth key from auth.key
             with open(auth_file, 'r', encoding='utf-8') as file:
                 auth_key = file.read().strip()
     else:
