@@ -1,11 +1,15 @@
 import re
 import os
 import requests
+from urllib.parse import unquote
 import json
 from playwright.sync_api import Playwright, sync_playwright, expect
 from html import unescape
 from bs4 import BeautifulSoup
 from datetime import datetime
+
+from . import convert_narou as cn
+
 #リキャプチャ対策
 import time
 import random
@@ -192,8 +196,8 @@ def make_dir(id, folder_path):
         os.makedirs(full_path)
     if not os.path.exists(f'{full_path}/raw'):
         os.makedirs(f'{full_path}/raw')
-    if not os.path.exists(f'{full_path}/images'):
-        os.makedirs(f'{full_path}/images')
+    if not os.path.exists(f'{full_path}/info'):
+        os.makedirs(f'{full_path}/info')
 
 def md_id(id, folder_path, title):
     # ディレクトリが存在しない場合は作成
@@ -205,7 +209,7 @@ def md_id(id, folder_path, title):
     return raw_path
 
 #画像リンク形式の整形
-def format_image(id, data, folder_path):
+def format_image(id, episode, series, data, folder_path):
     links = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
     link_dict = {}
     for i in links:
@@ -222,17 +226,18 @@ def format_image(id, data, folder_path):
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
                 img_data = get_with_cookie(img_url)
-                with open(os.path.join(folder_path, str(id), 'images', f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
-                    f.write(img_data.content)
-                data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image](../images/{art_id}_p{index}{os.path.splitext(img_url)[1]})')
+                if series:
+                    with open(os.path.join(folder_path, str(id), str(episode), f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                        f.write(img_data.content)
+                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
+                else:
+                    with open(os.path.join(folder_path, str(id), f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                        f.write(img_data.content)
+                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
     return data
 
-#ページに関する整形
-def format_link(data):
-    next_page_tag = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
-
 #シリーズのダウンロードに関する処理
-def dl_series(series_id, folder_path):
+def dl_series(series_id, folder_path, key_data):
     # seriesNavDataの内部にあるseriesIdを取得
     print(f"Series ID: {series_id}")
     s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
@@ -264,7 +269,7 @@ def dl_series(series_id, folder_path):
     total_text = 0
     for i, entry in enumerate(reversed(novel_datas), 1):
         json_data = return_content_json(get_with_cookie(f"https://www.pixiv.net/novel/show.php?id={entry['id']}"))
-        introduction = find_key_recursively(json_data, entry['id']).get('description').replace('<br />', '\n')
+        introduction = find_key_recursively(json_data, entry['id']).get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, entry['id']).get('pollData')
         text = find_key_recursively(json_data, entry['id']).get('content').replace('\r\n', '\n')
         if postscript:
@@ -274,13 +279,16 @@ def dl_series(series_id, folder_path):
             postscript = ''
         if not introduction:
             introduction = ''
+        
+        #エピソードごとのフォルダの作成
+        os.makedirs(os.path.join(folder_path, str(series_id), entry['id']), exist_ok=True)
         #挿絵リンクへの置き換え
-        text = format_image(series_id, text, folder_path)
-        #ページに関する置き換え
+        text = format_image(series_id, entry['id'], True, text, folder_path)
+
         episode[i] = {
             'id' : entry['id'],
             'title': entry['title'],
-            'introduction': introduction,
+            'introduction': unquote(introduction),
             'text': text,
             'postscript': postscript,
             'createDate': datetime.strptime(entry['createDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M"),
@@ -288,27 +296,75 @@ def dl_series(series_id, folder_path):
         }
         total_text += int(entry['textCount'])
     
+    # 作成日で並び替え
+    episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
+    
+    total_charactors = str(f'{total_text:,}')
+    all_charactors = str(f'{series_chara:,}')
     novel = {
         'title': series_title,
+        'id': series_id,
+        'url': f"https://www.pixiv.net/novel/series/{series_id}",
         'authour': series_authour,
         'authour_url': f"https://www.pixiv.net/users/{series_authour_id}",
         'caption': series_caption,
         'total_episodes': len(episode),
         'all_episodes': series_episodes,
-        'total_characters': total_text,
-        'all_characters': series_chara,
+        'total_characters': total_charactors,
+        'all_characters': all_charactors,
         'type': '連載中',
         'createDate': series_create_day.strftime("%Y年 %m月%d日 %H時%M分"),
         'updateDate': series_update_day.strftime("%Y年 %m月%d日 %H時%M分"),
         'episodes': episode
     }
 
-    with open('test_b.json', 'w', encoding='utf-8') as f:
+    with open(os.path.join(folder_path, str(series_id), 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
+
+    cn.narou_gen(novel, os.path.join(folder_path, str(series_id)), key_data)
+
+#短編のダウンロードに関する処理
+def dl_novel(json_data, novel_id, folder_path, key_data):
+    novel_data = find_key_recursively(json_data, novel_id)
+    novel_title = novel_data.get('title')
+    novel_authour = novel_data.get('userName')
+    novel_authour_id = novel_data.get('userId')
+    novel_caption = find_key_recursively(novel_data, 'caption').replace('<br />', '\n').replace('jump.php?', '')
+    if novel_caption:
+        novel_caption = novel_caption
+    else:
+        novel_caption = ''
+    novel_text = novel_data.get('content').replace('\r\n', '\n')
+    novel_postscript = find_key_recursively(novel_data, 'pollData')
+    if novel_postscript:
+        novel_postscript = format_survey(novel_postscript)
+    else:
+        novel_postscript = ''
+    novel_create_day = datetime.fromisoformat(novel_data.get('createDate'))
+    novel_update_day = datetime.fromisoformat(novel_data.get('updateDate'))
+    print(f"Novel ID: {novel_id}")
+    print(f"Novel Title: {novel_title}")
+    print(f"Novel Authour: {novel_authour}")
+    print(f"Novel Authour ID: {novel_authour_id}")
+    print(f"Novel Caption: {novel_caption}")
+    print(f"Novel Create Date: {novel_create_day}")
+    print(f"Novel Update Date: {novel_update_day}")
+    make_dir(novel_id, folder_path)
+    text = format_image(novel_id, novel_id, False, novel_text, folder_path)
+    episode = {}
+    episode[1] = {
+        'id' : novel_id,
+        'title': novel_title,
+        'introduction': unquote(novel_caption),
+        'text': text,
+        'postscript': novel_postscript,
+        'createDate': datetime.strptime(novel_create_day, "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M"),
+        'updateDate': datetime.strptime(novel_update_day, "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
+    }
 
 
 #ダウンロード処理
-def download(url, folder_path):
+def download(url, folder_path, key_data):
     
     response = get_with_cookie(url)
 
@@ -326,6 +382,7 @@ def download(url, folder_path):
             dl_series(series_id, folder_path)
         else:
             novel_id = re.search(r"id=(\d+)", url).group(1)
+            #dl_novel(json_data, novel_id, folder_path, key_data) #ダウンロード処理
             print(f"Novel ID: {novel_id}")
             novel_title = find_key_recursively(json_data, f"{novel_id}").get("title")
             print(f"Novel Title: {novel_title}")
@@ -338,16 +395,6 @@ def download(url, folder_path):
                 json.dump(json_data, f, ensure_ascii=False, indent=4)
     elif "https://www.pixiv.net/novel/series/" in url:
         series_id = re.search(r"series/(\d+)", url).group(1)
-        dl_series(series_id, folder_path)
+        dl_series(series_id, folder_path, key_data)
     else:
-        json_data = get_with_cookie(url).json()
-        urls_data = find_key_recursively(json_data, 'body')
-        with open('test_c.json', 'w', encoding='utf-8') as f:
-            json.dump(urls_data, f, ensure_ascii=False, indent=4)
-        i_n = 1
-        for i in urls_data:
-            image_url = find_key_recursively(i, 'urls').get('original')
-            image = get_with_cookie(image_url)
-            with open(os.path.join(folder_path, f'{i_n}.png'), 'wb') as f:
-                f.write(image.content)
-            i_n += 1
+        return
