@@ -9,7 +9,7 @@ import string
 import datetime
 
 # アクセスを制限するファイルやフォルダのリスト
-restricted_items = ['cookie.json', '.json', '.js', '.key']
+restricted_items = ['cookie.json', 'ua.txt', '.json', '.js', '.key']
 
 # リクエストIDの保存用辞書
 recent_request_ids = {}
@@ -48,25 +48,36 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
             if not self.check_auth(req_key):
                 return
 
+            print(self.path)
+
             # リクエストされたパスを取得
-            requested_path = urllib.parse.urlparse(self.path).path.strip('/')
+            parsed_url = urllib.parse.urlparse(self.path)
+            requested_path = parsed_url.path.strip('/')
+            if requested_path == '':
+                requested_path = 'index.html'
+
+            # デバッグ用: リクエストパスを出力
+            print(f"Requested path: {requested_path}")
+
+            # ファイルパスの生成
             file_path = os.path.join(data_path, requested_path)
+            print(f"File path: {file_path}")
 
             # リクエストされたパスが制限されたパスに含まれているかチェック
             for restricted_item in restricted_items:
-                if requested_path.startswith(restricted_item) or requested_path.endswith(restricted_item):
+                if restricted_item in requested_path:
                     self.send_response(403)
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
                     self.wfile.write(b"Access to this file or folder is restricted!")
                     return
 
-            # リクエストされたパスが空の場合は data_path をディレクトリとして扱う
-            if requested_path == '':
-                file_path = os.path.join(data_path, 'index.html')
-            elif os.path.isdir(file_path):
+            # ディレクトリの場合は index.html をデフォルトで設定
+            if os.path.isdir(file_path):
                 file_path = os.path.join(file_path, 'index.html')
+                print(f"Updated file path for directory: {file_path}")
 
+            # ファイルが存在するか確認
             if os.path.exists(file_path):
                 self.send_response(200)
                 self.send_header("Content-type", "text/html")
@@ -130,7 +141,7 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
                 print(f'Web site: {site}')
                 print(f'URL: {add_param}')
                 globals()[site].init(folder_path)
-                globals()[site].download(add_param, folder_path)
+                globals()[site].download(add_param, folder_path, key_data)
 
             # 古いリクエストIDのクリーンアップ
             cleanup_expired_requests(recent_request_ids, expiration_time=600)
@@ -161,7 +172,13 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
             with open(auth_file, 'r', encoding='utf-8') as file:
                 auth_key = file.read().strip()
     else:
-        auth_key = None  
+        auth_key = None
+
+    global key_data
+    if auth_key is not None:
+        key_data = '?key='+auth_key
+    else:
+        key_data = ''
     
     server_address = ('', port)
     httpd = HTTPServer(server_address, RequestHandler)
