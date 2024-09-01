@@ -202,9 +202,19 @@ def md_id(id, folder_path, title):
     return raw_path
 
 #画像リンク形式の整形
-def format_image(id, episode, series, data, folder_path):
+def format_image(id, episode, series, data, json_data, folder_path):
+    #pixivimage: で始まるリンクの抽出
     links = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
     link_dict = {}
+    #uploadedimage: で始まるリンクの抽出
+    inner_links = re.findall(r"\[uploadedimage:(\d+)\]", data)
+
+    #シリーズとその他のリンクの切り替え
+    if series:
+        episode_path = os.path.join(folder_path, f'{id}_s', str(episode))
+    else:
+        episode_path = os.path.join(folder_path, f'{id}_n')
+
     for i in links:
         art_id = i[0]
         img_num = i[1]
@@ -219,14 +229,19 @@ def format_image(id, episode, series, data, folder_path):
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
                 img_data = get_with_cookie(img_url)
-                if series:
-                    with open(os.path.join(folder_path, f'{id}_s', str(episode), f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
-                        f.write(img_data.content)
-                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
-                else:
-                    with open(os.path.join(folder_path, f'{id}_n', f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
-                        f.write(img_data.content)
-                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
+                with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                    f.write(img_data.content)
+                data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
+    #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
+    for inner_link in inner_links:
+        print(inner_link)
+        in_img_url = find_key_recursively(json_data, inner_link).get('urls').get('original')
+        print(in_img_url)
+        in_img_data = get_with_cookie(in_img_url)
+        with open(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
+            f.write(in_img_data.content)
+        data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({inner_link}{os.path.splitext(in_img_url)[1]})')
+
     return data
 
 #シリーズのダウンロードに関する処理
@@ -276,7 +291,7 @@ def dl_series(series_id, folder_path, key_data):
         #エピソードごとのフォルダの作成
         os.makedirs(os.path.join(folder_path, f'{series_id}_s', entry['id']), exist_ok=True)
         #挿絵リンクへの置き換え
-        text = format_image(series_id, entry['id'], True, text, folder_path)
+        text = format_image(series_id, entry['id'], True, text, json_data, folder_path)
 
         episode[i] = {
             'id' : entry['id'],
@@ -343,7 +358,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Create Date: {novel_create_day}")
     print(f"Novel Update Date: {novel_update_day}")
     make_dir(novel_id, folder_path, False)
-    text = format_image(novel_id, novel_id, False, novel_text, folder_path)
+    text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path)
     episode = {}
     episode[1] = {
         'id' : novel_id,
