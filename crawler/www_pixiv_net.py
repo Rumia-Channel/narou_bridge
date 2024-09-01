@@ -180,8 +180,11 @@ def format_survey(survey):
     return result
 
 #ベースフォルダ作成
-def make_dir(id, folder_path):
-    full_path = os.path.join(folder_path, str(id))
+def make_dir(id, folder_path, series):
+    if series:
+        full_path = os.path.join(folder_path, f'{id}_s')
+    else:
+        full_path = os.path.join(folder_path, f'{id}_n')
     if not os.path.exists(full_path):
         os.makedirs(full_path)
     if not os.path.exists(f'{full_path}/raw'):
@@ -217,11 +220,11 @@ def format_image(id, episode, series, data, folder_path):
                 img_url = i.get('urls').get('original')
                 img_data = get_with_cookie(img_url)
                 if series:
-                    with open(os.path.join(folder_path, str(id), str(episode), f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                    with open(os.path.join(folder_path, f'{id}_s', str(episode), f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
                         f.write(img_data.content)
                     data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
                 else:
-                    with open(os.path.join(folder_path, str(id), f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                    with open(os.path.join(folder_path, f'{id}_n', f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
                         f.write(img_data.content)
                     data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
     return data
@@ -252,7 +255,7 @@ def dl_series(series_id, folder_path, key_data):
     print(f"Series Total Characters: {series_chara}")
     print(f"Series Create Date: {series_create_day}")
     print(f"Series Update Date: {series_update_day}")
-    make_dir(series_id, folder_path)
+    make_dir(series_id, folder_path, True)
     con_json_data = json.loads(s_contents.text)
     novel_datas = find_key_recursively(con_json_data, 'novel')
     episode = {}
@@ -271,7 +274,7 @@ def dl_series(series_id, folder_path, key_data):
             introduction = ''
         
         #エピソードごとのフォルダの作成
-        os.makedirs(os.path.join(folder_path, str(series_id), entry['id']), exist_ok=True)
+        os.makedirs(os.path.join(folder_path, f'{series_id}_s', entry['id']), exist_ok=True)
         #挿絵リンクへの置き換え
         text = format_image(series_id, entry['id'], True, text, folder_path)
 
@@ -308,10 +311,10 @@ def dl_series(series_id, folder_path, key_data):
         'episodes': episode
     }
 
-    with open(os.path.join(folder_path, str(series_id), 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
-    cn.narou_gen(novel, os.path.join(folder_path, str(series_id)), key_data)
+    cn.narou_gen(novel, os.path.join(folder_path, f'{series_id}_s'), key_data)
 
 #短編のダウンロードに関する処理
 def dl_novel(json_data, novel_id, folder_path, key_data):
@@ -339,7 +342,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Caption: {novel_caption}")
     print(f"Novel Create Date: {novel_create_day}")
     print(f"Novel Update Date: {novel_update_day}")
-    make_dir(novel_id, folder_path)
+    make_dir(novel_id, folder_path, False)
     text = format_image(novel_id, novel_id, False, novel_text, folder_path)
     episode = {}
     episode[1] = {
@@ -387,4 +390,5 @@ def download(url, folder_path, key_data):
         series_id = re.search(r"series/(\d+)", url).group(1)
         dl_series(series_id, folder_path, key_data)
     else:
+        print(f'Error: "{url}" is not a valid URL')
         return
