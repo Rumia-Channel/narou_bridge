@@ -234,9 +234,7 @@ def format_image(id, episode, series, data, json_data, folder_path):
                 data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
     #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
     for inner_link in inner_links:
-        print(inner_link)
         in_img_url = find_key_recursively(json_data, inner_link).get('urls').get('original')
-        print(in_img_url)
         in_img_data = get_with_cookie(in_img_url)
         with open(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
             f.write(in_img_data.content)
