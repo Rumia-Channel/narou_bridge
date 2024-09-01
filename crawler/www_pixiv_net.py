@@ -159,19 +159,9 @@ def get_with_cookie(url):
     return response
 
 # レスポンスからjsonデータ(本文データ)を返却
-def return_content_json(response):
-    soup = BeautifulSoup(str(response.text), 'html.parser')
-    meta_tag = soup.find_all('meta', {'id': 'meta-preload-data'})
-    # meta_tagがリストである場合、最初の要素を取得
-    if isinstance(meta_tag, list):
-        meta_tag = meta_tag[0]
-
-    # content属性の値を取得
-    content_value = meta_tag['content']
-
-    # HTMLエンティティをデコード
-    decoded_content = unescape(content_value)
-    json_data = json.loads(decoded_content)
+def return_content_json(novelid):
+    novel_data = get_with_cookie(f"https://www.pixiv.net/ajax/novel/{novelid}").text
+    json_data = json.loads(unescape(novel_data))
     return json_data
 
 #アンケートの整形
@@ -191,7 +181,7 @@ def format_survey(survey):
 
 #ベースフォルダ作成
 def make_dir(id, folder_path):
-    full_path = os.path.join(folder_path, id)
+    full_path = os.path.join(folder_path, str(id))
     if not os.path.exists(full_path):
         os.makedirs(full_path)
     if not os.path.exists(f'{full_path}/raw'):
@@ -201,7 +191,7 @@ def make_dir(id, folder_path):
 
 def md_id(id, folder_path, title):
     # ディレクトリが存在しない場合は作成
-    full_path = os.path.join(folder_path, id)
+    full_path = os.path.join(folder_path, str(id))
     raw_path = os.path.join(full_path, 'raw')
     os.makedirs(raw_path, exist_ok=True)
     # index.htmlの更新
@@ -268,10 +258,10 @@ def dl_series(series_id, folder_path, key_data):
     episode = {}
     total_text = 0
     for i, entry in enumerate(reversed(novel_datas), 1):
-        json_data = return_content_json(get_with_cookie(f"https://www.pixiv.net/novel/show.php?id={entry['id']}"))
-        introduction = find_key_recursively(json_data, entry['id']).get('description').replace('<br />', '\n').replace('jump.php?', '')
-        postscript = find_key_recursively(json_data, entry['id']).get('pollData')
-        text = find_key_recursively(json_data, entry['id']).get('content').replace('\r\n', '\n')
+        json_data = return_content_json(entry['id'])
+        introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
+        postscript = find_key_recursively(json_data, 'body').get('pollData')
+        text = find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
         if postscript:
             postscript = format_survey(postscript)
             #print(postscript)
@@ -375,16 +365,16 @@ def download(url, folder_path, key_data):
     print(f'Response Status Code: {response.status_code}')
     if "https://www.pixiv.net/novel/show.php?id=" in url:
         # JSONとして解析
-        json_data = return_content_json(response)
+        novel_id = re.search(r"id=(\d+)", url).group(1)
+        json_data = return_content_json(novel_id)
         series_nav_data = find_key_recursively(json_data, "seriesNavData")
         if series_nav_data:
             series_id = series_nav_data.get("seriesId")
-            dl_series(series_id, folder_path)
+            dl_series(series_id, folder_path, key_data)
         else:
-            novel_id = re.search(r"id=(\d+)", url).group(1)
             #dl_novel(json_data, novel_id, folder_path, key_data) #ダウンロード処理
             print(f"Novel ID: {novel_id}")
-            novel_title = find_key_recursively(json_data, f"{novel_id}").get("title")
+            novel_title = find_key_recursively(json_data, "body").get("title")
             print(f"Novel Title: {novel_title}")
 
             # ディレクトリが存在しない場合は作成
