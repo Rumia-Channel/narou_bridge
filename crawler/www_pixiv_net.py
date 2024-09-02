@@ -203,12 +203,8 @@ def md_id(id, folder_path, title):
 
 #ルビ形式の整形
 def format_ruby(data):
-    #ルビ形式の抽出
-    rubys = re.findall(r"\[\[rb:(.*?) > (.*?)\]\]", data)
-    #ルビ形式の整形
-    for kanji, yomi in rubys:
-        data = data.replace(f"[[rb:{kanji} > {yomi}]]", f"[ruby:<{kanji}>({yomi})]")
-    return data
+    pattern = re.compile(r"\[\[rb:(.*?) > (.*?)\]\]")
+    return re.sub(pattern, lambda match: f'[ruby:<{match.group(1)}>({match.group(2)})]', data)
 
 #画像リンク形式の整形
 def format_image(id, episode, series, data, json_data, folder_path):
@@ -251,12 +247,17 @@ def format_image(id, episode, series, data, json_data, folder_path):
 
     return data
 
+#チャプタータグの除去
+def remove_chapter_tag(data):
+    pattern = re.compile(r"\[chapter:(.*?)\]")
+    return re.sub(pattern, lambda match: f'[newpage]{match.group(1)}\n\n\n', data)
+
 #シリーズのダウンロードに関する処理
 def dl_series(series_id, folder_path, key_data):
     # seriesNavDataの内部にあるseriesIdを取得
     print(f"Series ID: {series_id}")
     s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
-    s_contents = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
+    s_toc = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
     series_title = s_detail.get('title')
     series_authour = s_detail.get('userName')
     series_authour_id = s_detail.get('userId')
@@ -278,11 +279,11 @@ def dl_series(series_id, folder_path, key_data):
     print(f"Series Create Date: {series_create_day}")
     print(f"Series Update Date: {series_update_day}")
     make_dir(series_id, folder_path, True)
-    con_json_data = json.loads(s_contents.text)
-    novel_datas = find_key_recursively(con_json_data, 'novel')
+    toc_json_data = json.loads(s_toc.text)
+    novel_toc = toc_json_data.get('body')
     episode = {}
     total_text = 0
-    for i, entry in enumerate(reversed(novel_datas), 1):
+    for i, entry in enumerate(reversed(novel_toc), 1):
         json_data = return_content_json(entry['id'])
         introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, 'body').get('pollData')
@@ -299,17 +300,20 @@ def dl_series(series_id, folder_path, key_data):
         os.makedirs(os.path.join(folder_path, f'{series_id}_s', entry['id']), exist_ok=True)
         #挿絵リンクへの置き換え
         text = format_image(series_id, entry['id'], True, text, json_data, folder_path)
-
+        #ルビの置き換え
+        text = format_ruby(text)
+        #チャプタータグの除去
+        text = remove_chapter_tag(text)
         episode[i] = {
             'id' : entry['id'],
             'title': entry['title'],
             'introduction': unquote(introduction),
             'text': text,
             'postscript': postscript,
-            'createDate': datetime.strptime(entry['createDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M"),
-            'updateDate': datetime.strptime(entry['updateDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
+            'createDate': datetime.strptime(json_data.get('body').get('createDate'), "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M"),
+            'updateDate': datetime.strptime(json_data.get('body').get('uploadDate'), "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
         }
-        total_text += int(entry['textCount'])
+        total_text += int(find_key_recursively(json_data, 'body').get('characterCount'))
     
     # 作成日で並び替え
     episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
