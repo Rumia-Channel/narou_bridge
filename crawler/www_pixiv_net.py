@@ -201,6 +201,15 @@ def md_id(id, folder_path, title):
     index_file(folder_path, id, title)
     return raw_path
 
+#ルビ形式の整形
+def format_ruby(data):
+    #ルビ形式の抽出
+    rubys = re.findall(r"\[\[rb:(.*?) > (.*?)\]\]", data)
+    #ルビ形式の整形
+    for kanji, yomi in rubys:
+        data = data.replace(f"[[rb:{kanji} > {yomi}]]", f"[ruby:<{kanji}>({yomi})]")
+    return data
+
 #画像リンク形式の整形
 def format_image(id, episode, series, data, json_data, folder_path):
     #pixivimage: で始まるリンクの抽出
