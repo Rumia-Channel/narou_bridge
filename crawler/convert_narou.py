@@ -31,13 +31,21 @@ def replace_newpage(text):
     pattern = r'\[newpage\]'
     return re.sub(pattern, lambda match: '[#改ページ]', text)
 
+#ルビの置き換え
+def replace_ruby(text):
+    pattern = r"\[ruby:<(.*?)>\((.*?)\)\]"
+    return re.sub(pattern, lambda match: f'<ruby>{match.group(1)}<rp>(</rp><rt>{match.group(2)}</rt><rp>)</rp></ruby>', text)
+
 #テキスト形式の整形
 def format_text(text, id_prefix, key_data):
     
-    #画像リンクのい置き換え
+    #画像リンクの置き換え
     text = replace_images(text, key_data)
     #青空文庫形式の改ページへ置き換え
     #text = replace_newpage(text)
+
+    #ルビの置き換え
+    text = replace_ruby(text)
 
     # 改行で分割
     lines = text.split('\n')
