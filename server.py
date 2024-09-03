@@ -6,7 +6,7 @@ import os
 import importlib
 import random
 import string
-import datetime
+from datetime import datetime
 
 # アクセスを制限するファイルやフォルダのリスト
 restricted_items = ['cookie.json', 'ua.txt', '.json', '.js', '.key']
@@ -15,7 +15,7 @@ restricted_items = ['cookie.json', 'ua.txt', '.json', '.js', '.key']
 recent_request_ids = {}
 
 def cleanup_expired_requests(requests_dict, expiration_time):
-    current_time = datetime.datetime.now()
+    current_time = datetime.now()
     for key in list(requests_dict):
         if (current_time - requests_dict[key]).total_seconds() > expiration_time:
             del requests_dict[key]
@@ -121,7 +121,7 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
                 return
 
             # リクエストIDを記録
-            recent_request_ids[request_id] = datetime.datetime.now()
+            recent_request_ids[request_id] = datetime.now()
 
             #ダウンロード処理
             if not add_param is None:

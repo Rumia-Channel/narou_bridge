@@ -6,7 +6,7 @@ import json
 from playwright.sync_api import Playwright, sync_playwright, expect
 from html import unescape
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from . import convert_narou as cn
 
@@ -305,8 +305,6 @@ def dl_series(series_id, folder_path, key_data):
         introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, 'body').get('pollData')
         text = find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
-        with open(f'test_{entry['id']}.json' , 'w', encoding='utf-8') as f:
-            json.dump(find_key_recursively(json_data, 'body'), f, ensure_ascii=False, indent=4)
         if postscript:
             postscript = format_survey(postscript)
             #print(postscript)
@@ -331,8 +329,8 @@ def dl_series(series_id, folder_path, key_data):
             'introduction': unquote(introduction),
             'text': text,
             'postscript': postscript,
-            'createDate': datetime.strptime(json_data.get('body').get('createDate'), "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M"),
-            'updateDate': datetime.strptime(json_data.get('body').get('uploadDate'), "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
+            'createDate': datetime.strptime(json_data.get('body').get('createDate'), "%Y-%m-%dT%H:%M:%S%z").astimezone(timezone(timedelta(hours=9))).strftime("%Y/%m/%d %H:%M"),
+            'updateDate': datetime.strptime(json_data.get('body').get('uploadDate'), "%Y-%m-%dT%H:%M:%S%z").astimezone(timezone(timedelta(hours=9))).strftime("%Y/%m/%d %H:%M")
         }
         total_text += int(find_key_recursively(json_data, 'body').get('characterCount'))
 
@@ -353,8 +351,8 @@ def dl_series(series_id, folder_path, key_data):
         'total_characters': total_charactors,
         'all_characters': all_charactors,
         'type': '連載中',
-        'createDate': series_create_day.strftime("%Y年 %m月%d日 %H時%M分"),
-        'updateDate': series_update_day.strftime("%Y年 %m月%d日 %H時%M分"),
+        'createDate': series_create_day.astimezone(timezone(timedelta(hours=9))).strftime("%Y年 %m月%d日 %H時%M分"),
+        'updateDate': series_update_day.astimezone(timezone(timedelta(hours=9))).strftime("%Y年 %m月%d日 %H時%M分"),
         'episodes': episode
     }
 
