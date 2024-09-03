@@ -284,6 +284,8 @@ def dl_series(series_id, folder_path, key_data):
     episode = {}
     total_text = 0
     for i, entry in enumerate(reversed(novel_toc), 1):
+        if not entry['available']:
+            continue
         json_data = return_content_json(entry['id'])
         introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, 'body').get('pollData')
@@ -314,7 +316,7 @@ def dl_series(series_id, folder_path, key_data):
             'updateDate': datetime.strptime(json_data.get('body').get('uploadDate'), "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
         }
         total_text += int(find_key_recursively(json_data, 'body').get('characterCount'))
-    
+
     # 作成日で並び替え
     episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
     
