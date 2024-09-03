@@ -249,8 +249,23 @@ def format_image(id, episode, series, data, json_data, folder_path):
 
 #チャプタータグの除去
 def remove_chapter_tag(data):
-    pattern = re.compile(r"\[chapter:(.*?)\]")
-    return re.sub(pattern, lambda match: f'[newpage]{match.group(1)}\n\n\n', data)
+    pattern = re.compile(r"(.*?)(\[chapter:(.*?)\])", re.DOTALL)
+    def replacer(match):
+        before_chapter = match.group(1)
+        chapter_content = match.group(3).replace('\n', '')
+        
+        # 直前が改行でない場合のみ改行を追加
+        if before_chapter and before_chapter[-1] != '\n':
+            return f'{before_chapter}\n{chapter_content}\n\n\n'
+        else:
+            return f'{before_chapter}{chapter_content}\n\n\n'
+    
+    return re.sub(pattern, replacer, data)
+
+#URLへのリンクを置き換え
+def format_for_url(data):
+    pattern = re.compile(r"\[\[jumpuri:(.*?) > (.*?)\]\]")
+    return re.sub(pattern, lambda match: f'<a href={match.group(2)}>{match.group(1)}</a>', data)
 
 #シリーズのダウンロードに関する処理
 def dl_series(series_id, folder_path, key_data):
@@ -290,6 +305,8 @@ def dl_series(series_id, folder_path, key_data):
         introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, 'body').get('pollData')
         text = find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
+        with open(f'test_{entry['id']}.json' , 'w', encoding='utf-8') as f:
+            json.dump(find_key_recursively(json_data, 'body'), f, ensure_ascii=False, indent=4)
         if postscript:
             postscript = format_survey(postscript)
             #print(postscript)
@@ -306,6 +323,8 @@ def dl_series(series_id, folder_path, key_data):
         text = format_ruby(text)
         #チャプタータグの除去
         text = remove_chapter_tag(text)
+        #URLへのリンクを置き換え
+        text = format_for_url(text)
         episode[i] = {
             'id' : entry['id'],
             'title': entry['title'],

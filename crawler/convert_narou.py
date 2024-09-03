@@ -1,4 +1,4 @@
-import json
+from datetime import datetime
 import os
 import re
 
@@ -222,3 +222,6 @@ def narou_gen(data, nove_path, key_data):
             write_postscript(f, ep, key_data) # あとがき生成
             f.write('</body>\n')
             f.write('</html>\n')
+
+    #完了
+    print(f'{data.get("title")}の変換が完了しました。 終了時刻: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S%z')}')
