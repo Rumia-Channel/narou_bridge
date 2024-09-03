@@ -91,7 +91,7 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
                 self.wfile.write(b"File not found!")
 
         def do_POST(self):
-            print(f'POST received: {datetime.datetime.now()}')
+            print(f'POST received: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S%z')}')
             req_key = self.parse_query_params()
             if not self.check_auth(req_key):
                 return
