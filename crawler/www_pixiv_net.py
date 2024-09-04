@@ -329,8 +329,8 @@ def dl_series(series_id, folder_path, key_data):
             'introduction': unquote(introduction),
             'text': text,
             'postscript': postscript,
-            'createDate': datetime.fromisoformat(json_data.get('body').get('createDate')).astimezone(timezone(timedelta(hours=9))),
-            'updateDate': datetime.fromisoformat(json_data.get('body').get('uploadDate')).astimezone(timezone(timedelta(hours=9)))
+            'createDate': str(datetime.fromisoformat(json_data.get('body').get('createDate')).astimezone(timezone(timedelta(hours=9)))),
+            'updateDate': str(datetime.fromisoformat(json_data.get('body').get('uploadDate')).astimezone(timezone(timedelta(hours=9))))
         }
         total_text += int(find_key_recursively(json_data, 'body').get('characterCount'))
 
@@ -351,8 +351,8 @@ def dl_series(series_id, folder_path, key_data):
         'total_characters': total_charactors,
         'all_characters': all_charactors,
         'type': '連載中',
-        'createDate': series_create_day.astimezone(timezone(timedelta(hours=9))).strftime("%Y年 %m月%d日 %H時%M分"),
-        'updateDate': series_update_day.astimezone(timezone(timedelta(hours=9))).strftime("%Y年 %m月%d日 %H時%M分"),
+        'createDate': str(series_create_day.astimezone(timezone(timedelta(hours=9)))),
+        'updateDate': str(series_update_day.astimezone(timezone(timedelta(hours=9)))),
         'episodes': episode
     }
 
