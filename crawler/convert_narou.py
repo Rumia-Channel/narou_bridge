@@ -9,8 +9,8 @@ def write_index(f, data, key_data):
     for ep in data['episodes'].values():  # ソートせずにそのまま順番で処理
         episode_id = ep['id']
         episode_title = ep['title']
-        create_date = ep['createDate']
-        update_date = ep['updateDate']
+        create_date = datetime.strptime(ep['createDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
+        update_date = datetime.strptime(ep['updateDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
         
         f.write(f'<dl class="novel_sublist2 customlayout1">\n')
         f.write(f'<dd class="subtitle">\n')
@@ -190,11 +190,11 @@ def narou_gen(data, nove_path, key_data):
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>掲載日</th>\n')
-        f.write(f'<td>{data.get("createDate")}</td>\n')
+        f.write(f'<td>{datetime.fromisoformat(data.get("createDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>最終話掲載日</th>\n')
-        f.write(f'<td>{data.get("updateDate")}</td>\n')
+        f.write(f'<td>{datetime.fromisoformat(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>文字数</th>\n')
