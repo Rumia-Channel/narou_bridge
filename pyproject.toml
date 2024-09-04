@@ -13,6 +13,7 @@ dependencies = [
     "requests>=2.32.3",
     "beautifulsoup4>=4.12.3",
     "brotli>=1.1.0",
+    "jsondiff>=2.2.1",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
