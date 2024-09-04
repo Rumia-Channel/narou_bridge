@@ -9,8 +9,8 @@ def write_index(f, data, key_data):
     for ep in data['episodes'].values():  # ソートせずにそのまま順番で処理
         episode_id = ep['id']
         episode_title = ep['title']
-        create_date = datetime.strptime(ep['createDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
-        update_date = datetime.strptime(ep['updateDate'], "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
+        create_date = datetime.fromisoformat(ep['createDate']).strftime("%Y/%m/%d %H:%M")
+        update_date = datetime.fromisoformat(ep['updateDate']).strftime("%Y/%m/%d %H:%M")
         
         f.write(f'<dl class="novel_sublist2 customlayout1">\n')
         f.write(f'<dd class="subtitle">\n')
