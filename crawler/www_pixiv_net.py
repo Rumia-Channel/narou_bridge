@@ -7,7 +7,7 @@ from playwright.sync_api import Playwright, sync_playwright, expect
 from html import unescape
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
-
+from jsondiff import diff
 from . import convert_narou as cn
 
 #リキャプチャ対策
@@ -298,7 +298,7 @@ def dl_series(series_id, folder_path, key_data):
     novel_toc = toc_json_data.get('body')
     episode = {}
     total_text = 0
-    for i, entry in enumerate(reversed(novel_toc), 1):
+    for i, entry in enumerate(novel_toc, 1):
         if not entry['available']:
             continue
         json_data = return_content_json(entry['id'])
@@ -340,6 +340,7 @@ def dl_series(series_id, folder_path, key_data):
     total_charactors = str(f'{total_text:,}')
     all_charactors = str(f'{series_chara:,}')
     novel = {
+        'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
         'title': series_title,
         'id': series_id,
         'url': f"https://www.pixiv.net/novel/series/{series_id}",
@@ -356,6 +357,21 @@ def dl_series(series_id, folder_path, key_data):
         'episodes': episode
     }
 
+    #生データがすでにあるなら差分を保管
+    if os.path.exists(os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json')):
+        with open(os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+            old_json = json.load(f)
+        old_json = json.loads(json.dumps(old_json))
+        new_json = json.loads(json.dumps(novel))
+        diff_json = diff(new_json,old_json)
+        if len(diff_json) == 1 and 'get_date' in diff_json:
+            pass
+        else:
+            with open(os.path.join(folder_path, f'{series_id}_s', 'raw', f'diff_{str(novel["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
+                json.dump(diff_json, f, ensure_ascii=False, indent=4)
+        
+
+    #生データの書き出し
     with open(os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
