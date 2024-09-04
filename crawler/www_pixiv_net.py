@@ -330,7 +330,7 @@ def dl_series(series_id, folder_path, key_data):
             'text': text,
             'postscript': postscript,
             'createDate': datetime.fromisoformat(json_data.get('body').get('createDate')).astimezone(timezone(timedelta(hours=9))),
-            'updateDate': datetime.fromisoformat(json_data.get('body').get('updateDate')).astimezone(timezone(timedelta(hours=9)))
+            'updateDate': datetime.fromisoformat(json_data.get('body').get('uploadDate')).astimezone(timezone(timedelta(hours=9)))
         }
         total_text += int(find_key_recursively(json_data, 'body').get('characterCount'))
 
