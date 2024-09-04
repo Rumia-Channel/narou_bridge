@@ -264,7 +264,7 @@ def remove_chapter_tag(data):
 
 #URLへのリンクを置き換え
 def format_for_url(data):
-    pattern = re.compile(r"\[\[jumpuri:(.*?) > (.*?)\]\]")
+    pattern = re.compile(r"\[\[jumpuri:(.*?) > (.*?)\]\]", re.DOTALL)
     return re.sub(pattern, lambda match: f'<a href={match.group(2)}>{match.group(1)}</a>', data)
 
 #シリーズのダウンロードに関する処理
