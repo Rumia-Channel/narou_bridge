@@ -329,8 +329,8 @@ def dl_series(series_id, folder_path, key_data):
             'introduction': unquote(introduction),
             'text': text,
             'postscript': postscript,
-            'createDate': datetime.strptime(json_data.get('body').get('createDate'), "%Y-%m-%dT%H:%M:%S%z").astimezone(timezone(timedelta(hours=9))).strftime("%Y/%m/%d %H:%M"),
-            'updateDate': datetime.strptime(json_data.get('body').get('uploadDate'), "%Y-%m-%dT%H:%M:%S%z").astimezone(timezone(timedelta(hours=9))).strftime("%Y/%m/%d %H:%M")
+            'createDate': datetime.fromisoformat(json_data.get('body').get('createDate')).astimezone(timezone(timedelta(hours=9))),
+            'updateDate': datetime.fromisoformat(json_data.get('body').get('updateDate')).astimezone(timezone(timedelta(hours=9)))
         }
         total_text += int(find_key_recursively(json_data, 'body').get('characterCount'))
 
