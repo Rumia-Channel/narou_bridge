@@ -118,8 +118,6 @@ def write_postscript(f, ep, key_data):
 
 #小説家になろう形式で生成
 def narou_gen(data, nove_path, key_data):
-    if data.get("type") == "短編":
-        return
 
     page_counter = 2  # 最初のページ番号
     for ep in data['episodes'].values():
@@ -150,23 +148,24 @@ def narou_gen(data, nove_path, key_data):
         ep['text'] = '[newpage]'.join(formatted_text)
 
     #目次ファイルの生成
-    index_path = os.path.join(nove_path, 'index.html')
-    with open(index_path, 'w', encoding='utf-8') as f:
-        f.write('<!DOCTYPE html>\n')
-        f.write('<html lang="ja">\n')
-        f.write('<head>\n')
-        f.write('<meta charset="UTF-8">\n')
-        f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write('<title>Index Pixiv</title>\n')
-        f.write('</head>\n')
-        f.write('<body>\n')
-        f.write(f'<a href="../{key_data}">戻る</a>\n')
-        f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
-        f.write('<div class="index_box">\n')
-        write_index(f, data, key_data)  # 目次生成
-        f.write('</div>\n')
-        f.write('</body>\n')
-        f.write('</html>\n')
+    if not data.get("type") == "短編":
+        index_path = os.path.join(nove_path, 'index.html')
+        with open(index_path, 'w', encoding='utf-8') as f:
+            f.write('<!DOCTYPE html>\n')
+            f.write('<html lang="ja">\n')
+            f.write('<head>\n')
+            f.write('<meta charset="UTF-8">\n')
+            f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
+            f.write('<title>Index Pixiv</title>\n')
+            f.write('</head>\n')
+            f.write('<body>\n')
+            f.write(f'<a href="../{key_data}">戻る</a>\n')
+            f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
+            f.write('<div class="index_box">\n')
+            write_index(f, data, key_data)  # 目次生成
+            f.write('</div>\n')
+            f.write('</body>\n')
+            f.write('</html>\n')
     
     #インフォメーションファイルの生成
     info_path = os.path.join(nove_path, 'info', 'index.html')
@@ -181,19 +180,25 @@ def narou_gen(data, nove_path, key_data):
         f.write('<body>\n')
         f.write(f'<a href="../{key_data}">戻る</a>\n')
         f.write(f'<h1><a href="{data.get('url')}">{data.get("title")}</a></h1>\n')
-        f.write(f'<div><span id="noveltype">{data.get("type")}</span> 全{data.get("total_episodes")}部</div>\n')
+        if data.get("type") == "短編":
+            f.write(f'<div><span id="noveltype">短編</span></div>\n')
+        else:
+            f.write(f'<div><span id="noveltype">{data.get("type")}</span> 全{data.get("total_episodes")}部</div>\n')
         f.write('<table>\n')
         f.write(f'<tr><th class="ex">あらすじ</th><td class="ex">{data.get("caption")}</td></tr>\n')
         f.write('<tr>\n')
         f.write('<th>作者名</th>\n')
-        f.write(f'<td><a href="{data.get("authour_url")}">{data.get("authour")}</a></td>\n')
+        f.write(f'<td><a href="{data.get("author_url")}">{data.get("author")}</a></td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>掲載日</th>\n')
         f.write(f'<td>{datetime.fromisoformat(data.get("createDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
-        f.write('<th>最終話掲載日</th>\n')
+        if data.get("type") == "短編":
+            f.write('<th>最終更新日</th>\n')
+        else:
+            f.write('<th>最終掲載日</th>\n')
         f.write(f'<td>{datetime.fromisoformat(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
@@ -206,17 +211,24 @@ def narou_gen(data, nove_path, key_data):
 
     #エピソードファイルの生成
     for ep in data['episodes'].values():
-        ep_path = os.path.join(nove_path, f'{ep["id"]}', 'index.html')
+        if data.get("type") == "短編":
+            ep_path = os.path.join(nove_path, 'index.html')
+        else:
+            ep_path = os.path.join(nove_path, f'{ep["id"]}', 'index.html')
         with open(ep_path, 'w', encoding='utf-8') as f:
             f.write('<!DOCTYPE html>\n')
             f.write('<html lang="ja">\n')
             f.write('<head>\n')
             f.write('<meta charset="UTF-8">\n')
             f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-            f.write('<title>Index Pixiv</title>\n')
+            f.write(f'<title>{ep["title"]}</title>\n')
             f.write('</head>\n')
             f.write('<body>\n')
             f.write(f'<a href="../{key_data}">戻る</a>\n')
+            if data.get("type") == "短編":
+                f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
+            else:
+                f.write(f'<a href="../info/{key_data}">作品情報</a>\n')
             write_preface(f, ep, key_data)  # 前書き生成
             write_main_text(f, ep, key_data) # 本文生成
             write_postscript(f, ep, key_data) # あとがき生成
