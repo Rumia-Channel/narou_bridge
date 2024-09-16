@@ -25,10 +25,13 @@ def gen_pixiv_index(folder_path ,key_data):
                 data = json.load(f)
                 title = data.get('title', 'No title found')
                 author = data.get('author', 'No author found')
-                pairs[folder] = {'title': title, 'author': author}
+                type = data.get('type', 'No type found')
+                pairs[folder] = {'title': title, 'author': author, 'type': type}
         else:
             print(f"raw.json not found in {folder}")
             return
+    
+    pairs = dict(sorted(pairs.items(), key=lambda item: item[1]['author']))
     
     # index.html の生成
     with open(os.path.join(folder_path, 'index.html'), 'w', encoding='utf-8') as f:
@@ -43,7 +46,7 @@ def gen_pixiv_index(folder_path ,key_data):
         f.write(f'<a href="../{key_data}">戻る</a>\n')
         f.write('<h1>Pixiv 小説一覧</h1>\n')
         for folder, info in pairs.items():
-            f.write(f'<a href="{folder}/{key_data}">{info['title']}: {info['author']}</a><br>\n')
+            f.write(f'<a href="{folder}/{key_data}">({info['type']}) {info['title']}: {info['author']}</a><br>\n')
         f.write('</body>\n')
         f.write('</html>\n')
     
@@ -351,11 +354,11 @@ def dl_series(series_id, folder_path, key_data):
             old_json = json.load(f)
         old_json = json.loads(json.dumps(old_json))
         new_json = json.loads(json.dumps(novel))
-        diff_json = diff(new_json,old_json)
+        diff_json = convert_keys_to_str(diff(new_json,old_json))
         if len(diff_json) == 1 and 'get_date' in diff_json:
             pass
         else:
-            with open(os.path.join(folder_path, f'{series_id}_s', 'raw', f'diff_{str(novel["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
+            with open(os.path.join(folder_path, f'{series_id}_s', 'raw', f'diff_{str(novel["updateDate"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
                 json.dump(diff_json, f, ensure_ascii=False, indent=4)
         
 
@@ -364,6 +367,15 @@ def dl_series(series_id, folder_path, key_data):
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
     cn.narou_gen(novel, os.path.join(folder_path, f'{series_id}_s'), key_data)
+
+# キーをすべて文字列に変換する関数
+def convert_keys_to_str(d):
+    if isinstance(d, dict):
+        return {str(k): convert_keys_to_str(v) for k, v in d.items()}
+    elif isinstance(d, list):
+        return [convert_keys_to_str(i) for i in d]
+    else:
+        return d
 
 #短編のダウンロードに関する処理
 def dl_novel(json_data, novel_id, folder_path, key_data):
@@ -435,7 +447,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
             old_json = json.load(f)
         old_json = json.loads(json.dumps(old_json))
         new_json = json.loads(json.dumps(novel))
-        diff_json = diff(new_json,old_json)
+        diff_json = convert_keys_to_str(diff(new_json,old_json))
         if len(diff_json) == 1 and 'get_date' in diff_json:
             pass
         else:
