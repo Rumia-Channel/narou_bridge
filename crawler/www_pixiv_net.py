@@ -14,45 +14,43 @@ from . import convert_narou as cn
 import time
 import random
 
-#indexファイルの処理
-def index_file(folder_path, id, title):
-    index_path = os.path.join(folder_path, 'index.html')
-    if not os.path.exists(index_path):
-        with open(index_path, 'w', encoding='utf-8') as f:
-            f.write('<!DOCTYPE html>\n')
-            f.write('<html lang="ja">\n')
-            f.write('<head>\n')
-            f.write('<meta charset="UTF-8">\n')
-            f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-            f.write('<title>Index Pixiv</title>\n')
-            f.write('<script>function redirectWithParams(baseURL) {var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL;}</script>\n')
-            f.write('</head>\n')
-            f.write('<body>\n')
-            f.write('<a href="#" onclick="redirectWithParams(\'../\')">戻る</a>\n')
-            f.write('<div id="novel">\n')
-            f.write('</div>\n')
-            f.write('</body>\n')
-            f.write('</html>\n')
+def gen_pixiv_index(folder_path ,key_data):
+    subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
+    pairs = {}
+    # 各サブフォルダの raw/raw.json を読み込む
+    for folder in subfolders:
+        json_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
+        if os.path.exists(json_path):
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                title = data.get('title', 'No title found')
+                author = data.get('author', 'No author found')
+                pairs[folder] = {'title': title, 'author': author}
+        else:
+            print(f"raw.json not found in {folder}")
+            return
     
-    # BeautifulSoupを使ってHTMLを解析
-    with open(index_path, 'r', encoding='utf-8') as f:
-        soup = BeautifulSoup(f, 'html.parser')
+    # index.html の生成
+    with open(os.path.join(folder_path, 'index.html'), 'w', encoding='utf-8') as f:
+        f.write('<!DOCTYPE html>\n')
+        f.write('<html lang="ja">\n')
+        f.write('<head>\n')
+        f.write('<meta charset="UTF-8">\n')
+        f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
+        f.write('<title>Pixiv Index</title>\n')
+        f.write('</head>\n')
+        f.write('<body>\n')
+        f.write(f'<a href="../{key_data}">戻る</a>\n')
+        f.write('<h1>Pixiv 小説一覧</h1>\n')
+        for folder, info in pairs.items():
+            f.write(f'<a href="{folder}/{key_data}">{info['title']}: {info['author']}</a><br>\n')
+        f.write('</body>\n')
+        f.write('</html>\n')
     
-    novel_div = soup.find('div', id='novel')
-    
-    # すでに同じidを持つ<a>タグが存在するか確認
-    existing_link = novel_div.find('a', id=id)
-    
-    if not existing_link:
-        # 新しいデータを追加
-        new_link = soup.new_tag('a', id=id, href="#", onclick=f"redirectWithParams('{id}/')")
-        new_link.string = title
-        novel_div.append(new_link)
-        novel_div.append(soup.new_tag('br'))
-    
-    # 変更をファイルに書き出し
-    with open(index_path, 'w', encoding='utf-8') as f:
-        f.write(str(soup))
+    with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
+        json.dump(pairs, f, ensure_ascii=False, indent=4)
+
+    print('目次の生成が完了しました')
 
 # クッキーを読みこみ
 def load_cookies_from_json(input_file):
@@ -192,15 +190,6 @@ def make_dir(id, folder_path, series):
     if not os.path.exists(f'{full_path}/info'):
         os.makedirs(f'{full_path}/info')
 
-def md_id(id, folder_path, title):
-    # ディレクトリが存在しない場合は作成
-    full_path = os.path.join(folder_path, str(id))
-    raw_path = os.path.join(full_path, 'raw')
-    os.makedirs(raw_path, exist_ok=True)
-    # index.htmlの更新
-    index_file(folder_path, id, title)
-    return raw_path
-
 #ルビ形式の整形
 def format_ruby(data):
     pattern = re.compile(r"\[\[rb:(.*?) > (.*?)\]\]")
@@ -274,20 +263,20 @@ def dl_series(series_id, folder_path, key_data):
     s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
     s_toc = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
     series_title = s_detail.get('title')
-    series_authour = s_detail.get('userName')
-    series_authour_id = s_detail.get('userId')
+    series_author = s_detail.get('userName')
+    series_author_id = s_detail.get('userId')
     series_episodes = s_detail.get('total')
     series_chara = s_detail.get('publishedTotalCharacterCount')
     series_caption_data = find_key_recursively(s_detail, 'caption')
     series_create_day = datetime.fromisoformat(s_detail.get('createDate'))
     series_update_day = datetime.fromisoformat(s_detail.get('updateDate'))
     if series_caption_data:
-        series_caption = series_caption_data
+        series_caption = series_caption_data.replace('<br />', '\n').replace('jump.php?', '')
     else:
         series_caption = ''
     print(f"Series Title: {series_title}")
-    print(f"Series Authour: {series_authour}")
-    print(f"Series Authour ID: {series_authour_id}")
+    print(f"Series Author: {series_author}")
+    print(f"Series Author ID: {series_author_id}")
     print(f"Series Caption: {series_caption}")
     print(f"Series Total Episodes: {series_episodes}")
     print(f"Series Total Characters: {series_chara}")
@@ -307,7 +296,6 @@ def dl_series(series_id, folder_path, key_data):
         text = find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
         if postscript:
             postscript = format_survey(postscript)
-            #print(postscript)
         else:
             postscript = ''
         if not introduction:
@@ -344,8 +332,8 @@ def dl_series(series_id, folder_path, key_data):
         'title': series_title,
         'id': series_id,
         'url': f"https://www.pixiv.net/novel/series/{series_id}",
-        'authour': series_authour,
-        'authour_url': f"https://www.pixiv.net/users/{series_authour_id}",
+        'author': series_author,
+        'author_url': f"https://www.pixiv.net/users/{series_author_id}",
         'caption': series_caption,
         'total_episodes': len(episode),
         'all_episodes': series_episodes,
@@ -379,13 +367,13 @@ def dl_series(series_id, folder_path, key_data):
 
 #短編のダウンロードに関する処理
 def dl_novel(json_data, novel_id, folder_path, key_data):
-    novel_data = find_key_recursively(json_data, novel_id)
+    novel_data = json_data.get('body')
     novel_title = novel_data.get('title')
-    novel_authour = novel_data.get('userName')
-    novel_authour_id = novel_data.get('userId')
-    novel_caption = find_key_recursively(novel_data, 'caption').replace('<br />', '\n').replace('jump.php?', '')
-    if novel_caption:
-        novel_caption = novel_caption
+    novel_author = novel_data.get('userName')
+    novel_author_id = novel_data.get('userId')
+    novel_caption_data = find_key_recursively(novel_data, 'caption')
+    if novel_caption_data:
+        novel_caption = novel_caption_data.replace('<br />', '\n').replace('jump.php?', '')
     else:
         novel_caption = ''
     novel_text = novel_data.get('content').replace('\r\n', '\n')
@@ -395,16 +383,23 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     else:
         novel_postscript = ''
     novel_create_day = datetime.fromisoformat(novel_data.get('createDate'))
-    novel_update_day = datetime.fromisoformat(novel_data.get('updateDate'))
+    novel_update_day = datetime.fromisoformat(novel_data.get('uploadDate'))
     print(f"Novel ID: {novel_id}")
     print(f"Novel Title: {novel_title}")
-    print(f"Novel Authour: {novel_authour}")
-    print(f"Novel Authour ID: {novel_authour_id}")
+    print(f"Novel Author: {novel_author}")
+    print(f"Novel Author ID: {novel_author_id}")
     print(f"Novel Caption: {novel_caption}")
     print(f"Novel Create Date: {novel_create_day}")
     print(f"Novel Update Date: {novel_update_day}")
     make_dir(novel_id, folder_path, False)
+    #挿絵リンクへの置き換え
     text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path)
+    #ルビの置き換え
+    text = format_ruby(text)
+    #チャプタータグの除去
+    text = remove_chapter_tag(text)
+    #URLへのリンクを置き換え
+    text = format_for_url(text)
     episode = {}
     episode[1] = {
         'id' : novel_id,
@@ -412,10 +407,46 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         'introduction': unquote(novel_caption),
         'text': text,
         'postscript': novel_postscript,
-        'createDate': datetime.strptime(novel_create_day, "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M"),
-        'updateDate': datetime.strptime(novel_update_day, "%Y-%m-%dT%H:%M:%S%z").strftime("%Y/%m/%d %H:%M")
+        'createDate': str(datetime.fromisoformat(novel_data.get('createDate')).astimezone(timezone(timedelta(hours=9)))),
+        'updateDate': str(datetime.fromisoformat(novel_data.get('uploadDate')).astimezone(timezone(timedelta(hours=9))))
     }
 
+    novel = {
+        'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
+        'title': novel_title,
+        'id': novel_id,
+        'url': f"https://www.pixiv.net/novel/show.php?id={novel_id}",
+        'author': novel_author,
+        'author_url': f"https://www.pixiv.net/users/{novel_author_id}",
+        'caption': novel_caption,
+        'total_episodes': 1,
+        'all_episodes': 1,
+        'total_characters': novel_data.get('characterCount'),
+        'all_characters': novel_data.get('characterCount'),
+        'type': '短編',
+        'createDate': str(novel_create_day.astimezone(timezone(timedelta(hours=9)))),
+        'updateDate': str(novel_update_day.astimezone(timezone(timedelta(hours=9)))),
+        'episodes': episode
+    }
+
+    #生データがすでにあるなら差分を保管
+    if os.path.exists(os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json')):
+        with open(os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+            old_json = json.load(f)
+        old_json = json.loads(json.dumps(old_json))
+        new_json = json.loads(json.dumps(novel))
+        diff_json = diff(new_json,old_json)
+        if len(diff_json) == 1 and 'get_date' in diff_json:
+            pass
+        else:
+            with open(os.path.join(folder_path, f'{novel_id}_n', 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
+                json.dump(diff_json, f, ensure_ascii=False, indent=4)
+
+    #生データの書き出し
+    with open(os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
+        json.dump(novel, f, ensure_ascii=False, indent=4)
+
+    cn.narou_gen(novel, os.path.join(folder_path, f'{novel_id}_n'), key_data)
 
 #ダウンロード処理
 def download(url, folder_path, key_data):
@@ -436,20 +467,13 @@ def download(url, folder_path, key_data):
             series_id = series_nav_data.get("seriesId")
             dl_series(series_id, folder_path, key_data)
         else:
-            #dl_novel(json_data, novel_id, folder_path, key_data) #ダウンロード処理
-            print(f"Novel ID: {novel_id}")
-            novel_title = find_key_recursively(json_data, "body").get("title")
-            print(f"Novel Title: {novel_title}")
-
-            # ディレクトリが存在しない場合は作成
-            raw_path = md_id(novel_id, folder_path, novel_title)
-            
-            # 生データの書き出し
-            with open(os.path.join(raw_path, f'{novel_id}.json'), 'w', encoding='utf-8') as f:
-                json.dump(json_data, f, ensure_ascii=False, indent=4)
+            dl_novel(json_data, novel_id, folder_path, key_data) #ダウンロード処理
     elif "https://www.pixiv.net/novel/series/" in url:
         series_id = re.search(r"series/(\d+)", url).group(1)
         dl_series(series_id, folder_path, key_data)
     else:
         print(f'Error: "{url}" is not a valid URL')
         return
+    
+    #仕上げ処理(indexファイルの更新)
+    gen_pixiv_index(folder_path, key_data)
