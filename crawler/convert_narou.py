@@ -161,6 +161,7 @@ def narou_gen(data, nove_path, key_data):
             f.write('<body>\n')
             f.write(f'<a href="../{key_data}">戻る</a>\n')
             f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
+            f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
             f.write('<div class="index_box">\n')
             write_index(f, data, key_data)  # 目次生成
             f.write('</div>\n')
@@ -227,8 +228,10 @@ def narou_gen(data, nove_path, key_data):
             f.write(f'<a href="../{key_data}">戻る</a>\n')
             if data.get("type") == "短編":
                 f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
+                f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
             else:
                 f.write(f'<a href="../info/{key_data}">作品情報</a>\n')
+                f.write(f'<p class="novel_subtitle">{ep["title"]}</p>\n')
             write_preface(f, ep, key_data)  # 前書き生成
             write_main_text(f, ep, key_data) # 本文生成
             write_postscript(f, ep, key_data) # あとがき生成
