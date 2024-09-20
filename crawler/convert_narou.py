@@ -12,14 +12,13 @@ def write_index(f, data, key_data):
         create_date = datetime.fromisoformat(ep['createDate']).strftime("%Y/%m/%d %H:%M")
         update_date = datetime.fromisoformat(ep['updateDate']).strftime("%Y/%m/%d %H:%M")
         
-        f.write(f'<dl class="novel_sublist2 customlayout1">\n')
-        f.write(f'<dd class="subtitle">\n')
-        f.write(f'<a href="./{episode_id}/{key_data}">{episode_title}</a>\n')
-        f.write(f'</dd>\n')
-        f.write(f'<dt class="long_update">\n')
+        f.write(f'<div class="p-eplist">\n')
+        f.write(f'<div class="p-eplist__sublist">\n')
+        f.write(f'<a href="./{episode_id}/{key_data}" class="p-eplist__subtitle">{episode_title}</a>\n')
+        f.write(f'<div class="p-eplist__update">\n')
         f.write(f'{create_date}<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
-        f.write(f'</dt>\n')
-        f.write(f'</dl>\n')
+        f.write(f'</div>\n')
+        f.write(f'</div>\n')
 
 #画像リンクへの置き換え
 def replace_images(text, key_data):
@@ -184,7 +183,7 @@ def narou_gen(data, nove_path, key_data):
         if data.get("type") == "短編":
             f.write(f'<div><span id="noveltype">短編</span></div>\n')
         else:
-            f.write(f'<div><span id="noveltype">{data.get("type")}</span> 全{data.get("total_episodes")}部</div>\n')
+            f.write(f'<div><span id="noveltype">{data.get("type")}</span> 全{data.get("total_episodes")}エピソード</div>\n')
         f.write('<table>\n')
         f.write(f'<tr><th class="ex">あらすじ</th><td class="ex">{data.get("caption")}</td></tr>\n')
         f.write('<tr>\n')
