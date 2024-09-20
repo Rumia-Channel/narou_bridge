@@ -14,9 +14,9 @@ def write_index(f, data, key_data):
         
         f.write(f'<div class="p-eplist">\n')
         f.write(f'<div class="p-eplist__sublist">\n')
-        f.write(f'<a href="./{episode_id}/{key_data}" class="p-eplist__subtitle">{episode_title}</a>\n')
+        f.write(f'<a href="./{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n')
         f.write(f'<div class="p-eplist__update">\n')
-        f.write(f'{create_date}<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
+        f.write(f'{create_date}\n<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
         f.write(f'</div>\n')
         f.write(f'</div>\n')
 
@@ -95,14 +95,14 @@ def write_preface(f, ep, key_data):
     preface = ep.get('introduction')
     if preface == '':
         return
-    f.write('<div id="novel_p" class="novel_view">\n')
+    f.write('<div class="js-novel-text p-novel__text p-novel__text--preface">\n')
     f.write(format_text(preface, 'Lp', key_data) + '\n')
     f.write('</div>\n')
 
 #本文の書き込み
 def write_main_text(f, ep, key_data):
     text = ep.get('text')
-    f.write('<div id="novel_honbun" class="novel_view">\n')
+    f.write('<div class="js-novel-text p-novel__text">\n')
     f.write(format_text(text, 'L', key_data) + '\n')
     f.write('</div>\n')
 
@@ -111,7 +111,7 @@ def write_postscript(f, ep, key_data):
     postscript = ep.get('postscript')
     if postscript == '':
         return
-    f.write('<div id="novel_a" class="novel_view">\n')
+    f.write('<div class="js-novel-text p-novel__text p-novel__text--afterword">\n')
     f.write(format_text(postscript, 'La', key_data) + '\n')
     f.write('</div>\n')
 
@@ -197,7 +197,9 @@ def narou_gen(data, nove_path, key_data):
         f.write('<tr>\n')
         if data.get("type") == "短編":
             f.write('<th>最終更新日</th>\n')
-        else:
+        elif data.get("type") == "連載":
+            f.write('<th>最新掲載日</th>\n')
+        elif data.get("type") == "完結":
             f.write('<th>最終掲載日</th>\n')
         f.write(f'<td>{datetime.fromisoformat(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
         f.write('</tr>\n')
