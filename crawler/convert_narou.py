@@ -197,9 +197,9 @@ def narou_gen(data, nove_path, key_data):
         f.write('<tr>\n')
         if data.get("type") == "短編":
             f.write('<th>最終更新日</th>\n')
-        elif data.get("type") == "連載":
+        elif data.get("type") == "連載中":
             f.write('<th>最新掲載日</th>\n')
-        elif data.get("type") == "完結":
+        elif data.get("type") == "完結済":
             f.write('<th>最終掲載日</th>\n')
         f.write(f'<td>{datetime.fromisoformat(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
         f.write('</tr>\n')
