@@ -292,6 +292,7 @@ def dl_series(series_id, folder_path, key_data):
     for i, entry in enumerate(novel_toc, 1):
         if not entry['available']:
             continue
+        time.sleep(random.uniform(1,2))
         json_data = return_content_json(entry['id'])
         introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, 'body').get('pollData')
@@ -366,6 +367,7 @@ def dl_series(series_id, folder_path, key_data):
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
     cn.narou_gen(novel, os.path.join(folder_path, f'{series_id}_s'), key_data, data_folder, host)
+    print("")
 
 # キーをすべて文字列に変換する関数
 def convert_keys_to_str(d):
@@ -382,7 +384,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     novel_title = novel_data.get('title')
     novel_author = novel_data.get('userName')
     novel_author_id = novel_data.get('userId')
-    novel_caption_data = find_key_recursively(novel_data, 'caption')
+    novel_caption_data = novel_data.get('description')
     if novel_caption_data:
         novel_caption = novel_caption_data.replace('<br />', '\n').replace('jump.php?', '')
     else:
@@ -458,6 +460,44 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
     cn.narou_gen(novel, os.path.join(folder_path, f'{novel_id}_n'), key_data, data_folder, host)
+    print("")
+
+#ユーザーページからのダウンロード
+def dl_user(user_id, folder_path, key_data):
+    print(f'User ID: {user_id}')
+    user_data = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all").json()
+    user_name = user_data.get('body').get('name')
+    user_all_novels = user_data.get('body').get('novels')
+    user_all_novel_series = user_data.get('body').get('novelSeries')
+    user_novel_series = []
+    in_novel_series = []
+    user_novels = []
+    print(f'User Name: {user_name}')
+    #シリーズIDの取得
+    for ns in user_all_novel_series:
+        user_novel_series.append(ns.get('id'))
+    #小説IDの取得
+    user_novels = list(user_all_novels.keys())
+    #シリーズとの重複を除去
+    for i in user_novel_series:
+        time.sleep(random.uniform(1,2))
+        for nid in get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles").json().get('body'):
+            in_novel_series.append(nid.get('id'))
+    user_novels = [n for n in user_novels if n not in in_novel_series]
+    print(f'User Novels: {len(user_novels)}')
+    print(f'User Novel Series: {len(user_novel_series)}')
+
+    print("\nSeries Download Start\n")
+    for series_id in user_novel_series:
+        dl_series(series_id, folder_path, key_data)
+        time.sleep(random.uniform(1,2))
+
+    print("\nNovel Download Start\n")
+    for novel_id in user_novels:
+        dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
+        time.sleep(random.uniform(1,2))
+
+    print("\nDownload Complete\n")
 
 #ダウンロード処理
 def download(url, folder_path, key_data, data_path, host_name):
@@ -488,6 +528,9 @@ def download(url, folder_path, key_data, data_path, host_name):
     elif "https://www.pixiv.net/novel/series/" in url:
         series_id = re.search(r"series/(\d+)", url).group(1)
         dl_series(series_id, folder_path, key_data)
+    elif "https://www.pixiv.net/users/" in url:
+        user_id = re.search(r"users/(\d+)", url).group(1)
+        dl_user(user_id, folder_path, key_data)
     else:
         print(f'Error: "{url}" is not a valid URL')
         return
