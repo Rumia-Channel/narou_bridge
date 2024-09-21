@@ -14,7 +14,7 @@ def write_index(f, data, key_data):
         
         f.write(f'<div class="p-eplist">\n')
         f.write(f'<div class="p-eplist__sublist">\n')
-        f.write(f'<a href="./{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n')
+        f.write(f'<a href="{link}{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n')
         f.write(f'<div class="p-eplist__update">\n')
         f.write(f'{create_date}\n<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
         f.write(f'</div>\n')
@@ -23,7 +23,7 @@ def write_index(f, data, key_data):
 #画像リンクへの置き換え
 def replace_images(text, key_data):
     pattern = r'\[image\]\((.*?)\)'
-    return re.sub(pattern, lambda match: f'<img src="./{match.group(1)}{key_data}" alt="{match.group(1)}">', text)
+    return re.sub(pattern, lambda match: f'<img src="{link}{match.group(1)}{key_data}" alt="{match.group(1)}">', text)
 
 #改ページの置き換え
 def replace_newpage(text):
@@ -41,7 +41,7 @@ def format_text(text, id_prefix, key_data):
     #画像リンクの置き換え
     text = replace_images(text, key_data)
     #青空文庫形式の改ページへ置き換え
-    #text = replace_newpage(text)
+    text = replace_newpage(text)
 
     #ルビの置き換え
     text = replace_ruby(text)
@@ -116,7 +116,7 @@ def write_postscript(f, ep, key_data):
     f.write('</div>\n')
 
 #小説家になろう形式で生成
-def narou_gen(data, nove_path, key_data):
+def narou_gen(data, nove_path, key_data, data_folder, host_name):
 
     page_counter = 2  # 最初のページ番号
     for ep in data['episodes'].values():
@@ -139,7 +139,7 @@ def narou_gen(data, nove_path, key_data):
             for jump in range(1, len(page_links) + 1):
                 jump_marker = f'[jump:{jump}]'
                 if jump_marker in page:
-                    jump_link = f'<a href="{page_links[jump - 1]}">{jump}ページ目へ移動</a>'
+                    jump_link = f'[link_s]{page_links[jump - 1]}[link_t]{jump}ページ目へ移動[link_e]'
                     page = page.replace(jump_marker, jump_link)
             formatted_text.append(page)
 
@@ -217,6 +217,9 @@ def narou_gen(data, nove_path, key_data):
             ep_path = os.path.join(nove_path, 'index.html')
         else:
             ep_path = os.path.join(nove_path, f'{ep["id"]}', 'index.html')
+
+        global link
+        link = host_name + ep_path.replace('index.html', '').replace(data_folder, '').replace('\\', '/')
         with open(ep_path, 'w', encoding='utf-8') as f:
             f.write('<!DOCTYPE html>\n')
             f.write('<html lang="ja">\n')

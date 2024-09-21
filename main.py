@@ -52,7 +52,7 @@ def initialize():
 
 
     print("Initialize successfully!")
-    return int(config['setting']['reload']), int(config['setting']['interval']), site_dic, folder_path, data_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['ssl']['domain']
+    return int(config['setting']['reload']), int(config['setting']['interval']), site_dic, folder_path, data_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
 
 if __name__ == '__main__':
     reload_time, interval, site_dic, folder_path, data_path, key, use_ssl, port, domain = initialize()

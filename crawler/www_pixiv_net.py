@@ -5,7 +5,6 @@ from urllib.parse import unquote
 import json
 from playwright.sync_api import Playwright, sync_playwright, expect
 from html import unescape
-from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
 from jsondiff import diff
 from . import convert_narou as cn
@@ -366,7 +365,7 @@ def dl_series(series_id, folder_path, key_data):
     with open(os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
-    cn.narou_gen(novel, os.path.join(folder_path, f'{series_id}_s'), key_data)
+    cn.narou_gen(novel, os.path.join(folder_path, f'{series_id}_s'), key_data, data_folder, host)
 
 # キーをすべて文字列に変換する関数
 def convert_keys_to_str(d):
@@ -458,11 +457,17 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     with open(os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
-    cn.narou_gen(novel, os.path.join(folder_path, f'{novel_id}_n'), key_data)
+    cn.narou_gen(novel, os.path.join(folder_path, f'{novel_id}_n'), key_data, data_folder, host)
 
 #ダウンロード処理
-def download(url, folder_path, key_data):
-    
+def download(url, folder_path, key_data, data_path, host_name):
+
+    #引き渡し用変数
+    global data_folder
+    global host
+    data_folder = data_path
+    host = host_name
+
     response = get_with_cookie(url)
 
     if response.status_code == 404:
