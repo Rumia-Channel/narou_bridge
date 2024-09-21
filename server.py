@@ -175,6 +175,8 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
                         print(f'Update: {site_key}\n')
                         globals()[site_key].init(folder_path)
                         globals()[site_key].update(folder_path, key_data, data_path, host_name)
+                
+                print("Update Complete\n")
 
             # ダウンロード処理
             if not add_param is None:
