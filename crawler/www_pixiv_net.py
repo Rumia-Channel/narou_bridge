@@ -467,7 +467,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 def dl_user(user_id, folder_path, key_data):
     print(f'User ID: {user_id}')
     user_data = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all").json()
-    user_name = user_data.get('body').get('name')
+    user_name = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}").json().get('body').get('name')
     user_all_novels = user_data.get('body').get('novels')
     user_all_novel_series = user_data.get('body').get('novelSeries')
     user_novel_series = []
@@ -579,7 +579,7 @@ def update(folder_path, key_data, data_path, host_name):
             user_json = json.load(uf)
         for user_id, status in user_json.items():
             if status == 'enable':
-                if get_with_cookie(f'https://www.pixiv.net/users/{novel_id}/novels').status_code == 404:
+                if get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels').status_code == 404:
                     print("404 Not Found")
                     print("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
