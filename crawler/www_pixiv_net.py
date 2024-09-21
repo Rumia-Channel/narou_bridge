@@ -24,8 +24,9 @@ def gen_pixiv_index(folder_path ,key_data):
                 data = json.load(f)
                 title = data.get('title', 'No title found')
                 author = data.get('author', 'No author found')
+                author_id = data.get('author_url', 'No author_id found').replace('https://www.pixiv.net/users/', '')
                 type = data.get('type', 'No type found')
-                pairs[folder] = {'title': title, 'author': author, 'type': type}
+                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id,'type': type}
         else:
             print(f"raw.json not found in {folder}")
             return
@@ -558,6 +559,7 @@ def download(url, folder_path, key_data, data_path, host_name):
     #仕上げ処理(indexファイルの更新)
     gen_pixiv_index(folder_path, key_data)
 
+#更新処理
 def update(folder_path, key_data, data_path, host_name):
 
     #引き渡し用変数
@@ -570,7 +572,24 @@ def update(folder_path, key_data, data_path, host_name):
     with open(index_json, 'r', encoding='utf-8') as f:
         index_json = json.load(f)
 
+    user_ids = []
+
+    if os.path.isfile(os.path.join(folder_path, 'user.json')):
+        with open(os.path.join(folder_path, 'user.json'), 'r', encoding='utf-8') as uf:
+            user_json = json.load(uf)
+        for user_id, status in user_json.items():
+            if status == 'enable':
+                if get_with_cookie(f'https://www.pixiv.net/users/{novel_id}/novels').status_code == 404:
+                    print("404 Not Found")
+                    print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                    return
+                dl_user(user_id, folder_path, key_data)
+                user_ids.append(user_id)
+                time.sleep(random.uniform(1,2))
+
     for folder_name, index_data in index_json.items():
+        if index_data.get("author_id") in user_ids:
+            continue
         if index_data.get("type") == "短編":
             novel_id = folder_name.replace('_n', '')
             if get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}').status_code == 404:
@@ -601,4 +620,4 @@ def update(folder_path, key_data, data_path, host_name):
                 print(f'No updates for {index_data.get("title")}\n')
         time.sleep(random.uniform(1,2))
     
-    print("\nUpdate Complete\n")
+    gen_pixiv_index(folder_path, key_data)
