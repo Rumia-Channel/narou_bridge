@@ -557,3 +557,48 @@ def download(url, folder_path, key_data, data_path, host_name):
     
     #仕上げ処理(indexファイルの更新)
     gen_pixiv_index(folder_path, key_data)
+
+def update(folder_path, key_data, data_path, host_name):
+
+    #引き渡し用変数
+    global data_folder
+    global host
+    data_folder = data_path
+    host = host_name
+
+    index_json = os.path.join(folder_path, 'index.json')
+    with open(index_json, 'r', encoding='utf-8') as f:
+        index_json = json.load(f)
+
+    for folder_name, index_data in index_json.items():
+        if index_data.get("type") == "短編":
+            novel_id = folder_name.replace('_n', '')
+            if get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}').status_code == 404:
+                print("404 Not Found")
+                print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                return
+            json_data = return_content_json(novel_id)
+            with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as onf:
+                old_novel_json = json.load(onf)
+            if datetime.fromisoformat(json_data.get('body').get('uploadDate')) != datetime.fromisoformat(old_novel_json.get('updateDate')):
+                dl_novel(json_data, novel_id, folder_path, key_data)
+            else:
+                print(f'No updates for {index_data.get("title")}\n')
+
+        elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
+            series_id = folder_name.replace('_s', '')
+            if get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}').status_code == 404:
+                print("404 Not Found")
+                print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                return
+            s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
+            with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as osf:
+                old_series_json = json.load(osf)
+
+            if datetime.fromisoformat(s_detail.get('updateDate')) != datetime.fromisoformat(old_series_json.get('updateDate')):
+                dl_series(series_id, folder_path, key_data)
+            else:
+                print(f'No updates for {index_data.get("title")}\n')
+        time.sleep(random.uniform(1,2))
+    
+    print("\nUpdate Complete\n")
