@@ -14,7 +14,7 @@ def write_index(f, data, key_data):
         
         f.write(f'<div class="p-eplist">\n')
         f.write(f'<div class="p-eplist__sublist">\n')
-        f.write(f'<a href="{link}{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n')
+        f.write(f'<a href="{link}/{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n')
         f.write(f'<div class="p-eplist__update">\n')
         f.write(f'{create_date}\n<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
         f.write(f'</div>\n')
@@ -146,8 +146,11 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         # フォーマット済みテキストをエピソードに保存
         ep['text'] = '[newpage]'.join(formatted_text)
 
+    global link
+
     #目次ファイルの生成
     if not data.get("type") == "短編":
+        link = host_name + nove_path.replace(data_folder, '').replace('\\', '/')
         index_path = os.path.join(nove_path, 'index.html')
         with open(index_path, 'w', encoding='utf-8') as f:
             f.write('<!DOCTYPE html>\n')
@@ -217,8 +220,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             ep_path = os.path.join(nove_path, 'index.html')
         else:
             ep_path = os.path.join(nove_path, f'{ep["id"]}', 'index.html')
-
-        global link
+        
         link = host_name + ep_path.replace('index.html', '').replace(data_folder, '').replace('\\', '/')
         with open(ep_path, 'w', encoding='utf-8') as f:
             f.write('<!DOCTYPE html>\n')
@@ -241,6 +243,5 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             write_postscript(f, ep, key_data) # あとがき生成
             f.write('</body>\n')
             f.write('</html>\n')
-
     #完了
     print(f'{data.get("title")}の変換が完了しました。 終了時刻: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S%z')}')
