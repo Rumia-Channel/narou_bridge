@@ -122,6 +122,7 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
             post_data = self.rfile.read(content_length).decode('utf-8')
             post_params = urllib.parse.parse_qs(post_data)
             add_param = post_params.get("add", [None])[0]
+            update_param = post_params.get("update", [None])[0]
             request_id = post_params.get("request_id", [None])[0]
 
             if request_id is None:
@@ -145,6 +146,36 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
             # リクエストIDを記録
             recent_request_ids[request_id] = datetime.now()
 
+            #ホスト名の確定
+            if use_ssl == 1:
+                host_name = f'https://{domain}:{port}'
+            else:
+                host_name = f'http://{domain}:{port}'
+
+            # 更新処理
+            if not update_param is None:
+                if not update_param == 'all':
+                    # 更新処理
+                    for site_key, value in site_dic.items():
+                        if update_param == site_key:
+                            site = site_key
+                            break
+                    else:
+                        self.send_response(400)
+                        self.send_header("Content-type", "text/html")
+                        self.end_headers()
+                        self.wfile.write(b"Invalid update_parm value")
+                        return
+                    print(f'Update: {site}\n')
+                    globals()[site].init(folder_path)
+                    globals()[site].update(folder_path, key_data, data_path, host_name)
+                else:
+                    # 全更新処理
+                    for site_key, value in site_dic.items():
+                        print(f'Update: {site_key}\n')
+                        globals()[site_key].init(folder_path)
+                        globals()[site_key].update(folder_path, key_data, data_path, host_name)
+
             # ダウンロード処理
             if not add_param is None:
                 # webサイトの判別
@@ -159,12 +190,6 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
                     self.end_headers()
                     self.wfile.write(b"Invalid add_param value")
                     return
-                
-                #ホスト名の確定
-                if use_ssl == 1:
-                    host_name = f'https://{domain}:{port}'
-                else:
-                    host_name = f'http://{domain}:{port}'
 
                 print(f'Web site: {site}')
                 print(f'URL: {add_param}')

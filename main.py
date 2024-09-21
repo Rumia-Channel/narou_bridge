@@ -34,21 +34,93 @@ def initialize():
         f.write('<head>\n')
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write('<script>function redirectWithParams(baseURL) {var params = document.location.search; var newURL = baseURL + params; window.location.href = newURL;}</script>\n')
-        f.write('<script>function generateRequestId() {return "xxxx-xxxx-4xxx-yxxx-xxxx".replace(/[xy]/g, function(c) {var r = Math.random() * 16 | 0, v = c === "x" ? r : (r & 0x3 | 0x8); return v.toString(16);});} function debounce(func, delay) {var timeoutId; return function() {clearTimeout(timeoutId); timeoutId = setTimeout(func, delay);};} var debouncedSubmit = debounce(submit, 1000); function submit() {var input1 = document.getElementById("input1").value; var requestId = generateRequestId(); var currentUrl = new URL(window.location.href); var keyParam = currentUrl.searchParams.get("key"); var url = "#?add=" + encodeURIComponent(input1); if (keyParam) {url += "&key=" + encodeURIComponent(keyParam);} var xhr = new XMLHttpRequest(); xhr.open("POST", url, true); xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded"); xhr.onreadystatechange = function() {if (xhr.readyState === 4 && xhr.status === 200) {}}; xhr.send("add=" + encodeURIComponent(input1) + "&request_id=" + requestId);}</script>\n')
+        f.write('<script>\n')
+
+        # URLにパラメータを付与してリダイレクトする関数
+        f.write('function redirectWithParams(baseURL) {\n')
+        f.write('  var params = document.location.search;\n')
+        f.write('  var newURL = baseURL + params;\n')
+        f.write('  window.location.href = newURL;\n')
+        f.write('}\n')
+
+        # リクエストIDを生成する関数
+        f.write('function generateRequestId() {\n')
+        f.write('  return "xxxx-xxxx-4xxx-yxxx-xxxx".replace(/[xy]/g, function(c) {\n')
+        f.write('    var r = Math.random() * 16 | 0, v = c === "x" ? r : (r & 0x3 | 0x8);\n')
+        f.write('    return v.toString(16);\n')
+        f.write('  });\n')
+        f.write('}\n')
+
+        # 関数を指定された遅延時間後に実行するデバウンス処理
+        f.write('function debounce(func, delay) {\n')
+        f.write('  var timeoutId;\n')
+        f.write('  return function() {\n')
+        f.write('    clearTimeout(timeoutId);\n')
+        f.write('    timeoutId = setTimeout(func, delay);\n')
+        f.write('  };\n')
+        f.write('}\n')
+
+        # デバウンスされたsubmit関数
+        f.write('var debouncedSubmit = debounce(submit, 1000);\n')
+
+        # input1の値をPOSTリクエストで送信する関数
+        f.write('function submit() {\n')
+        f.write('  var input1 = document.getElementById("input1").value;\n')
+        f.write('  var requestId = generateRequestId();\n')
+        f.write('  var currentUrl = new URL(window.location.href);\n')
+        f.write('  var keyParam = currentUrl.searchParams.get("key");\n')
+        f.write('  var url = "#?add=" + encodeURIComponent(input1);\n')
+        f.write('  if (keyParam) {\n')
+        f.write('    url += "&key=" + encodeURIComponent(keyParam);\n')
+        f.write('  }\n')
+        f.write('  var xhr = new XMLHttpRequest();\n')
+        f.write('  xhr.open("POST", url, true);\n')
+        f.write('  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");\n')
+        f.write('  xhr.onreadystatechange = function() {\n')
+        f.write('    if (xhr.readyState === 4 && xhr.status === 200) {\n')
+        f.write('      // 成功時の処理\n')
+        f.write('    }\n')
+        f.write('  };\n')
+        f.write('  xhr.send("add=" + encodeURIComponent(input1) + "&request_id=" + requestId);\n')
+        f.write('}\n')
+
+        # updateパラメーターを持ったリクエストを送信する関数
+        f.write('function submitUpdate(key) {\n')
+        f.write('  var requestId = generateRequestId();\n')
+        f.write('  var url = "#?update=" + encodeURIComponent(key);\n')
+        f.write('  var xhr = new XMLHttpRequest();\n')
+        f.write('  xhr.open("POST", url, true);\n')
+        f.write('  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");\n')
+        f.write('  xhr.onreadystatechange = function() {\n')
+        f.write('    if (xhr.readyState === 4 && xhr.status === 200) {\n')
+        f.write('      // 成功時の処理\n')
+        f.write('    }\n')
+        f.write('  };\n')
+        f.write('  xhr.send("update=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
+        f.write('}\n')
+
+        f.write('</script>\n')
         f.write('<title>Index</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
+
+        # 入力フィールドと送信ボタン
         f.write('<input type="text" id="input1" placeholder="登録URL">\n')
-        f.write('<button onclick="debouncedSubmit()">送信</button>\n')
+        f.write('<button onclick="debouncedSubmit()">送信</button><br><br><br>\n')
+
+        f.write(f'<button onclick="submitUpdate(\'all\')">全て 更新</button>\n')
+        # config['crawler']のキーを使ったボタン生成
+        for key in config['crawler']:
+            f.write(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>\n')
+
         f.write('<br><br><br>\n')
+
+        # config['crawler']内のキーを使った動的リンクの生成（オプション）
         for key in config['crawler']:
             f.write(f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>\n')
+
         f.write('</body>\n')
         f.write('</html>\n')
-
-
-
 
 
     print("Initialize successfully!")
