@@ -99,6 +99,21 @@ def initialize():
         f.write('  xhr.send("update=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
         f.write('}\n')
 
+        # convertパラメーターを持ったリクエストを送信する関数
+        f.write('function submitConvert(key) {\n')
+        f.write('  var requestId = generateRequestId();\n')
+        f.write('  var url = "#?convert=" + encodeURIComponent(key);\n')
+        f.write('  var xhr = new XMLHttpRequest();\n')
+        f.write('  xhr.open("POST", url, true);\n')
+        f.write('  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");\n')
+        f.write('  xhr.onreadystatechange = function() {\n')
+        f.write('    if (xhr.readyState === 4 && xhr.status === 200) {\n')
+        f.write('      // 成功時の処理\n')
+        f.write('    }\n')
+        f.write('  };\n')
+        f.write('  xhr.send("convert=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
+        f.write('}\n')
+
         f.write('</script>\n')
         f.write('<title>Index</title>\n')
         f.write('</head>\n')
@@ -108,10 +123,13 @@ def initialize():
         f.write('<input type="text" id="input1" placeholder="登録URL">\n')
         f.write('<button onclick="debouncedSubmit()">送信</button><br><br><br>\n')
 
-        f.write(f'<button onclick="submitUpdate(\'all\')">全て 更新</button>\n')
+        f.write(f'<button onclick="submitUpdate(\'all\')">全て 更新</button>\n')  # 更新ボタン追加
+        f.write(f'<button onclick="submitConvert(\'all\')">全て 変換</button>\n<br>')  # 変換ボタン追加
+
         # config['crawler']のキーを使ったボタン生成
         for key in config['crawler']:
-            f.write(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>\n')
+            f.write(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>\n')  # サイトごとの更新ボタン追加
+            f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n<br>')  # サイトごとの変換ボタン追加
 
         f.write('<br><br><br>\n')
 

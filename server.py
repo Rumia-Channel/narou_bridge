@@ -123,6 +123,7 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
             post_params = urllib.parse.parse_qs(post_data)
             add_param = post_params.get("add", [None])[0]
             update_param = post_params.get("update", [None])[0]
+            convert_param = post_params.get("convert", [None])[0]
             request_id = post_params.get("request_id", [None])[0]
 
             if request_id is None:
@@ -176,7 +177,33 @@ def http_run(site_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
                         globals()[site_key].init(folder_path)
                         globals()[site_key].update(folder_path, key_data, data_path, host_name)
                 
-                print("Update Complete\n")
+                print("\nUpdate Complete\n")
+
+            # 変換処理
+            if not convert_param is None:
+                if not convert_param == 'all':
+                    # 更新処理
+                    for site_key, value in site_dic.items():
+                        if convert_param == site_key:
+                            site = site_key
+                            break
+                    else:
+                        self.send_response(400)
+                        self.send_header("Content-type", "text/html")
+                        self.end_headers()
+                        self.wfile.write(b"Invalid convert_param value")
+                        return
+                    print(f'Convert: {site}\n')
+                    globals()[site].init(folder_path)
+                    globals()[site].convert(folder_path, key_data, data_path, host_name)
+                else:
+                    # 全更新処理
+                    for site_key, value in site_dic.items():
+                        print(f'Convert: {site_key}\n')
+                        globals()[site_key].init(folder_path)
+                        globals()[site_key].convert(folder_path, key_data, data_path, host_name)
+                
+                print("\nConvert Complete\n")
 
             # ダウンロード処理
             if not add_param is None:

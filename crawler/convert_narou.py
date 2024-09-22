@@ -14,7 +14,7 @@ def write_index(f, data, key_data):
         
         f.write(f'<div class="p-eplist">\n')
         f.write(f'<div class="p-eplist__sublist">\n')
-        f.write(f'<a href="{link}/{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n')
+        f.write(f'<a href="{a_link}/{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n\n')
         f.write(f'<div class="p-eplist__update">\n')
         f.write(f'{create_date}\n<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
         f.write(f'</div>\n')
@@ -119,6 +119,8 @@ def write_postscript(f, ep, key_data):
 def narou_gen(data, nove_path, key_data, data_folder, host_name):
 
     page_counter = 2  # 最初のページ番号
+    pattern = r'\[image\]\((.*?)\)'  # 画像パターン
+
     for ep in data['episodes'].values():
         # エピソードの開始ページリンクを記録
         digits = max(4, len(str(page_counter)))
@@ -126,31 +128,52 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         # [newpage] でページを分割
         pages = ep['text'].split('[newpage]')
         page_links = []
-
+        page_jump_map = []  # 各ページに対応するjump_counter用リスト
+        
         for page in pages:
+            # 各ページ内で画像パターンを探してカウントする
+            image_count = len(re.findall(pattern, page))
+
             # 各ページのリンクを保存（ページ番号をカウントしてリンクを作成）
             page_link = f'{str(page_counter).zfill(digits)}.xhtml'
             page_links.append(page_link)
-            page_counter += 1
-        
+
+            # 各ページでジャンプ先をカウントするためのjump_counter値を保持
+            page_jump_map.append(page_counter)
+
+            # ページに画像があればその数だけ page_counter を進める
+            page_counter += 1 + image_count
+
         # 各ページ内の [jump:X] を対応するリンクに置き換え
         formatted_text = []
         for page in pages:
-            for jump in range(1, len(page_links) + 1):
-                jump_marker = f'[jump:{jump}]'
+            jump_counter = 0  # 画像による増加分を追跡するカウンター
+
+            for i, original_page_number in enumerate(page_jump_map):
+                # このページ内の [jump:X] に対して
+                jump_marker = f'[jump:{i + 1}]'
                 if jump_marker in page:
-                    jump_link = f'[link_s]{page_links[jump - 1]}[link_t]{jump}ページ目へ移動[link_e]'
+                    # 実際のジャンプ先を計算（画像で追加されたページ数を含める）
+                    actual_page_number = original_page_number + jump_counter
+                    jump_link = f'[#link_s]{str(actual_page_number).zfill(digits)}.xhtml[#link_t]{i + 1}ページ目へ移動[#link_e]'
                     page = page.replace(jump_marker, jump_link)
+
+                # ページ内の画像数を追跡し、画像があればjump_counterを増加させる
+                image_count_in_current_page = len(re.findall(pattern, pages[i]))
+                jump_counter += image_count_in_current_page
+
             formatted_text.append(page)
 
         # フォーマット済みテキストをエピソードに保存
         ep['text'] = '[newpage]'.join(formatted_text)
 
     global link
+    global a_link
 
     #目次ファイルの生成
     if not data.get("type") == "短編":
         link = host_name + nove_path.replace(data_folder, '').replace('\\', '/')
+        a_link = nove_path.replace(data_folder, '').replace('\\', '/')
         index_path = os.path.join(nove_path, 'index.html')
         with open(index_path, 'w', encoding='utf-8') as f:
             f.write('<!DOCTYPE html>\n')

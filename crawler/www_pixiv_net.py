@@ -464,7 +464,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print("")
 
 #ユーザーページからのダウンロード
-def dl_user(user_id, folder_path, key_data):
+def dl_user(user_id, folder_path, key_data, update):
     print(f'User ID: {user_id}')
     user_data = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all").json()
     user_name = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}").json().get('body').get('name')
@@ -490,15 +490,31 @@ def dl_user(user_id, folder_path, key_data):
 
     print("\nSeries Download Start\n")
     for series_id in user_novel_series:
+        if update:
+            series_update_date = datetime.fromisoformat(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").json().get('body').get('updateDate'))
+            with open (os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+                old_series_json = json.load(f)
+            series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
+            if series_update_date == series_old_update_date:
+                print(f'{old_series_json['title']} に更新はありません。\n')
+                time.sleep(random.uniform(1,2))
+                continue
         dl_series(series_id, folder_path, key_data)
         time.sleep(random.uniform(1,2))
 
     print("\nNovel Download Start\n")
     for novel_id in user_novels:
+        if update:
+            novel_update_date = datetime.fromisoformat(return_content_json(novel_id).get('body').get('uploadDate'))
+            with open (os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+                old_novel_json = json.load(f)
+            novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
+            if novel_update_date == novel_old_update_date:
+                print(f'{old_novel_json['title']} に更新はありません。\n')
+                time.sleep(random.uniform(1,2))
+                continue
         dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
         time.sleep(random.uniform(1,2))
-
-    print("\nDownload Complete\n")
 
     user_json = os.path.join(folder_path, 'user.json')
 
@@ -551,13 +567,15 @@ def download(url, folder_path, key_data, data_path, host_name):
         dl_series(series_id, folder_path, key_data)
     elif "https://www.pixiv.net/users/" in url:
         user_id = re.search(r"users/(\d+)", url).group(1)
-        dl_user(user_id, folder_path, key_data)
+        dl_user(user_id, folder_path, key_data, False)
     else:
         print(f'Error: "{url}" is not a valid URL')
         return
     
     #仕上げ処理(indexファイルの更新)
     gen_pixiv_index(folder_path, key_data)
+
+    print("\nDownload Complete\n")
 
 #更新処理
 def update(folder_path, key_data, data_path, host_name):
@@ -583,7 +601,7 @@ def update(folder_path, key_data, data_path, host_name):
                     print("404 Not Found")
                     print("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
-                dl_user(user_id, folder_path, key_data)
+                dl_user(user_id, folder_path, key_data, True)
                 user_ids.append(user_id)
                 time.sleep(random.uniform(1,2))
 
@@ -602,7 +620,7 @@ def update(folder_path, key_data, data_path, host_name):
             if datetime.fromisoformat(json_data.get('body').get('uploadDate')) != datetime.fromisoformat(old_novel_json.get('updateDate')):
                 dl_novel(json_data, novel_id, folder_path, key_data)
             else:
-                print(f'No updates for {index_data.get("title")}\n')
+                print(f'{index_data.get("title")} に更新はありません。\n')
 
         elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
             series_id = folder_name.replace('_s', '')
@@ -617,7 +635,19 @@ def update(folder_path, key_data, data_path, host_name):
             if datetime.fromisoformat(s_detail.get('updateDate')) != datetime.fromisoformat(old_series_json.get('updateDate')):
                 dl_series(series_id, folder_path, key_data)
             else:
-                print(f'No updates for {index_data.get("title")}\n')
+                print(f'{index_data.get("title")} に更新はありません。\n')
         time.sleep(random.uniform(1,2))
     
     gen_pixiv_index(folder_path, key_data)
+
+#変換処理
+def convert(folder_path, key_data, data_path, host_name):
+
+    #引き渡し用変数
+    data_folder = data_path
+    host = host_name
+
+    folder_names = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
+
+    for i in folder_names:
+        cn.narou_gen(json.load(open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8')), os.path.join(folder_path, i), key_data, data_folder, host)
