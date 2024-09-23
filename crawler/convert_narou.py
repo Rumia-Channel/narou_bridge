@@ -124,7 +124,8 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         r'\[image\]\s*\((.*?)\)\s*(?:\\n|\n)+\s*\[newpage\]|\s*'  # [image] の後に改行（文字列または実際の改行）と [newpage]
         r'\[newpage\]\s*(?:\\n|\n)+\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に改行と [image]
         r'\[newpage\]\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に [image]（スペースを許可）
-        r'\[image\]\s*\((.*?)\)\s*\[newpage\]'  # [image] の後に [newpage]（スペースを許可）
+        r'\[image\]\s*\((.*?)\)\s*\[newpage\]|'  # [image] の後に [newpage]（スペースを許可
+        r'(?:\s*(?:\\n|\n)*\s*\[image\]\((.*?)\)\s*)+'  # [image](...) の後に [image](...)（スペースを許可）
     )
     jump_pattern = re.compile(r'\[jump:(\d+)\]')   # '[jump(x)]' の形式のパターン
 
@@ -160,6 +161,10 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
                     v_page.append(page_counter)  # 仮想ページにページ番号を追加
                 page_counter += 1 # 画像のページ
                 #print(f'newpage after image: {page_counter}')  # デバッグ用
+            elif match.group(4):  # (?:\s*(?:\\n|\n)*\s*\[image\]\((.*?)\)\s*)+
+                # 連続する [image](...) タグの場合
+                images_count = len(match.group(4).strip().split())
+                page_counter += images_count + 1  # 1ページと画像数分のページを追加
 
         # ジャンプ処理ループ
         for match in jump_pattern.finditer(ep['text']):
