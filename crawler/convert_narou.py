@@ -118,54 +118,51 @@ def write_postscript(f, ep, key_data):
 #小説家になろう形式で生成
 def narou_gen(data, nove_path, key_data, data_folder, host_name):
 
-    page_counter = 2  # 最初のページ番号
-    pattern = r'\[image\]\((.*?)\)'  # 画像パターン
+    page_counter = 2  # 最初のページ番号を2に設定
+    pattern = re.compile(
+        r'\[newpage\]\s*|\s*\[image\]\((.*?)\)|'  # [newpage] または [image](...)（スペースを許可）
+        r'\[image\]\s*\((.*?)\)\s*(?:\\n|\n)\s*\[newpage\]|\s*'  # [image] の後に改行（文字列または実際の改行）と [newpage]
+        r'\[newpage\]\s*(?:\\n|\n)\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に改行と [image]
+        r'\[newpage\]\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に [image]（スペースを許可）
+        r'\[image\]\s*\((.*?)\)\s*\[newpage\]'  # [image] の後に [newpage]（スペースを許可）
+    )
+    jump_pattern = re.compile(r'\[jump:(\d+)\]')   # '[jump(x)]' の形式のパターン
 
     for ep in data['episodes'].values():
-        # エピソードの開始ページリンクを記録
         digits = max(4, len(str(page_counter)))
-        
-        # [newpage] でページを分割
-        pages = ep['text'].split('[newpage]')
-        page_links = []
-        page_jump_map = []  # 各ページに対応するjump_counter用リスト
-        
-        for page in pages:
-            # 各ページ内で画像パターンを探してカウントする
-            image_count = len(re.findall(pattern, page))
 
-            # 各ページのリンクを保存（ページ番号をカウントしてリンクを作成）
-            page_link = f'{str(page_counter).zfill(digits)}.xhtml'
-            page_links.append(page_link)
+        # 仮想ページの設定
+        v_page = []
+        v_page.append(page_counter)
 
-            # 各ページでジャンプ先をカウントするためのjump_counter値を保持
-            page_jump_map.append(page_counter)
+        print(v_page[0])
 
-            # ページに画像があればその数だけ page_counter を進める
-            page_counter += 1 + image_count
+        # ページカウンターの更新ループ
+        for match in pattern.finditer(ep['text']):
 
-        # 各ページ内の [jump:X] を対応するリンクに置き換え
-        formatted_text = []
-        for page in pages:
-            jump_counter = 0  # 画像による増加分を追跡するカウンター
+            if match.group(0).strip() == '[newpage]':
+                # [newpage] タグのみの場合
+                page_counter += 1
+                print(f'newpage: {page_counter}')  # デバッグ用
+            elif match.group(0).startswith('[image]'):
+                # [image](...) タグがマッチしている場合
+                page_counter += 2
+                print(f'image: {page_counter}')  # デバッグ用
+            elif match.group(1):  # [image] の後に改行（文字列または実際の改行）と [newpage] の場合
+                page_counter += 2
+                print(f'image after newline and newpage: {page_counter}')  # デバッグ用
+            elif match.group(3):  # [newpage] の後に [image] の場合
+                page_counter += 2
+                print(f'newpage after image: {page_counter}')  # デバッグ用
 
-            for i, original_page_number in enumerate(page_jump_map):
-                # このページ内の [jump:X] に対して
-                jump_marker = f'[jump:{i + 1}]'
-                if jump_marker in page:
-                    # 実際のジャンプ先を計算（画像で追加されたページ数を含める）
-                    actual_page_number = original_page_number + jump_counter
-                    jump_link = f'[#link_s]{str(actual_page_number).zfill(digits)}.xhtml[#link_t]{i + 1}ページ目へ移動[#link_e]'
-                    page = page.replace(jump_marker, jump_link)
+        # ジャンプ処理ループ
+        for match in jump_pattern.finditer(ep['text']):
+            jump_value = int(match.group(1))  # 'jump(x)'のxを整数として取得
+            if 0 <= jump_value - 1 < len(v_page):
+                ep['text'] = ep['text'].replace(match.group(), f'[#link_s]{str(v_page[jump_value - 1]).zfill(digits)}.xhtml[#link_t]{jump_value}ページ目へ移動[#link_e]')
 
-                # ページ内の画像数を追跡し、画像があればjump_counterを増加させる
-                image_count_in_current_page = len(re.findall(pattern, pages[i]))
-                jump_counter += image_count_in_current_page
-
-            formatted_text.append(page)
-
-        # フォーマット済みテキストをエピソードに保存
-        ep['text'] = '[newpage]'.join(formatted_text)
+        page_counter += 1  # 次のエピソードのページ番号を設定
+       
 
     global link
     global a_link
