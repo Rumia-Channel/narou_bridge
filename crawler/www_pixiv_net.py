@@ -183,9 +183,9 @@ def format_survey(survey):
 #ベースフォルダ作成
 def make_dir(id, folder_path, series):
     if series:
-        full_path = os.path.join(folder_path, f'{id}_s')
+        full_path = os.path.join(folder_path, f's{id}')
     else:
-        full_path = os.path.join(folder_path, f'{id}_n')
+        full_path = os.path.join(folder_path, f'n{id}')
     if not os.path.exists(full_path):
         os.makedirs(full_path)
     if not os.path.exists(f'{full_path}/raw'):
@@ -208,9 +208,9 @@ def format_image(id, episode, series, data, json_data, folder_path):
 
     #シリーズとその他のリンクの切り替え
     if series:
-        episode_path = os.path.join(folder_path, f'{id}_s', str(episode))
+        episode_path = os.path.join(folder_path, f's{id}', str(episode))
     else:
-        episode_path = os.path.join(folder_path, f'{id}_n')
+        episode_path = os.path.join(folder_path, f'n{id}')
 
     for i in links:
         art_id = i[0]
@@ -306,7 +306,7 @@ def dl_series(series_id, folder_path, key_data):
             introduction = ''
         
         #エピソードごとのフォルダの作成
-        os.makedirs(os.path.join(folder_path, f'{series_id}_s', entry['id']), exist_ok=True)
+        os.makedirs(os.path.join(folder_path, f's{series_id}', entry['id']), exist_ok=True)
         #挿絵リンクへの置き換え
         text = format_image(series_id, entry['id'], True, text, json_data, folder_path)
         #ルビの置き換え
@@ -350,8 +350,8 @@ def dl_series(series_id, folder_path, key_data):
     }
 
     #生データがすでにあるなら差分を保管
-    if os.path.exists(os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json')):
-        with open(os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+    if os.path.exists(os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')):
+        with open(os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
             old_json = json.load(f)
         old_json = json.loads(json.dumps(old_json))
         new_json = json.loads(json.dumps(novel))
@@ -359,15 +359,15 @@ def dl_series(series_id, folder_path, key_data):
         if len(diff_json) == 1 and 'get_date' in diff_json:
             pass
         else:
-            with open(os.path.join(folder_path, f'{series_id}_s', 'raw', f'diff_{str(novel["updateDate"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
+            with open(os.path.join(folder_path, f's{series_id}', 'raw', f'diff_{str(novel["updateDate"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
                 json.dump(diff_json, f, ensure_ascii=False, indent=4)
         
 
     #生データの書き出し
-    with open(os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
-    cn.narou_gen(novel, os.path.join(folder_path, f'{series_id}_s'), key_data, data_folder, host)
+    cn.narou_gen(novel, os.path.join(folder_path, f's{series_id}'), key_data, data_folder, host)
     print("")
 
 # キーをすべて文字列に変換する関数
@@ -444,8 +444,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     }
 
     #生データがすでにあるなら差分を保管
-    if os.path.exists(os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json')):
-        with open(os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+    if os.path.exists(os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json')):
+        with open(os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
             old_json = json.load(f)
         old_json = json.loads(json.dumps(old_json))
         new_json = json.loads(json.dumps(novel))
@@ -453,14 +453,14 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         if len(diff_json) == 1 and 'get_date' in diff_json:
             pass
         else:
-            with open(os.path.join(folder_path, f'{novel_id}_n', 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
+            with open(os.path.join(folder_path, f'n{novel_id}', 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
                 json.dump(diff_json, f, ensure_ascii=False, indent=4)
 
     #生データの書き出し
-    with open(os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
-    cn.narou_gen(novel, os.path.join(folder_path, f'{novel_id}_n'), key_data, data_folder, host)
+    cn.narou_gen(novel, os.path.join(folder_path, f'n{novel_id}'), key_data, data_folder, host)
     print("")
 
 #ユーザーページからのダウンロード
@@ -492,7 +492,7 @@ def dl_user(user_id, folder_path, key_data, update):
     for series_id in user_novel_series:
         if update:
             series_update_date = datetime.fromisoformat(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").json().get('body').get('updateDate'))
-            with open (os.path.join(folder_path, f'{series_id}_s', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+            with open (os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
                 old_series_json = json.load(f)
             series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
             if series_update_date == series_old_update_date:
@@ -506,7 +506,7 @@ def dl_user(user_id, folder_path, key_data, update):
     for novel_id in user_novels:
         if update:
             novel_update_date = datetime.fromisoformat(return_content_json(novel_id).get('body').get('uploadDate'))
-            with open (os.path.join(folder_path, f'{novel_id}_n', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+            with open (os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
                 old_novel_json = json.load(f)
             novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
             if novel_update_date == novel_old_update_date:
@@ -609,11 +609,11 @@ def update(folder_path, key_data, data_path, host_name):
         if index_data.get("author_id") in user_ids:
             continue
         if index_data.get("type") == "短編":
-            novel_id = folder_name.replace('_n', '')
+            novel_id = folder_name.replace('n', '')
             if get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}').status_code == 404:
                 print("404 Not Found")
                 print("Incorrect URL, Deleted, Private, or My Pics Only.")
-                return
+                continue
             json_data = return_content_json(novel_id)
             with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as onf:
                 old_novel_json = json.load(onf)
@@ -623,11 +623,11 @@ def update(folder_path, key_data, data_path, host_name):
                 print(f'{index_data.get("title")} に更新はありません。\n')
 
         elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
-            series_id = folder_name.replace('_s', '')
+            series_id = folder_name.replace('s', '')
             if get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}').status_code == 404:
                 print("404 Not Found")
                 print("Incorrect URL, Deleted, Private, or My Pics Only.")
-                return
+                continue
             s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
             with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as osf:
                 old_series_json = json.load(osf)
@@ -651,3 +651,5 @@ def convert(folder_path, key_data, data_path, host_name):
 
     for i in folder_names:
         cn.narou_gen(json.load(open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8')), os.path.join(folder_path, i), key_data, data_folder, host)
+
+    gen_pixiv_index(folder_path, key_data)
