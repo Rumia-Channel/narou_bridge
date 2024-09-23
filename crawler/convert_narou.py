@@ -121,8 +121,8 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
     page_counter = 2  # 最初のページ番号を2に設定
     pattern = re.compile(
         r'\[newpage\]\s*|\s*\[image\]\((.*?)\)|'  # [newpage] または [image](...)（スペースを許可）
-        r'\[image\]\s*\((.*?)\)\s*(?:\\n|\n)\s*\[newpage\]|\s*'  # [image] の後に改行（文字列または実際の改行）と [newpage]
-        r'\[newpage\]\s*(?:\\n|\n)\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に改行と [image]
+        r'\[image\]\s*\((.*?)\)\s*(?:\\n|\n)+\s*\[newpage\]|\s*'  # [image] の後に改行（文字列または実際の改行）と [newpage]
+        r'\[newpage\]\s*(?:\\n|\n)+\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に改行と [image]
         r'\[newpage\]\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に [image]（スペースを許可）
         r'\[image\]\s*\((.*?)\)\s*\[newpage\]'  # [image] の後に [newpage]（スペースを許可）
     )
@@ -143,6 +143,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             if match.group(0).strip() == '[newpage]':
                 # [newpage] タグのみの場合
                 page_counter += 1
+                v_page.append(page_counter)  # 仮想ページにページ番号を追加
                 #print(f'newpage: {page_counter}')  # デバッグ用
             elif match.group(0).startswith('[image]'):
                 # [image](...) タグがマッチしている場合
@@ -150,9 +151,14 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
                 #print(f'image: {page_counter}')  # デバッグ用
             elif match.group(1):  # [image] の後に改行（文字列または実際の改行）と [newpage] の場合
                 page_counter += 2
+                if 'newpage' in match.group(0):
+                    v_page.append(page_counter)  # 仮想ページにページ番号を追加
                 #print(f'image after newline and newpage: {page_counter}')  # デバッグ用
             elif match.group(3):  # [newpage] の後に [image] の場合
-                page_counter += 2
+                page_counter += 1
+                if 'newpage' in match.group(0):
+                    v_page.append(page_counter)  # 仮想ページにページ番号を追加
+                page_counter += 1 # 画像のページ
                 #print(f'newpage after image: {page_counter}')  # デバッグ用
 
         # ジャンプ処理ループ
