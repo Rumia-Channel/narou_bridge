@@ -223,6 +223,7 @@ def format_image(id, episode, series, data, json_data, folder_path):
         illust_json = get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages").json()
         illust_datas = find_key_recursively(illust_json, 'body')
         for index, i in enumerate(illust_datas):
+            time.sleep(random.uniform(5,10))
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
                 img_data = get_with_cookie(img_url)
@@ -293,7 +294,7 @@ def dl_series(series_id, folder_path, key_data):
     for i, entry in enumerate(novel_toc, 1):
         if not entry['available']:
             continue
-        time.sleep(random.uniform(1,2))
+        time.sleep(random.uniform(5,10))
         json_data = return_content_json(entry['id'])
         introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, 'body').get('pollData')
@@ -465,6 +466,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 
 #ユーザーページからのダウンロード
 def dl_user(user_id, folder_path, key_data, update):
+    count = 1
     print(f'User ID: {user_id}')
     user_data = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all").json()
     user_name = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}").json().get('body').get('name')
@@ -481,7 +483,7 @@ def dl_user(user_id, folder_path, key_data, update):
     user_novels = list(user_all_novels.keys())
     #シリーズとの重複を除去
     for i in user_novel_series:
-        time.sleep(random.uniform(1,2))
+        time.sleep(random.uniform(5,10))
         for nid in get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles").json().get('body'):
             in_novel_series.append(nid.get('id'))
     user_novels = [n for n in user_novels if n not in in_novel_series]
@@ -499,10 +501,15 @@ def dl_user(user_id, folder_path, key_data, update):
                 series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
                 if series_update_date == series_old_update_date:
                     print(f'{old_series_json['title']} に更新はありません。\n')
-                    time.sleep(random.uniform(1,2))
+                    if count == 10:
+                        time.sleep(random.uniform(30,60))
+                        count = 1
+                    else:
+                        time.sleep(random.uniform(5,10))
+                        count += 1
                     continue
         dl_series(series_id, folder_path, key_data)
-        time.sleep(random.uniform(1,2))
+        time.sleep(random.uniform(5,10))
 
     print("\nNovel Download Start\n")
     for novel_id in user_novels:
@@ -515,10 +522,15 @@ def dl_user(user_id, folder_path, key_data, update):
                 novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
                 if novel_update_date == novel_old_update_date:
                     print(f'{old_novel_json['title']} に更新はありません。\n')
-                    time.sleep(random.uniform(1,2))
+                    if count == 10:
+                        time.sleep(random.uniform(30,60))
+                        count = 1
+                    else:
+                        time.sleep(random.uniform(5,10))
+                        count += 1
                     continue
         dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
-        time.sleep(random.uniform(1,2))
+        time.sleep(random.uniform(5,10))
 
     user_json = os.path.join(folder_path, 'user.json')
 
@@ -607,7 +619,7 @@ def update(folder_path, key_data, data_path, host_name):
                     return
                 dl_user(user_id, folder_path, key_data, True)
                 user_ids.append(user_id)
-                time.sleep(random.uniform(1,2))
+                time.sleep(random.uniform(5,10))
 
     for folder_name, index_data in index_json.items():
         if index_data.get("author_id") in user_ids:
@@ -640,7 +652,7 @@ def update(folder_path, key_data, data_path, host_name):
                 dl_series(series_id, folder_path, key_data)
             else:
                 print(f'{index_data.get("title")} に更新はありません。\n')
-        time.sleep(random.uniform(1,2))
+        time.sleep(random.uniform(5,10))
     
     gen_pixiv_index(folder_path, key_data)
 
