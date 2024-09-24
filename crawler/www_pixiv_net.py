@@ -491,28 +491,32 @@ def dl_user(user_id, folder_path, key_data, update):
     print("\nSeries Download Start\n")
     for series_id in user_novel_series:
         if update:
-            series_update_date = datetime.fromisoformat(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").json().get('body').get('updateDate'))
-            with open (os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
-                old_series_json = json.load(f)
-            series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
-            if series_update_date == series_old_update_date:
-                print(f'{old_series_json['title']} に更新はありません。\n')
-                time.sleep(random.uniform(1,2))
-                continue
+            raw_path = os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')
+            if os.path.isfile(raw_path):
+                series_update_date = datetime.fromisoformat(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").json().get('body').get('updateDate'))
+                with open (raw_path, 'r', encoding='utf-8') as f:
+                    old_series_json = json.load(f)
+                series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
+                if series_update_date == series_old_update_date:
+                    print(f'{old_series_json['title']} に更新はありません。\n')
+                    time.sleep(random.uniform(1,2))
+                    continue
         dl_series(series_id, folder_path, key_data)
         time.sleep(random.uniform(1,2))
 
     print("\nNovel Download Start\n")
     for novel_id in user_novels:
         if update:
-            novel_update_date = datetime.fromisoformat(return_content_json(novel_id).get('body').get('uploadDate'))
-            with open (os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
-                old_novel_json = json.load(f)
-            novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
-            if novel_update_date == novel_old_update_date:
-                print(f'{old_novel_json['title']} に更新はありません。\n')
-                time.sleep(random.uniform(1,2))
-                continue
+            raw_path = os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json')
+            if os.path.isfile(raw_path):
+                novel_update_date = datetime.fromisoformat(return_content_json(novel_id).get('body').get('uploadDate'))
+                with open (raw_path, 'r', encoding='utf-8') as f:
+                    old_novel_json = json.load(f)
+                novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
+                if novel_update_date == novel_old_update_date:
+                    print(f'{old_novel_json['title']} に更新はありません。\n')
+                    time.sleep(random.uniform(1,2))
+                    continue
         dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
         time.sleep(random.uniform(1,2))
 
