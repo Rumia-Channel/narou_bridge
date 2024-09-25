@@ -12,6 +12,7 @@ from . import convert_narou as cn
 #リキャプチャ対策
 import time
 import random
+from tqdm import tqdm
 
 def gen_pixiv_index(folder_path ,key_data):
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
@@ -65,8 +66,14 @@ def load_cookies_from_json(input_file):
     return cookies_dict
 
 #初期化処理
-def init(folder_path):
+def init(folder_path, is_login, interval):
 
+    global interval_sec
+    global g_count
+    interval_sec = int(interval)
+    g_count = 1
+
+    print(f'Login : {is_login}')
     cookie_path = os.path.join(folder_path, 'cookie.json')
     ua_path = os.path.join(folder_path, 'ua.txt')
 
@@ -117,18 +124,32 @@ def init(folder_path):
         context.close()
         browser.close()
 
-
-    # cookieの有無とログイン状態を確認
-    if not os.path.isfile(cookie_path) or not os.path.isfile(ua_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=load_cookies_from_json(cookie_path), headers={'User-Agent': open(ua_path, 'r', encoding='utf-8').read()}).history):
-        with sync_playwright() as playwright:
-            login(playwright)
-
-    #クッキーとユーザーエージェントをグローバルで宣言(ユニーク_cookie などの形式)
+    #クッキーとユーザーエージェントをグローバルで宣言
     global pixiv_cookie
     global pixiv_header
 
-    pixiv_cookie = load_cookies_from_json(cookie_path)
-    ua = open(ua_path, 'r', encoding='utf-8').read()
+    if is_login:
+        # cookieの有無とログイン状態を確認
+        if not os.path.isfile(cookie_path) or not os.path.isfile(ua_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=load_cookies_from_json(cookie_path), headers={'User-Agent': open(ua_path, 'r', encoding='utf-8').read()}).history):
+            with sync_playwright() as playwright:
+                login(playwright)      
+
+        pixiv_cookie = load_cookies_from_json(cookie_path)
+        ua = open(ua_path, 'r', encoding='utf-8').read()
+    else:
+
+        pixiv_cookie = {}
+
+        ua_list = [
+            "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.77 Mobile Safari/537.36",  # Android
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",  # iOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",  # MacOS
+            "Mozilla/5.0 (AppleTV; U; CPU OS 13_4 like Mac OS X; en-us) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15",  # TvOS
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",  # Windows
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.101 Safari/537.36"  # Linux
+        ]
+        ua = random.choice(ua_list)
+
     pixiv_header = {
         'User-Agent': ua,
         'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -209,8 +230,10 @@ def format_image(id, episode, series, data, json_data, folder_path):
     #シリーズとその他のリンクの切り替え
     if series:
         episode_path = os.path.join(folder_path, f's{id}', str(episode))
+        url = f"https://www.pixiv.net/novel/series/{id}/{episode}"
     else:
         episode_path = os.path.join(folder_path, f'n{id}')
+        url = f"https://www.pixiv.net/novel/show.php?id={id}"
 
     for i in links:
         art_id = i[0]
@@ -222,8 +245,8 @@ def format_image(id, episode, series, data, json_data, folder_path):
     for art_id, img_nums in link_dict.items():
         illust_json = get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages").json()
         illust_datas = find_key_recursively(illust_json, 'body')
-        for index, i in enumerate(illust_datas):
-            time.sleep(random.uniform(5,10))
+        for index, i in tqdm(enumerate(illust_datas), desc=f"Downloadong illusts from https://www.pixiv.net/artworks/{art_id}", unit="illusts", total=len(illust_datas), leave=False):
+            time.sleep(interval_sec)
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
                 img_data = get_with_cookie(img_url)
@@ -231,7 +254,8 @@ def format_image(id, episode, series, data, json_data, folder_path):
                     f.write(img_data.content)
                 data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
     #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
-    for inner_link in inner_links:
+    for inner_link in tqdm(inner_links, desc=f"Downloading inner illusts from {url}", unit="illusts", total=len(inner_links), leave=False):
+        time.sleep(interval_sec)
         in_img_url = find_key_recursively(json_data, inner_link).get('urls').get('original')
         in_img_data = get_with_cookie(in_img_url)
         with open(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
@@ -291,10 +315,15 @@ def dl_series(series_id, folder_path, key_data):
     novel_toc = toc_json_data.get('body')
     episode = {}
     total_text = 0
-    for i, entry in enumerate(novel_toc, 1):
+    for i, entry in tqdm(enumerate(novel_toc, 1), desc=f"Downloading episodes", unit="episodes", total=len(novel_toc), leave=False):
         if not entry['available']:
             continue
-        time.sleep(random.uniform(5,10))
+        if g_count == 10:
+            time.sleep(random.uniform(10,30))
+            g_count = 1
+        else:
+            time.sleep(interval_sec)
+            g_count += 1
         json_data = return_content_json(entry['id'])
         introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, 'body').get('pollData')
@@ -466,7 +495,6 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 
 #ユーザーページからのダウンロード
 def dl_user(user_id, folder_path, key_data, update):
-    count = 1
     print(f'User ID: {user_id}')
     user_data = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all").json()
     user_name = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}").json().get('body').get('name')
@@ -483,7 +511,7 @@ def dl_user(user_id, folder_path, key_data, update):
     user_novels = list(user_all_novels.keys())
     #シリーズとの重複を除去
     for i in user_novel_series:
-        time.sleep(random.uniform(5,10))
+        time.sleep(interval_sec)
         for nid in get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles").json().get('body'):
             in_novel_series.append(nid.get('id'))
     user_novels = [n for n in user_novels if n not in in_novel_series]
@@ -501,15 +529,21 @@ def dl_user(user_id, folder_path, key_data, update):
                 series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
                 if series_update_date == series_old_update_date:
                     print(f'{old_series_json['title']} に更新はありません。\n')
-                    if count == 10:
-                        time.sleep(random.uniform(30,60))
-                        count = 1
+                    if g_count == 10:
+                        time.sleep(random.uniform(10,30))
+                        g_count = 1
                     else:
-                        time.sleep(random.uniform(5,10))
-                        count += 1
+                        time.sleep(interval_sec)
+                        g_count += 1
                     continue
+        else:
+            if g_count == 10:
+                time.sleep(random.uniform(10,30))
+                g_count = 1
+            else:
+                time.sleep(interval_sec)
+                g_count += 1
         dl_series(series_id, folder_path, key_data)
-        time.sleep(random.uniform(5,10))
 
     print("\nNovel Download Start\n")
     for novel_id in user_novels:
@@ -522,15 +556,21 @@ def dl_user(user_id, folder_path, key_data, update):
                 novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
                 if novel_update_date == novel_old_update_date:
                     print(f'{old_novel_json['title']} に更新はありません。\n')
-                    if count == 10:
-                        time.sleep(random.uniform(30,60))
-                        count = 1
+                    if g_count == 10:
+                        time.sleep(random.uniform(10,30))
+                        g_count = 1
                     else:
-                        time.sleep(random.uniform(5,10))
-                        count += 1
+                        time.sleep(interval_sec)
+                        g_count += 1
                     continue
+        else:
+            if g_count == 10:
+                time.sleep(random.uniform(10,30))
+                g_count = 1
+            else:
+                time.sleep(interval_sec)
+                g_count += 1
         dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
-        time.sleep(random.uniform(5,10))
 
     user_json = os.path.join(folder_path, 'user.json')
 
@@ -618,8 +658,9 @@ def update(folder_path, key_data, data_path, host_name):
                     print("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
                 dl_user(user_id, folder_path, key_data, True)
-                user_ids.append(user_id)
-                time.sleep(random.uniform(5,10))
+                time.sleep(interval_sec)
+            user_ids.append(user_id)
+                
 
     for folder_name, index_data in index_json.items():
         if index_data.get("author_id") in user_ids:
@@ -652,7 +693,12 @@ def update(folder_path, key_data, data_path, host_name):
                 dl_series(series_id, folder_path, key_data)
             else:
                 print(f'{index_data.get("title")} に更新はありません。\n')
-        time.sleep(random.uniform(5,10))
+        if g_count == 10:
+            time.sleep(random.uniform(10,30))
+            g_count = 1
+        else:
+            time.sleep(interval_sec)
+            g_count += 1
     
     gen_pixiv_index(folder_path, key_data)
 

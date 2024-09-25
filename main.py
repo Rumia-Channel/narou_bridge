@@ -4,6 +4,7 @@ import server
 
 def initialize():
     site_dic = {}
+    login_dic = {}
     # 設定の読み込み
     config = configparser.ConfigParser()
     config.read('setting.ini')
@@ -23,6 +24,7 @@ def initialize():
     for key in config['crawler']:
         folder_name = key
         site_dic[key] = config['crawler'][key]
+        login_dic[key] = int(config['login'][key])
         folder_path = os.path.join(data_path, folder_name)
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -142,9 +144,9 @@ def initialize():
 
 
     print("Initialize successfully!")
-    return int(config['setting']['reload']), int(config['setting']['interval']), site_dic, folder_path, data_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
+    return int(config['setting']['reload']), int(config['setting']['interval']), site_dic, login_dic, folder_path, data_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
 
 if __name__ == '__main__':
-    reload_time, interval, site_dic, folder_path, data_path, key, use_ssl, port, domain = initialize()
+    reload_time, interval, site_dic, login_dic, folder_path, data_path, key, use_ssl, port, domain = initialize()
 
-    server.http_run(site_dic, folder_path, data_path, key, use_ssl, port, domain)
+    server.http_run(interval, site_dic, login_dic, folder_path, data_path, key, use_ssl, port, domain)
