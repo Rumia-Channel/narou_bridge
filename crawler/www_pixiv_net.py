@@ -129,13 +129,21 @@ def init(folder_path, is_login, interval):
     global pixiv_header
 
     if is_login:
+
+        try:
+            with open(ua_path, 'r', encoding='utf-8') as f:
+                ua = f.read()
+        except FileNotFoundError:
+            ua = False
+
         # cookieの有無とログイン状態を確認
-        if not os.path.isfile(cookie_path) or not os.path.isfile(ua_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=load_cookies_from_json(cookie_path), headers={'User-Agent': open(ua_path, 'r', encoding='utf-8').read()}).history):
+        if not os.path.isfile(cookie_path) or not os.path.isfile(ua_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=load_cookies_from_json(cookie_path), headers={'User-Agent': str(ua)}).history):
             with sync_playwright() as playwright:
                 login(playwright)      
 
         pixiv_cookie = load_cookies_from_json(cookie_path)
-        ua = open(ua_path, 'r', encoding='utf-8').read()
+        with open(ua_path, 'r', encoding='utf-8') as f:
+            ua = f.read()
     else:
 
         pixiv_cookie = {}
@@ -717,6 +725,8 @@ def convert(folder_path, key_data, data_path, host_name):
     folder_names = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
 
     for i in folder_names:
-        cn.narou_gen(json.load(open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8')), os.path.join(folder_path, i), key_data, data_folder, host)
+        with open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+            raw_json_data = json.load(f)
+        cn.narou_gen(raw_json_data, os.path.join(folder_path, i), key_data, data_folder, host)
 
     gen_pixiv_index(folder_path, key_data)
