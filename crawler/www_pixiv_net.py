@@ -221,6 +221,7 @@ def format_ruby(data):
 
 #画像リンク形式の整形
 def format_image(id, episode, series, data, json_data, folder_path):
+    global g_count
     #pixivimage: で始まるリンクの抽出
     links = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
     link_dict = {}
@@ -286,6 +287,7 @@ def format_for_url(data):
 
 #シリーズのダウンロードに関する処理
 def dl_series(series_id, folder_path, key_data):
+    global g_count
     # seriesNavDataの内部にあるseriesIdを取得
     print(f"Series ID: {series_id}")
     s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
@@ -495,6 +497,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 
 #ユーザーページからのダウンロード
 def dl_user(user_id, folder_path, key_data, update):
+    global g_count
     print(f'User ID: {user_id}')
     user_data = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all").json()
     user_name = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}").json().get('body').get('name')
@@ -598,6 +601,7 @@ def download(url, folder_path, key_data, data_path, host_name):
     #引き渡し用変数
     global data_folder
     global host
+    global g_count
     data_folder = data_path
     host = host_name
 
@@ -639,6 +643,7 @@ def update(folder_path, key_data, data_path, host_name):
     #引き渡し用変数
     global data_folder
     global host
+    global g_count
     data_folder = data_path
     host = host_name
 
