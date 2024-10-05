@@ -228,7 +228,7 @@ def format_ruby(data):
     return re.sub(pattern, lambda match: f'[ruby:<{match.group(1)}>({match.group(2)})]', data)
 
 #画像リンク形式の整形
-def format_image(id, episode, series, data, json_data, folder_path):
+def format_image(id, episode, series, data, json_data, folder_path, update_ep):
     global g_count
     #pixivimage: で始まるリンクの抽出
     links = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
@@ -258,9 +258,11 @@ def format_image(id, episode, series, data, json_data, folder_path):
             time.sleep(interval_sec)
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
-                img_data = get_with_cookie(img_url)
-                with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
-                    f.write(img_data.content)
+                #更新が無いときは画像のダウンロードをスキップ
+                if update_ep:
+                    img_data = get_with_cookie(img_url)
+                    with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                        f.write(img_data.content)
                 data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
     #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
     for inner_link in tqdm(inner_links, desc=f"Downloading inner illusts from {url}", unit="illusts", total=len(inner_links), leave=False):
@@ -294,12 +296,13 @@ def format_for_url(data):
     return re.sub(pattern, lambda match: f'<a href={match.group(2)}>{match.group(1)}</a>', data)
 
 #シリーズのダウンロードに関する処理
-def dl_series(series_id, folder_path, key_data):
+def dl_series(series_id, folder_path, key_data, update):
     global g_count
     # seriesNavDataの内部にあるseriesIdを取得
     print(f"Series ID: {series_id}")
     s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
     s_toc = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
+    #s_toc_u = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
     series_title = s_detail.get('title')
     series_author = s_detail.get('userName')
     series_author_id = s_detail.get('userId')
@@ -322,19 +325,46 @@ def dl_series(series_id, folder_path, key_data):
     print(f"Series Update Date: {series_update_day}")
     make_dir(series_id, folder_path, True)
     toc_json_data = json.loads(s_toc.text)
+    #toc_u_json_data = json.loads(s_toc_u.text)
     novel_toc = toc_json_data.get('body')
+    #novel_toc_u = toc_u_json_data.get('body')
     episode = {}
     total_text = 0
+    series_path = os.path.join(folder_path, f's{series_id}')
+    raw_path = os.path.join(series_path, 'raw', 'raw.json')
+    if update:
+        if os.path.isfile(raw_path):
+            with open (raw_path, 'r', encoding='utf-8') as f:
+                old_episode_update_dates = json.load(f).get('episodes')
+                is_update = True
+        else:
+            is_update = False
+
     for i, entry in tqdm(enumerate(novel_toc, 1), desc=f"Downloading episodes", unit="episodes", total=len(novel_toc), leave=False):
         if not entry['available']:
             continue
+
+        #BAN対策
         if g_count == 10:
             time.sleep(random.uniform(10,30))
             g_count = 1
         else:
             time.sleep(interval_sec)
             g_count += 1
+
         json_data = return_content_json(entry['id'])
+
+        if update and is_update:
+            update_date = datetime.fromisoformat(json_data.get('body').get('uploadDate'))
+            for item in old_episode_update_dates:
+                if item['id'] == entry['id']:
+                    old_update_date = datetime.fromisoformat(item['updateDate'])
+                    if update_date == old_update_date:
+                        print(f'{item['title']} に更新はありません。\n')
+                        update_ep = False
+                    else:
+                        update_ep = True
+
         introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
         postscript = find_key_recursively(json_data, 'body').get('pollData')
         text = find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
@@ -346,9 +376,9 @@ def dl_series(series_id, folder_path, key_data):
             introduction = ''
         
         #エピソードごとのフォルダの作成
-        os.makedirs(os.path.join(folder_path, f's{series_id}', entry['id']), exist_ok=True)
+        os.makedirs(os.path.join(series_path, entry['id']), exist_ok=True)
         #挿絵リンクへの置き換え
-        text = format_image(series_id, entry['id'], True, text, json_data, folder_path)
+        text = format_image(series_id, entry['id'], True, text, json_data, folder_path, update_ep)
         #ルビの置き換え
         text = format_ruby(text)
         #チャプタータグの除去
@@ -390,8 +420,8 @@ def dl_series(series_id, folder_path, key_data):
     }
 
     #生データがすでにあるなら差分を保管
-    if os.path.exists(os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')):
-        with open(os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+    if os.path.exists(raw_path):
+        with open(os.path.join(raw_path), 'r', encoding='utf-8') as f:
             old_json = json.load(f)
         old_json = json.loads(json.dumps(old_json))
         new_json = json.loads(json.dumps(novel))
@@ -399,15 +429,15 @@ def dl_series(series_id, folder_path, key_data):
         if len(diff_json) == 1 and 'get_date' in diff_json:
             pass
         else:
-            with open(os.path.join(folder_path, f's{series_id}', 'raw', f'diff_{str(novel["updateDate"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
+            with open(os.path.join(series_path, 'raw', f'diff_{str(novel["updateDate"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
                 json.dump(diff_json, f, ensure_ascii=False, indent=4)
         
 
     #生データの書き出し
-    with open(os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
+    with open(raw_path, 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
-    cn.narou_gen(novel, os.path.join(folder_path, f's{series_id}'), key_data, data_folder, host)
+    cn.narou_gen(novel, os.path.join(series_path), key_data, data_folder, host)
     print("")
 
 # キーをすべて文字列に変換する関数
@@ -447,7 +477,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Update Date: {novel_update_day}")
     make_dir(novel_id, folder_path, False)
     #挿絵リンクへの置き換え
-    text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path)
+    text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path, True)
     #ルビの置き換え
     text = format_ruby(text)
     #チャプタータグの除去
@@ -547,6 +577,7 @@ def dl_user(user_id, folder_path, key_data, update):
                         time.sleep(interval_sec)
                         g_count += 1
                     continue
+                dl_series(series_id, folder_path, key_data, True)
         else:
             if g_count == 10:
                 time.sleep(random.uniform(10,30))
@@ -554,7 +585,7 @@ def dl_user(user_id, folder_path, key_data, update):
             else:
                 time.sleep(interval_sec)
                 g_count += 1
-        dl_series(series_id, folder_path, key_data)
+        dl_series(series_id, folder_path, key_data, False)
 
     print("\nNovel Download Start\n")
     for novel_id in user_novels:
@@ -627,12 +658,12 @@ def download(url, folder_path, key_data, data_path, host_name):
         series_nav_data = find_key_recursively(json_data, "seriesNavData")
         if series_nav_data:
             series_id = series_nav_data.get("seriesId")
-            dl_series(series_id, folder_path, key_data)
+            dl_series(series_id, folder_path, key_data, False)
         else:
             dl_novel(json_data, novel_id, folder_path, key_data) #ダウンロード処理
     elif "https://www.pixiv.net/novel/series/" in url:
         series_id = re.search(r"series/(\d+)", url).group(1)
-        dl_series(series_id, folder_path, key_data)
+        dl_series(series_id, folder_path, key_data, False)
     elif "https://www.pixiv.net/users/" in url:
         user_id = re.search(r"users/(\d+)", url).group(1)
         dl_user(user_id, folder_path, key_data, False)
@@ -703,7 +734,7 @@ def update(folder_path, key_data, data_path, host_name):
                 old_series_json = json.load(osf)
 
             if datetime.fromisoformat(s_detail.get('updateDate')) != datetime.fromisoformat(old_series_json.get('updateDate')):
-                dl_series(series_id, folder_path, key_data)
+                dl_series(series_id, folder_path, key_data, True)
             else:
                 print(f'{index_data.get("title")} に更新はありません。\n')
         if g_count == 10:
