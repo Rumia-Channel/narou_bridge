@@ -772,6 +772,67 @@ def update(folder_path, key_data, data_path, host_name):
     
     gen_pixiv_index(folder_path, key_data)
 
+#再ダウンロード処理
+def redownload(folder_path, key_data, data_path, host_name):
+    #引き渡し用変数
+    global data_folder
+    global host
+    global g_count
+    data_folder = data_path
+    host = host_name
+
+    index_json = os.path.join(folder_path, 'index.json')
+    with open(index_json, 'r', encoding='utf-8') as f:
+        index_json = json.load(f)
+
+    user_ids = []
+
+    if os.path.isfile(os.path.join(folder_path, 'user.json')):
+        with open(os.path.join(folder_path, 'user.json'), 'r', encoding='utf-8') as uf:
+            user_json = json.load(uf)
+        for user_id, status in user_json.items():
+            if status == 'enable':
+                if get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels').status_code == 404:
+                    print("404 Not Found")
+                    print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                    return
+                dl_user(user_id, folder_path, key_data, False)
+                time.sleep(interval_sec)
+            user_ids.append(user_id)
+                
+
+    for folder_name, index_data in index_json.items():
+        if index_data.get("author_id") in user_ids:
+            continue
+        if index_data.get("type") == "短編":
+            novel_id = folder_name.replace('n', '')
+            if get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}').status_code == 404:
+                print("404 Not Found")
+                print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                continue
+            
+            json_data = return_content_json(novel_id)
+            dl_novel(json_data, novel_id, folder_path, key_data)
+
+
+        elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
+            series_id = folder_name.replace('s', '')
+            if get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}').status_code == 404:
+                print("404 Not Found")
+                print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                continue
+
+            dl_series(series_id, folder_path, key_data, False)
+
+        if g_count == 10:
+            time.sleep(random.uniform(10,30))
+            g_count = 1
+        else:
+            time.sleep(interval_sec)
+            g_count += 1
+    
+    gen_pixiv_index(folder_path, key_data)
+
 #変換処理
 def convert(folder_path, key_data, data_path, host_name):
 

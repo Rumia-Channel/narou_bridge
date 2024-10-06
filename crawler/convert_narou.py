@@ -6,19 +6,25 @@ import re
 def write_index(f, data, key_data):
     """エピソード情報を基に目次を生成する関数"""
     
+    chapter = None
+    
+    f.write(f'<div class="p-eplist">\n')
+
     for ep in data['episodes'].values():  # ソートせずにそのまま順番で処理
         episode_id = ep['id']
         episode_title = ep['title']
         create_date = datetime.fromisoformat(ep['createDate']).strftime("%Y/%m/%d %H:%M")
         update_date = datetime.fromisoformat(ep['updateDate']).strftime("%Y/%m/%d %H:%M")
-        
-        f.write(f'<div class="p-eplist">\n')
+        if not ep['chapter'] == chapter:
+            chapter = ep['chapter']
+            f.write(f'<div class="p-eplist__chapter-title">\n{chapter}\n</div>\n')
         f.write(f'<div class="p-eplist__sublist">\n')
         f.write(f'<a href="{a_link}/{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n\n')
         f.write(f'<div class="p-eplist__update">\n')
         f.write(f'{create_date}\n<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
         f.write(f'</div>\n')
-        f.write(f'</div>\n')
+
+    f.write(f'</div>\n')
 
 #画像リンクへの置き換え
 def replace_images(text, key_data):
