@@ -228,7 +228,7 @@ def format_ruby(data):
     return re.sub(pattern, lambda match: f'[ruby:<{match.group(1)}>({match.group(2)})]', data)
 
 #画像リンク形式の整形
-def format_image(id, episode, series, data, json_data, folder_path, update_ep):
+def format_image(id, episode, series, data, json_data, folder_path):
     global g_count
     #pixivimage: で始まるリンクの抽出
     links = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
@@ -258,11 +258,9 @@ def format_image(id, episode, series, data, json_data, folder_path, update_ep):
             time.sleep(interval_sec)
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
-                #更新が無いときは画像のダウンロードをスキップ
-                if update_ep:
-                    img_data = get_with_cookie(img_url)
-                    with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
-                        f.write(img_data.content)
+                img_data = get_with_cookie(img_url)
+                with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                    f.write(img_data.content)
                 data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
     #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
     for inner_link in tqdm(inner_links, desc=f"Downloading inner illusts from {url}", unit="illusts", total=len(inner_links), leave=False):
@@ -302,7 +300,7 @@ def dl_series(series_id, folder_path, key_data, update):
     print(f"Series ID: {series_id}")
     s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
     s_toc = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
-    #s_toc_u = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
+    s_toc_u = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
     series_title = s_detail.get('title')
     series_author = s_detail.get('userName')
     series_author_id = s_detail.get('userId')
@@ -325,9 +323,9 @@ def dl_series(series_id, folder_path, key_data, update):
     print(f"Series Update Date: {series_update_day}")
     make_dir(series_id, folder_path, True)
     toc_json_data = json.loads(s_toc.text)
-    #toc_u_json_data = json.loads(s_toc_u.text)
+    toc_u_json_data = json.loads(s_toc_u.text)
     novel_toc = toc_json_data.get('body')
-    #novel_toc_u = toc_u_json_data.get('body')
+    novel_toc_u = toc_u_json_data.get('body').get('thumbnails')
     episode = {}
     total_text = 0
     series_path = os.path.join(folder_path, f's{series_id}')
@@ -344,57 +342,85 @@ def dl_series(series_id, folder_path, key_data, update):
         if not entry['available']:
             continue
 
-        #BAN対策
-        if g_count == 10:
-            time.sleep(random.uniform(10,30))
-            g_count = 1
-        else:
-            time.sleep(interval_sec)
-            g_count += 1
+        ep_update = update
 
-        json_data = return_content_json(entry['id'])
-
+        #呼び出された処理が更新処理ですでにフォルダが存在する場合
         if update and is_update:
-            update_date = datetime.fromisoformat(json_data.get('body').get('uploadDate'))
-            for item in old_episode_update_dates:
+            for item in old_episode_update_dates.values():
                 if item['id'] == entry['id']:
-                    old_update_date = datetime.fromisoformat(item['updateDate'])
-                    if update_date == old_update_date:
-                        print(f'{item['title']} に更新はありません。\n')
-                        update_ep = False
-                    else:
-                        update_ep = True
-
-        introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
-        postscript = find_key_recursively(json_data, 'body').get('pollData')
-        text = find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
-        if postscript:
-            postscript = format_survey(postscript)
+                    ep_json = item
+                    for nu in novel_toc_u['novel']:
+                        if nu.get('id') == entry['id']:
+                            update_date = datetime.fromisoformat(nu.get('updateDate'))
+                            if update_date == datetime.fromisoformat(item['updateDate']):
+                                ep_update = True
+                                break
+                            else:
+                                ep_update = False
+                                break
         else:
-            postscript = ''
-        if not introduction:
-            introduction = ''
+            ep_update = False
+
+        if ep_update:
+            introduction = ep_json.get('introduction')
+            postscript = ep_json.get('postscript')
+            text = ep_json.get('text')
+            createdate = ep_json.get('createDate')
+            updatedate = ep_json.get('updateDate')
+            total_text += int(ep_json.get('textCount'))
+        else:
+
+            #BAN対策
+            if g_count == 10:
+                time.sleep(random.uniform(10,30))
+                g_count = 1
+            else:
+                time.sleep(interval_sec)
+                g_count += 1
+
+            #エピソードの処理
+            json_data = return_content_json(entry['id'])
+
+            introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
+            postscript = find_key_recursively(json_data, 'body').get('pollData')
+            text = find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
+            if postscript:
+                postscript = format_survey(postscript)
+            else:
+                postscript = ''
+            if not introduction:
+                introduction = ''
         
-        #エピソードごとのフォルダの作成
-        os.makedirs(os.path.join(series_path, entry['id']), exist_ok=True)
-        #挿絵リンクへの置き換え
-        text = format_image(series_id, entry['id'], True, text, json_data, folder_path, update_ep)
-        #ルビの置き換え
-        text = format_ruby(text)
-        #チャプタータグの除去
-        text = remove_chapter_tag(text)
-        #URLへのリンクを置き換え
-        text = format_for_url(text)
+            #エピソードごとのフォルダの作成
+            os.makedirs(os.path.join(series_path, entry['id']), exist_ok=True)
+            #挿絵リンクへの置き換え
+            text = format_image(series_id, entry['id'], True, text, json_data, folder_path)
+            #ルビの置き換え
+            text = format_ruby(text)
+            #チャプタータグの除去
+            text = remove_chapter_tag(text)
+            #URLへのリンクを置き換え
+            text = format_for_url(text)
+            #作成日
+            createdate = str(datetime.fromisoformat(json_data.get('body').get('createDate')).astimezone(timezone(timedelta(hours=9))))
+            #更新日
+            updatedate = str(datetime.fromisoformat(json_data.get('body').get('uploadDate')).astimezone(timezone(timedelta(hours=9))))
+
+            text_count = int(find_key_recursively(json_data, 'body').get('characterCount'))
+
+            total_text += text_count
+
         episode[i] = {
             'id' : entry['id'],
+            'chapter': None,
             'title': entry['title'],
+            'textCount': text_count,
             'introduction': unquote(introduction),
             'text': text,
             'postscript': postscript,
-            'createDate': str(datetime.fromisoformat(json_data.get('body').get('createDate')).astimezone(timezone(timedelta(hours=9)))),
-            'updateDate': str(datetime.fromisoformat(json_data.get('body').get('uploadDate')).astimezone(timezone(timedelta(hours=9))))
+            'createDate': createdate,
+            'updateDate': updatedate
         }
-        total_text += int(find_key_recursively(json_data, 'body').get('characterCount'))
 
     # 作成日で並び替え
     episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
@@ -477,7 +503,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Update Date: {novel_update_day}")
     make_dir(novel_id, folder_path, False)
     #挿絵リンクへの置き換え
-    text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path, True)
+    text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path)
     #ルビの置き換え
     text = format_ruby(text)
     #チャプタータグの除去
