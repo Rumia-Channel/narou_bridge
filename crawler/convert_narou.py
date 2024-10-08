@@ -17,11 +17,12 @@ def write_index(f, data, key_data):
         update_date = datetime.fromisoformat(ep['updateDate']).strftime("%Y/%m/%d %H:%M")
         if not ep['chapter'] == chapter:
             chapter = ep['chapter']
-            f.write(f'<div class="p-eplist__chapter-title">\n{chapter}\n</div>\n')
+            f.write(f'<div class="p-eplist__chapter-title">{chapter}</div>\n')
         f.write(f'<div class="p-eplist__sublist">\n')
         f.write(f'<a href="{a_link}/{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n\n')
         f.write(f'<div class="p-eplist__update">\n')
         f.write(f'{create_date}\n<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
+        f.write(f'</div>\n')
         f.write(f'</div>\n')
 
     f.write(f'</div>\n')
@@ -245,7 +246,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>文字数</th>\n')
-        f.write(f'<td>{data.get("total_characters")}文字</td>\n')
+        f.write(f'<td>{str(f'{int(data.get("total_characters")):,}')}文字</td>\n')
         f.write('</tr>\n')
         f.write('</table>\n')
         f.write('</body>\n')
