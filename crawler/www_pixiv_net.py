@@ -344,6 +344,9 @@ def dl_series(series_id, folder_path, key_data, update):
 
         ep_update = update
 
+        #エピソードごとのフォルダ作成
+        os.makedirs(os.path.join(series_path, entry['id']), exist_ok=True)
+
         #呼び出された処理が更新処理ですでにフォルダが存在する場合
         if update and is_update:
             for item in old_episode_update_dates.values():
@@ -367,6 +370,7 @@ def dl_series(series_id, folder_path, key_data, update):
             text = ep_json.get('text')
             createdate = ep_json.get('createDate')
             updatedate = ep_json.get('updateDate')
+            text_count = int(ep_json.get('textCount'))
             total_text += int(ep_json.get('textCount'))
         else:
 
@@ -425,8 +429,6 @@ def dl_series(series_id, folder_path, key_data, update):
     # 作成日で並び替え
     episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
     
-    total_charactors = str(f'{total_text:,}')
-    all_charactors = str(f'{series_chara:,}')
     novel = {
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
         'title': series_title,
@@ -437,8 +439,8 @@ def dl_series(series_id, folder_path, key_data, update):
         'caption': series_caption,
         'total_episodes': len(episode),
         'all_episodes': series_episodes,
-        'total_characters': total_charactors,
-        'all_characters': all_charactors,
+        'total_characters': total_text,
+        'all_characters': series_chara,
         'type': '連載中',
         'createDate': str(series_create_day.astimezone(timezone(timedelta(hours=9)))),
         'updateDate': str(series_update_day.astimezone(timezone(timedelta(hours=9)))),
@@ -513,7 +515,9 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     episode = {}
     episode[1] = {
         'id' : novel_id,
+        'chapter': None,
         'title': novel_title,
+        'textCount': novel_data.get('characterCount'),
         'introduction': unquote(novel_caption),
         'text': text,
         'postscript': novel_postscript,
@@ -773,7 +777,7 @@ def update(folder_path, key_data, data_path, host_name):
     gen_pixiv_index(folder_path, key_data)
 
 #再ダウンロード処理
-def redownload(folder_path, key_data, data_path, host_name):
+def re_download(folder_path, key_data, data_path, host_name):
     #引き渡し用変数
     global data_folder
     global host
@@ -810,7 +814,7 @@ def redownload(folder_path, key_data, data_path, host_name):
                 print("404 Not Found")
                 print("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
-            
+
             json_data = return_content_json(novel_id)
             dl_novel(json_data, novel_id, folder_path, key_data)
 
