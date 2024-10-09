@@ -615,7 +615,7 @@ def dl_user(user_id, folder_path, key_data, update):
             else:
                 time.sleep(interval_sec)
                 g_count += 1
-        dl_series(series_id, folder_path, key_data, False)
+            dl_series(series_id, folder_path, key_data, False)
 
     print("\nNovel Download Start\n")
     for novel_id in user_novels:
