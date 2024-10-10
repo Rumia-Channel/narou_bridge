@@ -531,6 +531,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Update Date: {novel_update_day}")
     make_dir(novel_id, folder_path, False)
     novel_path = os.path.join(folder_path, f'n{novel_id}')
+    raw_path = os.path.join(novel_path, 'raw', 'raw.json')
     #挿絵リンクへの置き換え
     text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path)
     #表紙のダウンロード
@@ -573,8 +574,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     }
 
     #生データがすでにあるなら差分を保管
-    if os.path.exists(novel_path, 'raw', 'raw.json'):
-        with open(novel_path, 'raw', 'raw.json', 'r', encoding='utf-8') as f:
+    if os.path.exists(raw_path):
+        with open(raw_path, 'r', encoding='utf-8') as f:
             old_json = json.load(f)
         old_json = json.loads(json.dumps(old_json))
         new_json = json.loads(json.dumps(novel))
@@ -582,11 +583,11 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         if len(diff_json) == 1 and 'get_date' in diff_json:
             pass
         else:
-            with open(novel_path, 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json', 'w', encoding='utf-8') as f:
+            with open(os.path.join(novel_path, 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
                 json.dump(diff_json, f, ensure_ascii=False, indent=4)
 
     #生データの書き出し
-    with open(novel_path, 'raw', 'raw.json', 'w', encoding='utf-8') as f:
+    with open(raw_path, 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
     cn.narou_gen(novel, novel_path, key_data, data_folder, host)
