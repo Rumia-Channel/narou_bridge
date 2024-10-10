@@ -273,6 +273,21 @@ def format_image(id, episode, series, data, json_data, folder_path):
 
     return data
 
+#各話の表紙のダウンロード
+def get_cover(raw_small_url, folder_path):
+    small_url = raw_small_url.replace('c/600x600/novel-cover-master', 'novel-cover-original').replace('_master1200', '')
+    ep_cover = small_url.replace('jpg', 'png')
+    #jpegの時
+    if get_with_cookie(ep_cover).status_code == 404:
+        ep_cover = small_url
+        #gifだった時
+        if get_with_cookie(ep_cover).status_code == 404:
+            ep_cover = small_url.replace('jpg', 'gif')
+    
+    ep_cover_data = get_with_cookie(ep_cover)
+    with open(os.path.join(folder_path, f'cover{os.path.splitext(ep_cover)[1]}'), 'wb') as f:
+        f.write(ep_cover_data.content)
+
 #チャプタータグの除去
 def remove_chapter_tag(data):
     pattern = re.compile(r"(.*?)(\[chapter:(.*?)\])", re.DOTALL)
@@ -338,6 +353,13 @@ def dl_series(series_id, folder_path, key_data, update):
         else:
             is_update = False
 
+    #表紙のダウンロード
+    if not update:
+        series_cover = s_detail.get('cover').get('urls').get('original')
+        series_cover_data = get_with_cookie(series_cover)
+        with open(os.path.join(series_path, f'cover{os.path.splitext(series_cover)[1]}'), 'wb') as f:
+            f.write(series_cover_data.content)
+
     for i, entry in tqdm(enumerate(novel_toc, 1), desc=f"Downloading episodes", unit="episodes", total=len(novel_toc), leave=False):
         if not entry['available']:
             continue
@@ -384,6 +406,10 @@ def dl_series(series_id, folder_path, key_data, update):
 
             #エピソードの処理
             json_data = return_content_json(entry['id'])
+
+            #表紙のダウンロード
+            get_cover(json_data.get('body').get('coverUrl'), os.path.join(series_path, entry['id']))
+
 
             introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
             postscript = find_key_recursively(json_data, 'body').get('pollData')
@@ -504,8 +530,11 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Create Date: {novel_create_day}")
     print(f"Novel Update Date: {novel_update_day}")
     make_dir(novel_id, folder_path, False)
+    novel_path = os.path.join(folder_path, f'n{novel_id}')
     #挿絵リンクへの置き換え
     text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path)
+    #表紙のダウンロード
+    get_cover(novel_data.get('coverUrl'), novel_path)
     #ルビの置き換え
     text = format_ruby(text)
     #チャプタータグの除去
@@ -544,8 +573,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     }
 
     #生データがすでにあるなら差分を保管
-    if os.path.exists(os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json')):
-        with open(os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+    if os.path.exists(novel_path, 'raw', 'raw.json'):
+        with open(novel_path, 'raw', 'raw.json', 'r', encoding='utf-8') as f:
             old_json = json.load(f)
         old_json = json.loads(json.dumps(old_json))
         new_json = json.loads(json.dumps(novel))
@@ -553,14 +582,14 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         if len(diff_json) == 1 and 'get_date' in diff_json:
             pass
         else:
-            with open(os.path.join(folder_path, f'n{novel_id}', 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
+            with open(novel_path, 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json', 'w', encoding='utf-8') as f:
                 json.dump(diff_json, f, ensure_ascii=False, indent=4)
 
     #生データの書き出し
-    with open(os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json'), 'w', encoding='utf-8') as f:
+    with open(novel_path, 'raw', 'raw.json', 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
-    cn.narou_gen(novel, os.path.join(folder_path, f'n{novel_id}'), key_data, data_folder, host)
+    cn.narou_gen(novel, novel_path, key_data, data_folder, host)
     print("")
 
 #ユーザーページからのダウンロード
