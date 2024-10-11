@@ -605,6 +605,10 @@ def dl_user(user_id, folder_path, key_data, update):
     in_novel_series = []
     user_novels = []
     print(f'User Name: {user_name}')
+    #ユーザーの小説と小説シリーズがない場合
+    if not user_all_novels and not user_all_novel_series:
+        print("No novels or novel series found.")
+        return
     #シリーズIDの取得
     for ns in user_all_novel_series:
         user_novel_series.append(ns.get('id'))
