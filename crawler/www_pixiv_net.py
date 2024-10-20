@@ -1,6 +1,7 @@
 import re
 import os
 import requests
+from requests.exceptions import ConnectionError, Timeout
 from urllib.parse import unquote
 import json
 from playwright.sync_api import Playwright, sync_playwright, expect
@@ -184,9 +185,19 @@ def find_key_recursively(data, target_key):
     return None
 
 # クッキーを使ってGETリクエストを送信
-def get_with_cookie(url):
-    response = requests.get(url, cookies=pixiv_cookie, headers=pixiv_header)
-    return response
+def get_with_cookie(url, retries=5, delay=1):
+    for i in range(retries):
+        try:
+            response = requests.get(url, cookies=pixiv_cookie, headers=pixiv_header, timeout=10)
+            response.raise_for_status()  # HTTPエラーをキャッチ
+            return response
+        except (ConnectionError, Timeout) as e:
+            print(f"接続エラー: {e}。{delay * (2 ** i)}秒後に再試行します...")
+            if i < retries - 1:
+                time.sleep(delay * (2 ** i))  # 指数バックオフ
+            else:
+                print("リトライの限界に達しました。")
+                raise
 
 # レスポンスからjsonデータ(本文データ)を返却
 def return_content_json(novelid):
@@ -453,7 +464,7 @@ def dl_series(series_id, folder_path, key_data, update):
         }
 
     # 作成日で並び替え
-    episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
+    #episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
     
     novel = {
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
@@ -881,8 +892,9 @@ def convert(folder_path, key_data, data_path, host_name):
     folder_names = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
 
     for i in folder_names:
-        with open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
-            raw_json_data = json.load(f)
-        cn.narou_gen(raw_json_data, os.path.join(folder_path, i), key_data, data_folder, host)
+        if os.path.exists(os.path.join(folder_path, i, 'raw', 'raw.json')) and os.path.exists(os.path.join(folder_path, i, 'info', 'index.html')):
+            with open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+                raw_json_data = json.load(f)
+            cn.narou_gen(raw_json_data, os.path.join(folder_path, i), key_data, data_folder, host)
 
     gen_pixiv_index(folder_path, key_data)
