@@ -1,7 +1,7 @@
 import re
 import os
 import requests
-from requests.exceptions import ConnectionError, Timeout
+from requests.exceptions import RequestException, ConnectionError, Timeout
 from urllib.parse import unquote
 import json
 from playwright.sync_api import Playwright, sync_playwright, expect
@@ -191,13 +191,13 @@ def get_with_cookie(url, retries=5, delay=1):
             response = requests.get(url, cookies=pixiv_cookie, headers=pixiv_header, timeout=10)
             response.raise_for_status()  # HTTPエラーをキャッチ
             return response
-        except (ConnectionError, Timeout) as e:
-            print(f"接続エラー: {e}。{delay * (2 ** i)}秒後に再試行します...")
+        except (ConnectionError, Timeout, RequestException) as e:
+            print(f"エラー: {e}。{delay * (2 ** i)}秒後に再試行します...")
             if i < retries - 1:
                 time.sleep(delay * (2 ** i))  # 指数バックオフ
             else:
-                print("リトライの限界に達しました。")
-                raise
+                print("リトライの限界に達しました。レスポンスがありません。")
+                return None  # リトライ限界に達した場合
 
 # レスポンスからjsonデータ(本文データ)を返却
 def return_content_json(novelid):
@@ -286,18 +286,23 @@ def format_image(id, episode, series, data, json_data, folder_path):
 
 #各話の表紙のダウンロード
 def get_cover(raw_small_url, folder_path):
-    small_url = raw_small_url.replace('c/600x600/novel-cover-master', 'novel-cover-original').replace('_master1200', '')
-    ep_cover = small_url.replace('jpg', 'png')
-    #jpegの時
-    if get_with_cookie(ep_cover).status_code == 404:
-        ep_cover = small_url
-        #gifだった時
-        if get_with_cookie(ep_cover).status_code == 404:
-            ep_cover = small_url.replace('jpg', 'gif')
+    # URLの候補リストを作成
+    url_variants = [
+        raw_small_url.replace('c/600x600/novel-cover-master', 'novel-cover-original').replace('_master1200', '').replace('jpg', ext)
+        for ext in ['png', 'jpg', 'gif']
+    ]
     
-    ep_cover_data = get_with_cookie(ep_cover)
-    with open(os.path.join(folder_path, f'cover{os.path.splitext(ep_cover)[1]}'), 'wb') as f:
-        f.write(ep_cover_data.content)
+    # 各URLを試行
+    for ep_cover in url_variants:
+        response = get_with_cookie(ep_cover)
+        if response is not None and response.status_code == 200:
+            # ファイルを保存
+            with open(os.path.join(folder_path, f'cover{os.path.splitext(ep_cover)[1]}'), 'wb') as f:
+                f.write(response.content)
+            return  # 成功したら終了
+
+    # 全てのURLが404だった場合
+    print("カバー画像を取得できませんでした。")
 
 #チャプタータグの除去
 def remove_chapter_tag(data):
