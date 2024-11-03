@@ -18,6 +18,7 @@ from tqdm import tqdm
 def gen_pixiv_index(folder_path ,key_data):
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
     pairs = {}
+    no_raw = []
     # 各サブフォルダの raw/raw.json を読み込む
     for folder in subfolders:
         json_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
@@ -30,8 +31,10 @@ def gen_pixiv_index(folder_path ,key_data):
                 type = data.get('type', 'No type found')
                 pairs[folder] = {'title': title, 'author': author, 'author_id': author_id,'type': type}
         else:
-            print(f"raw.json not found in {folder}")
-            return
+            #print(f"raw.json not found in {folder}")
+            #return
+            no_raw.append(folder)
+            continue
     
     pairs = dict(sorted(pairs.items(), key=lambda item: item[1]['author']))
     
@@ -54,6 +57,9 @@ def gen_pixiv_index(folder_path ,key_data):
     
     with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
         json.dump(pairs, f, ensure_ascii=False, indent=4)
+
+    if no_raw:
+        print(f"raw.json not found in {no_raw}")
 
     print('目次の生成が完了しました')
 
@@ -302,7 +308,7 @@ def get_cover(raw_small_url, folder_path):
     
     # 各URLを試行
     for ep_cover in url_variants:
-        print(f"Download cover image from: {ep_cover}")
+        print(f"\nDownload cover image from: {ep_cover}")
         response = get_with_cookie(ep_cover)
         if response is not None and response.status_code == 200:
             # ファイルを保存
