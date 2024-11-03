@@ -1,5 +1,6 @@
 import re
 import os
+import shutil
 import requests
 from requests.exceptions import RequestException, ConnectionError, Timeout
 from urllib.parse import unquote
@@ -33,6 +34,7 @@ def gen_pixiv_index(folder_path ,key_data):
         else:
             #print(f"raw.json not found in {folder}")
             #return
+            shutil.rmtree(os.path.join(folder_path, folder))
             no_raw.append(folder)
             continue
     
@@ -59,7 +61,7 @@ def gen_pixiv_index(folder_path ,key_data):
         json.dump(pairs, f, ensure_ascii=False, indent=4)
 
     if no_raw:
-        print(f"raw.json not found in {no_raw}")
+        print(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.\n")
 
     print('目次の生成が完了しました')
 
@@ -279,7 +281,7 @@ def format_image(id, episode, series, data, json_data, folder_path):
     for art_id, img_nums in link_dict.items():
         illust_json = get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages").json()
         illust_datas = find_key_recursively(illust_json, 'body')
-        for index, i in tqdm(enumerate(illust_datas), desc=f"Downloadong illusts from https://www.pixiv.net/artworks/{art_id}", unit="illusts", total=len(illust_datas), leave=False):
+        for index, i in tqdm(enumerate(illust_datas), desc=f"Downloading illusts from https://www.pixiv.net/artworks/{art_id}", unit="illusts", total=len(illust_datas), leave=False):
             time.sleep(interval_sec)
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
@@ -306,16 +308,19 @@ def get_cover(raw_small_url, folder_path):
         for ext in ['png', 'jpg', 'gif']
     ]
     
+    #tqdmの表示崩れ対策用
+    #print('')
+
     # 各URLを試行
     for ep_cover in url_variants:
-        print(f"\nDownload cover image from: {ep_cover}")
+        #print(f"Download cover image from: {ep_cover}")
         response = get_with_cookie(ep_cover)
         if response is not None and response.status_code == 200:
             # ファイルを保存
             file_extension = os.path.splitext(ep_cover)[1]
             with open(os.path.join(folder_path, f'cover{file_extension}'), 'wb') as f:
                 f.write(response.content)
-            print(f"Save compleat!: {ep_cover}")
+            #print(f"Save compleat!: {ep_cover}")
             return  # 成功したら終了
 
     # 全てのURLが404だった場合
