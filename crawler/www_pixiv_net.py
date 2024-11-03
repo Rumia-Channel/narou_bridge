@@ -191,13 +191,21 @@ def get_with_cookie(url, retries=5, delay=1):
             response = requests.get(url, cookies=pixiv_cookie, headers=pixiv_header, timeout=10)
             response.raise_for_status()  # HTTPエラーをキャッチ
             return response
-        except (ConnectionError, Timeout, RequestException) as e:
-            print(f"エラー: {e}。{delay * (2 ** i)}秒後に再試行します...")
-            if i < retries - 1:
-                time.sleep(delay * (2 ** i))  # 指数バックオフ
+        except (ConnectionError, Timeout) as e:
+            print(f"Error: {e}. Retrying in {delay * (2 ** i)} seconds...")
+        except RequestException as e:
+            # 404エラーを特別扱い
+            if response.status_code == 404:
+                print("404 Error: Resource not found.")
+                return None  # 404エラーの場合はリトライしない
             else:
-                print("リトライの限界に達しました。レスポンスがありません。")
-                return None  # リトライ限界に達した場合
+                print(f"Error: {e}. Retrying in {delay * (2 ** i)} seconds...")
+        
+        if i < retries - 1:
+            time.sleep(delay * (2 ** i))  # 指数バックオフ
+        else:
+            print("The retry limit has been reached. No response received.。")
+            return None  # リトライ限界に達した場合
 
 # レスポンスからjsonデータ(本文データ)を返却
 def return_content_json(novelid):
@@ -284,7 +292,7 @@ def format_image(id, episode, series, data, json_data, folder_path):
 
     return data
 
-#各話の表紙のダウンロード
+# 各話の表紙のダウンロード
 def get_cover(raw_small_url, folder_path):
     # URLの候補リストを作成
     url_variants = [
@@ -294,15 +302,18 @@ def get_cover(raw_small_url, folder_path):
     
     # 各URLを試行
     for ep_cover in url_variants:
+        print(f"Download cover image from: {ep_cover}")
         response = get_with_cookie(ep_cover)
         if response is not None and response.status_code == 200:
             # ファイルを保存
-            with open(os.path.join(folder_path, f'cover{os.path.splitext(ep_cover)[1]}'), 'wb') as f:
+            file_extension = os.path.splitext(ep_cover)[1]
+            with open(os.path.join(folder_path, f'cover{file_extension}'), 'wb') as f:
                 f.write(response.content)
+            print(f"Save compleat!: {ep_cover}")
             return  # 成功したら終了
 
     # 全てのURLが404だった場合
-    print("カバー画像を取得できませんでした。")
+    print("Failed to download cover image.")
 
 #チャプタータグの除去
 def remove_chapter_tag(data):
