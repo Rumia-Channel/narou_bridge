@@ -29,8 +29,10 @@ def gen_pixiv_index(folder_path ,key_data):
                 title = data.get('title', 'No title found')
                 author = data.get('author', 'No author found')
                 author_id = data.get('author_url', 'No author_id found').replace('https://www.pixiv.net/users/', '')
+                create_date = data.get('createDate', 'No create date found')
+                update_date = data.get('updateDate', 'No update date found')
                 type = data.get('type', 'No type found')
-                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id,'type': type}
+                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id,'type': type, 'create_date': create_date, 'update_date': update_date}
         else:
             #print(f"raw.json not found in {folder}")
             #return
@@ -39,7 +41,7 @@ def gen_pixiv_index(folder_path ,key_data):
             continue
     
     pairs = dict(sorted(pairs.items(), key=lambda item: item[1]['author']))
-    
+
     # index.html の生成
     with open(os.path.join(folder_path, 'index.html'), 'w', encoding='utf-8') as f:
         f.write('<!DOCTYPE html>\n')
@@ -52,8 +54,32 @@ def gen_pixiv_index(folder_path ,key_data):
         f.write('<body>\n')
         f.write(f'<a href="../{key_data}">戻る</a>\n')
         f.write('<h1>Pixiv 小説一覧</h1>\n')
+        f.write('<table>\n')
+        f.write('<tr><th>掲載タイプ</th><th>タイトル</th><th>作者名</th><th>掲載日時</th><th>更新日時</th></tr>\n')
         for folder, info in pairs.items():
-            f.write(f'<a href="{folder}/{key_data}">({info['type']}) {info['title']}: {info['author']}</a><br>\n')
+            f.write(f'''<tr><td>{info["type"]}</td>
+                    <td ><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
+                    <td ><a href="https://www.pixiv.net/users/{info["author_id"]}" class="text">{info["author"]}</a></td>
+                    <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
+                    <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
+        f.write('</table>\n')
+        f.write("""<script>
+        // テキスト折り返し関数
+        const wrapTextByLength = (text, maxLength) => {
+            // 指定した長さでテキストを分割し、<br>タグで改行を追加
+            return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
+        };
+
+        // localStorageから折り返し文字数を取得し、なければデフォルト（20）を使用
+        const maxLength = localStorage.getItem('maxLength') || 10;
+
+        // テキストを取得し、指定された文字数で折り返し
+        const textElement = document.querySelector('.text');
+        if (textElement) {
+            // 文字列を指定した長さで折り返し、<br>で改行を追加
+            textElement.innerHTML = wrapTextByLength(textElement.textContent, maxLength);
+        }
+        </script>""")
         f.write('</body>\n')
         f.write('</html>\n')
     
