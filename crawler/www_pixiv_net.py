@@ -118,7 +118,7 @@ def init(folder_path, is_login, interval):
         # ブラウザ設定
 
         # 通常モードからユーザーエージェントを取得
-        browser = playwright.chromium.launch(headless=False)  # 通常モード（UIあり）でブラウザを起動
+        browser = playwright.firefox.launch(headless=False)  # 通常モード（UIあり）でブラウザを起動
         context = browser.new_context()
         page = context.new_page()
         user_agent = page.evaluate('navigator.userAgent')
@@ -126,11 +126,38 @@ def init(folder_path, is_login, interval):
 
 
         #ヘッドレスモードで起動
-        browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context(locale='en-US', user_agent=user_agent)
+        browser = playwright.firefox.launch(
+            headless=True,
+            args=[
+                "-headless",  # ヘッドレスモード
+                "--disable-blink-features=AutomationControlled"  # 自動化検出の回避
+            ])
+        context = browser.new_context(locale='en-US', viewport={"width": 1920, "height": 1080}, screen={"width": 1920, "height": 1080}, user_agent=user_agent)
         page = context.new_page()
         #page.set_viewport_size({'width': 1280, 'height': 1280})
         
+        # ヘッドレスモードを隠すためのスクリプト
+        page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+        });
+        """)
+
+        # フィンガープリントを偽装するスクリプトを挿入
+        page.add_init_script("""
+        Object.defineProperty(window, 'chrome', {
+        get: () => ({ runtime: {} }),
+        });
+
+        Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3],  // プラグイン情報を設定
+        });
+
+        Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en']
+        });
+        """)
+
         # Pixivのログインページにアクセス
         print("Navigating to Pixiv...")
         page.goto("https://www.pixiv.net/")
@@ -141,8 +168,10 @@ def init(folder_path, is_login, interval):
         page.get_by_role("link", name="Login").click()
 
         # ユーザー情報を入力
+        page.get_by_placeholder("E-mail address or pixiv ID").click()
         mail = input("メールアドレスを入力してください: ")
         page.get_by_placeholder("E-mail address or pixiv ID").fill(mail)
+        page.get_by_placeholder("Password").click()
         pswd = input("パスワードを入力してください: ")
         page.get_by_placeholder("Password").fill(pswd)
         
