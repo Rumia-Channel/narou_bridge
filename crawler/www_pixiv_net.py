@@ -6,6 +6,7 @@ from requests.exceptions import RequestException, ConnectionError, Timeout
 from urllib.parse import unquote
 import json
 from playwright.sync_api import Playwright, sync_playwright, expect
+from playwright_recaptcha import recaptchav2
 from html import unescape
 from datetime import datetime, timezone, timedelta
 from jsondiff import diff
@@ -112,40 +113,133 @@ def init(folder_path, is_login, interval):
     cookie_path = os.path.join(folder_path, 'cookie.json')
     ua_path = os.path.join(folder_path, 'ua.txt')
 
+
     def login(playwright: Playwright) -> None:
-        browser = playwright.chromium.launch(headless=True)
+        # ブラウザ設定
+
+        # 通常モードからユーザーエージェントを取得
+        browser = playwright.firefox.launch(headless=False)  # 通常モード（UIあり）でブラウザを起動
         context = browser.new_context()
         page = context.new_page()
-        page.set_viewport_size({'width': 1280, 'height': 1280})
+        user_agent = page.evaluate('navigator.userAgent')
+        browser.close()
+
+
+        #ヘッドレスモードで起動
+        browser = playwright.firefox.launch(
+            headless=True,
+            args=[
+                "-headless",  # ヘッドレスモード
+                "--disable-blink-features=AutomationControlled"  # 自動化検出の回避
+            ])
+        context = browser.new_context(locale='en-US', viewport={"width": 1920, "height": 1080}, screen={"width": 1920, "height": 1080}, user_agent=user_agent)
+        page = context.new_page()
+        #page.set_viewport_size({'width': 1280, 'height': 1280})
+        
+        # ヘッドレスモードを隠すためのスクリプト
+        page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+        });
+        """)
+
+        # フィンガープリントを偽装するスクリプトを挿入
+        page.add_init_script("""
+        Object.defineProperty(window, 'chrome', {
+        get: () => ({ runtime: {} }),
+        });
+
+        Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3],  // プラグイン情報を設定
+        });
+
+        Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en']
+        });
+        """)
+
+        # Pixivのログインページにアクセス
+        print("Navigating to Pixiv...")
         page.goto("https://www.pixiv.net/")
-        time.sleep(random.uniform(1,5))
-        page.get_by_role("link", name="ログイン").click()
+        time.sleep(random.uniform(1, 5))
+        
+        # ログインリンクをクリック
+        print("Clicking login link...")
+        page.get_by_role("link", name="Login").click()
+
+        # ユーザー情報を入力
+        page.get_by_placeholder("E-mail address or pixiv ID").click()
         mail = input("メールアドレスを入力してください: ")
-        page.get_by_placeholder("メールアドレスまたはpixiv ID").fill(mail)
+        page.get_by_placeholder("E-mail address or pixiv ID").fill(mail)
+        page.get_by_placeholder("Password").click()
         pswd = input("パスワードを入力してください: ")
-        page.get_by_placeholder("パスワード").fill(pswd)
-        time.sleep(random.uniform(2,5))
-        page.get_by_role("button", name="ログイン", exact=True).click()
-        # リダイレクトが完全に終わるまで待つ
-        def wait_for_redirects(page):
-            while True:
+        page.get_by_placeholder("Password").fill(pswd)
+        
+        time.sleep(random.uniform(2, 5))
+        print("Attempting to log in...")
+        page.get_by_role("button", name="Log In", exact=True).click()
+
+        # リキャプチャの確認を1度だけ行う
+        time.sleep(random.uniform(2, 5))
+        print(f"Current URL after login attempt: {page.url}")
+        if "accounts.pixiv.net" in page.url:  # Pixivのログインページに留まっている場合
+            print("reCAPTCHA detected. Solving...")
+            try:
+                with recaptchav2.SyncSolver(page) as solver:
+                    token = solver.solve_recaptcha(wait=True)
+                    print(f"reCAPTCHA token obtained: {token}")
+                    if not token:
+                        raise ValueError("Failed to retrieve a valid reCAPTCHA token.")
+                print("Retrying login after solving reCAPTCHA...")
+                page.get_by_role("button", name="Log In", exact=True).click()
+                time.sleep(random.uniform(2, 5))
+            except Exception as e:
+                print(f"Failed to solve reCAPTCHA: {e}")
+                return
+
+        # ログイン成功後、リダイレクト処理を待機
+        def wait_for_redirects(page, is_2fa=False, timeout=60):
+            start_time = time.time()
+            while time.time() - start_time < timeout:
                 page.wait_for_load_state("load")
-                if page.url.startswith("https://accounts.pixiv.net/login/two-factor-authentication?") or page.url == "https://www.pixiv.net/":    
-                    break
-        wait_for_redirects(page)
-        if "two-factor-authentication" in page.url:
-            time.sleep(random.uniform(1,5))
-            page.get_by_label("このブラウザを信頼する").check()
-            tfak = input("2段階認証のコードを入力してください: ")
-            page.get_by_placeholder("確認コード").fill(tfak)
-            time.sleep(random.uniform(1,5))
-            page.get_by_role("button", name="ログイン").click()
-            def wait_for_redirects_2fa(page):
-                while True:
-                    page.wait_for_load_state("load")
-                    if page.url == "https://www.pixiv.net/":
-                        break
-            wait_for_redirects_2fa(page)
+                print(f"Waiting for redirects... Current URL: {page.url}")
+                
+                # 2段階認証ページが表示された場合
+                if "two-factor-authentication" in page.url and not is_2fa:
+                    print("Two-factor authentication page detected.")
+                    return "two-factor-authentication"
+                
+                # ホームページに到達した場合
+                if page.url in ["https://www.pixiv.net/", "https://www.pixiv.net/en/"]:
+                    print("Successfully redirected to Pixiv homepage.")
+                    return "success"
+            return "timeout"
+
+        redirect_status = wait_for_redirects(page)
+        
+        if redirect_status == "timeout":
+            print("Redirect did not complete within the timeout period.")
+            return
+        
+        if redirect_status == "two-factor-authentication":
+            # 2段階認証処理
+            print("2-factor authentication required.")
+            time.sleep(random.uniform(1, 5))
+            page.get_by_label("Trust this browser").check()  # ブラウザを信頼する
+            tfak = input("2段階認証のコードを入力してください: ")  # ユーザーにコードを入力させる
+            page.get_by_placeholder("Verification code").fill(tfak)
+            time.sleep(random.uniform(1, 5))
+            page.get_by_role("button", name="Log In").click()  # ログインボタンをクリック
+
+            # 2段階認証後のリダイレクトを待機（is_2fa=Trueとして呼び出し）
+            print("Waiting for redirect after 2-factor authentication...")
+            redirect_status = wait_for_redirects(page, is_2fa=True)
+            if redirect_status == "timeout":
+                print("Redirect after 2-factor authentication did not complete.")
+                return
+
+        # ログイン完了
+        print(f"Login successful. Final URL: {page.url}")
 
         cookies = context.cookies()
         user_agent = page.evaluate("() => navigator.userAgent")
