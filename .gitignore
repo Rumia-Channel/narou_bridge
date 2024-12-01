@@ -16,3 +16,7 @@ data
 *.key
 requirements.lock
 requirements-dev.lock
+
+*.7z
+*.zip
+*.tar.gz

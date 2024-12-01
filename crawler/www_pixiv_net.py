@@ -226,19 +226,19 @@ def get_with_cookie(url, retries=5, delay=1):
             response.raise_for_status()  # HTTPエラーをキャッチ
             return response
         except (ConnectionError, Timeout) as e:
-            print(f"Error: {e}. Retrying in {delay * (2 ** i)} seconds...")
+            print(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
         except RequestException as e:
             # 404エラーを特別扱い
             if response.status_code == 404:
-                print("404 Error: Resource not found.")
+                print("\n404 Error: Resource not found.")
                 return None  # 404エラーの場合はリトライしない
             else:
-                print(f"Error: {e}. Retrying in {delay * (2 ** i)} seconds...")
+                print(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
         
         if i < retries - 1:
             time.sleep(delay * (2 ** i))  # 指数バックオフ
         else:
-            print("The retry limit has been reached. No response received.。")
+            print("\nThe retry limit has been reached. No response received.。")
             return None  # リトライ限界に達した場合
 
 # レスポンスからjsonデータ(本文データ)を返却
@@ -328,10 +328,11 @@ def format_image(id, episode, series, data, json_data, folder_path):
 
 # 各話の表紙のダウンロード
 def get_cover(raw_small_url, folder_path):
+    original_url = raw_small_url
     # URLの候補リストを作成
     url_variants = [
-        raw_small_url.replace('c/600x600/novel-cover-master', 'novel-cover-original').replace('_master1200', '').replace('jpg', ext)
-        for ext in ['png', 'jpg', 'gif']
+        raw_small_url.replace('c/600x600/novel-cover-master', 'novel-cover-original').replace('_master1200', '').replace('.jpg', ext)
+        for ext in ['.png', '.jpg', '.jpeg', '.gif']
     ]
     
     #tqdmの表示崩れ対策用
