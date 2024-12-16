@@ -20,7 +20,7 @@ def cleanup_expired_requests(requests_dict, expiration_time):
         if (current_time - requests_dict[key]).total_seconds() > expiration_time:
             del requests_dict[key]
 
-def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use_ssl, port, domain):
+def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path, enc_key, use_ssl, port, domain):
 
     for site_key, value in site_dic.items():
         module_name = 'crawler.' + value.replace('.py', '')
@@ -161,15 +161,15 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                     for site_key, value in site_dic.items():
                         if update_param == site_key:
                             site = site_key
-                            if int(login_dic[site_key])==0:
+                            if int(login_dic[site])==0:
                                 is_login = False
-                            elif int(login_dic[site_key])==1:
+                            elif int(login_dic[site])==1:
                                 is_login = True
                             else:
                                 self.send_response(400)
                                 self.send_header("Content-type", "text/html")
                                 self.end_headers()
-                                return_text = "Invalid login_dic value for " + site_key
+                                return_text = "Invalid login_dic value for " + site
                                 self.wfile.write(return_text.encode('utf-8'))
                                 return
                             
@@ -181,26 +181,27 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                         self.wfile.write(b"Invalid update_parm value")
                         return
                     print(f'Update: {site}\n')
-                    globals()[site].init(folder_path, is_login, interval)
-                    globals()[site].update(folder_path, key_data, data_path, host_name)
+                    globals()[site].init(folder_path[site], cookie_path[site],  is_login, interval)
+                    globals()[site].update(folder_path[site], key_data, data_path, host_name)
                 else:
                     # 全更新処理
                     for site_key, value in site_dic.items():
-                        if int(login_dic[site_key])==0:
+                        site = site_key
+                        if int(login_dic[site])==0:
                             is_login = False
-                        elif int(login_dic[site_key])==1:
+                        elif int(login_dic[site])==1:
                             is_login = True
                         else:
                             self.send_response(400)
                             self.send_header("Content-type", "text/html")
                             self.end_headers()
-                            return_text = "Invalid login_dic value for " + site_key
+                            return_text = "Invalid login_dic value for " + site
                             self.wfile.write(return_text.encode('utf-8'))
                             return
                         
-                        print(f'Update: {site_key}\n')
-                        globals()[site_key].init(folder_path, is_login, interval)
-                        globals()[site_key].update(folder_path, key_data, data_path, host_name)
+                        print(f'Update: {site}\n')
+                        globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                        globals()[site].update(folder_path[site], key_data, data_path, host_name)
                 
                 print("\nUpdate Complete\n")
 
@@ -211,15 +212,15 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                     for site_key, value in site_dic.items():
                         if re_download_param == site_key:
                             site = site_key
-                            if int(login_dic[site_key])==0:
+                            if int(login_dic[site])==0:
                                 is_login = False
-                            elif int(login_dic[site_key])==1:
+                            elif int(login_dic[site])==1:
                                 is_login = True
                             else:
                                 self.send_response(400)
                                 self.send_header("Content-type", "text/html")
                                 self.end_headers()
-                                return_text = "Invalid login_dic value for " + site_key
+                                return_text = "Invalid login_dic value for " + site
                                 self.wfile.write(return_text.encode('utf-8'))
                                 return
                             
@@ -231,26 +232,27 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                         self.wfile.write(b"Invalid re_download_param value")
                         return
                     print(f'Re Download: {site}\n')
-                    globals()[site].init(folder_path, is_login, interval)
-                    globals()[site].re_download(folder_path, key_data, data_path, host_name)
+                    globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                    globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
                 else:
                     # 全更新処理
                     for site_key, value in site_dic.items():
-                        if int(login_dic[site_key])==0:
+                        site = site_key
+                        if int(login_dic[site])==0:
                             is_login = False
-                        elif int(login_dic[site_key])==1:
+                        elif int(login_dic[site])==1:
                             is_login = True
                         else:
                             self.send_response(400)
                             self.send_header("Content-type", "text/html")
                             self.end_headers()
-                            return_text = "Invalid login_dic value for " + site_key
+                            return_text = "Invalid login_dic value for " + site
                             self.wfile.write(return_text.encode('utf-8'))
                             return
                         
-                        print(f'Re Download: {site_key}\n')
-                        globals()[site_key].init(folder_path, is_login, interval)
-                        globals()[site_key].re_download(folder_path, key_data, data_path, host_name)
+                        print(f'Re Download: {site}\n')
+                        globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                        globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
                 
                 print("\nRe Download Complete\n")
 
@@ -261,15 +263,15 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                     for site_key, value in site_dic.items():
                         if convert_param == site_key:
                             site = site_key
-                            if int(login_dic[site_key])==0:
+                            if int(login_dic[site])==0:
                                 is_login = False
-                            elif int(login_dic[site_key])==1:
+                            elif int(login_dic[site])==1:
                                 is_login = True
                             else:
                                 self.send_response(400)
                                 self.send_header("Content-type", "text/html")
                                 self.end_headers()
-                                return_text = "Invalid login_dic value for " + site_key
+                                return_text = "Invalid login_dic value for " + site
                                 self.wfile.write(return_text.encode('utf-8'))
                                 return
 
@@ -281,25 +283,26 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                         self.wfile.write(b"Invalid convert_param value")
                         return
                     print(f'Convert: {site}\n')
-                    globals()[site].init(folder_path, is_login, interval)
-                    globals()[site].convert(folder_path, key_data, data_path, host_name)
+                    globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                    globals()[site].convert(folder_path[site], key_data, data_path, host_name)
                 else:
                     # 全変換処理
                     for site_key, value in site_dic.items():
-                        if int(login_dic[site_key])==0:
+                        site = site_key
+                        if int(login_dic[site])==0:
                             is_login = False
-                        elif int(login_dic[site_key])==1:
+                        elif int(login_dic[site])==1:
                             is_login = True
                         else:
                             self.send_response(400)
                             self.send_header("Content-type", "text/html")
                             self.end_headers()
-                            return_text = "Invalid login_dic value for " + site_key
+                            return_text = "Invalid login_dic value for " + site
                             self.wfile.write(return_text.encode('utf-8'))
                             return
-                        print(f'Convert: {site_key}\n')
-                        globals()[site_key].init(folder_path, is_login, interval)
-                        globals()[site_key].convert(folder_path, key_data, data_path, host_name)
+                        print(f'Convert: {site}\n')
+                        globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                        globals()[site].convert(folder_path[site], key_data, data_path, host_name)
                 
                 print("\nConvert Complete\n")
                 if not update_param == 'all':
@@ -307,15 +310,15 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                     for site_key, value in site_dic.items():
                         if update_param == site_key:
                             site = site_key
-                            if int(login_dic[site_key])==0:
+                            if int(login_dic[site])==0:
                                 is_login = False
-                            elif int(login_dic[site_key])==1:
+                            elif int(login_dic[site])==1:
                                 is_login = True
                             else:
                                 self.send_response(400)
                                 self.send_header("Content-type", "text/html")
                                 self.end_headers()
-                                return_text = "Invalid login_dic value for " + site_key
+                                return_text = "Invalid login_dic value for " + site
                                 self.wfile.write(return_text.encode('utf-8'))
                                 return
                             
@@ -327,26 +330,26 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                         self.wfile.write(b"Invalid update_parm value")
                         return
                     print(f'Update: {site}\n')
-                    globals()[site].init(folder_path, is_login, interval)
-                    globals()[site].update(folder_path, key_data, data_path, host_name)
+                    globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                    globals()[site].update(folder_path[site], key_data, data_path, host_name)
                 else:
                     # 全更新処理
                     for site_key, value in site_dic.items():
-                        if int(login_dic[site_key])==0:
+                        if int(login_dic[site])==0:
                             is_login = False
-                        elif int(login_dic[site_key])==1:
+                        elif int(login_dic[site])==1:
                             is_login = True
                         else:
                             self.send_response(400)
                             self.send_header("Content-type", "text/html")
                             self.end_headers()
-                            return_text = "Invalid login_dic value for " + site_key
+                            return_text = "Invalid login_dic value for " + site
                             self.wfile.write(return_text.encode('utf-8'))
                             return
                         
-                        print(f'Update: {site_key}\n')
-                        globals()[site_key].init(folder_path, is_login, interval)
-                        globals()[site_key].update(folder_path, key_data, data_path, host_name)
+                        print(f'Update: {site}\n')
+                        globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                        globals()[site].update(folder_path[site], key_data, data_path, host_name)
                 
                 print("\nUpdate Complete\n")
             # ダウンロード処理
@@ -356,15 +359,15 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
                 for site_key, value in site_dic.items():
                     if value.replace('_', '.').replace('.py', '') in add_param:
                         site = site_key
-                        if int(login_dic[site_key])==0:
+                        if int(login_dic[site])==0:
                             is_login = False
-                        elif int(login_dic[site_key])==1:
+                        elif int(login_dic[site])==1:
                             is_login = True
                         else:
                             self.send_response(400)
                             self.send_header("Content-type", "text/html")
                             self.end_headers()
-                            return_text = "Invalid login_dic value for " + site_key
+                            return_text = "Invalid login_dic value for " + site
                             self.wfile.write(return_text.encode('utf-8'))
                             return
                         break
@@ -377,8 +380,8 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, enc_key, use
 
                 print(f'Web site: {site}')
                 print(f'URL: {add_param}')
-                globals()[site].init(folder_path, is_login, interval)
-                globals()[site].download(add_param, folder_path, key_data, data_path, host_name)
+                globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
 
             # 古いリクエストIDのクリーンアップ
             cleanup_expired_requests(recent_request_ids, expiration_time=600)
