@@ -1,9 +1,12 @@
 import re
 import os
+import shutil
 import requests
+from requests.exceptions import RequestException, ConnectionError, Timeout
 from urllib.parse import unquote
 import json
 from playwright.sync_api import Playwright, sync_playwright, expect
+from playwright_recaptcha import recaptchav2
 from html import unescape
 from datetime import datetime, timezone, timedelta
 from jsondiff import diff
@@ -17,6 +20,7 @@ from tqdm import tqdm
 def gen_pixiv_index(folder_path ,key_data):
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
     pairs = {}
+    no_raw = []
     # 各サブフォルダの raw/raw.json を読み込む
     for folder in subfolders:
         json_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
@@ -26,14 +30,19 @@ def gen_pixiv_index(folder_path ,key_data):
                 title = data.get('title', 'No title found')
                 author = data.get('author', 'No author found')
                 author_id = data.get('author_url', 'No author_id found').replace('https://www.pixiv.net/users/', '')
+                create_date = data.get('createDate', 'No create date found')
+                update_date = data.get('updateDate', 'No update date found')
                 type = data.get('type', 'No type found')
-                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id,'type': type}
+                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id,'type': type, 'create_date': create_date, 'update_date': update_date}
         else:
-            print(f"raw.json not found in {folder}")
-            return
+            #print(f"raw.json not found in {folder}")
+            #return
+            shutil.rmtree(os.path.join(folder_path, folder))
+            no_raw.append(folder)
+            continue
     
     pairs = dict(sorted(pairs.items(), key=lambda item: item[1]['author']))
-    
+
     # index.html の生成
     with open(os.path.join(folder_path, 'index.html'), 'w', encoding='utf-8') as f:
         f.write('<!DOCTYPE html>\n')
@@ -46,27 +55,58 @@ def gen_pixiv_index(folder_path ,key_data):
         f.write('<body>\n')
         f.write(f'<a href="../{key_data}">戻る</a>\n')
         f.write('<h1>Pixiv 小説一覧</h1>\n')
+        f.write('<table>\n')
+        f.write('<tr><th>掲載タイプ</th><th>タイトル</th><th>作者名</th><th>掲載日時</th><th>更新日時</th></tr>\n')
         for folder, info in pairs.items():
-            f.write(f'<a href="{folder}/{key_data}">({info['type']}) {info['title']}: {info['author']}</a><br>\n')
+            f.write(f'''<tr><td>{info["type"]}</td>
+                    <td ><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
+                    <td ><a href="https://www.pixiv.net/users/{info["author_id"]}" class="text">{info["author"]}</a></td>
+                    <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
+                    <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
+        f.write('</table>\n')
+        f.write("""<script>
+        // テキスト折り返し関数
+        const wrapTextByLength = (text, maxLength) => {
+            // 指定した長さでテキストを分割し、<br>タグで改行を追加
+            return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
+        };
+
+        // localStorageから折り返し文字数を取得し、なければデフォルト（20）を使用
+        const maxLength = localStorage.getItem('maxLength') || 10;
+
+        // テキストを取得し、指定された文字数で折り返し
+        const textElement = document.querySelector('.text');
+        if (textElement) {
+            // 文字列を指定した長さで折り返し、<br>で改行を追加
+            textElement.innerHTML = wrapTextByLength(textElement.textContent, maxLength);
+        }
+        </script>""")
         f.write('</body>\n')
         f.write('</html>\n')
     
     with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
         json.dump(pairs, f, ensure_ascii=False, indent=4)
 
+    if no_raw:
+        print(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.\n")
+
     print('目次の生成が完了しました')
 
 # クッキーを読みこみ
 def load_cookies_from_json(input_file):
     with open(input_file, 'r', encoding='utf-8') as f:
-        cookies = json.load(f)
+        data = json.load(f)  # 1 回だけファイルを読み込む
+        cookies = data.get('cookies', {})
+        ua = data.get('user_agent')
 
     # requests用にCookieを変換
     cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
-    return cookies_dict
+    return cookies_dict, ua
 
 #初期化処理
-def init(folder_path, is_login, interval):
+def init(cookie_path, is_login, interval):
+
+    cookie_path = os.path.join(cookie_path, 'login.json')
 
     global interval_sec
     global g_count
@@ -74,51 +114,139 @@ def init(folder_path, is_login, interval):
     g_count = 1
 
     print(f'Login : {is_login}')
-    cookie_path = os.path.join(folder_path, 'cookie.json')
-    ua_path = os.path.join(folder_path, 'ua.txt')
 
     def login(playwright: Playwright) -> None:
-        browser = playwright.chromium.launch(headless=True)
+        # ブラウザ設定
+
+        # 通常モードからユーザーエージェントを取得
+        browser = playwright.firefox.launch(headless=False)  # 通常モード（UIあり）でブラウザを起動
         context = browser.new_context()
         page = context.new_page()
-        page.set_viewport_size({'width': 1280, 'height': 1280})
+        user_agent = page.evaluate('navigator.userAgent')
+        browser.close()
+
+
+        #ヘッドレスモードで起動
+        browser = playwright.firefox.launch(
+            headless=True,
+            args=[
+                "-headless",  # ヘッドレスモード
+                "--disable-blink-features=AutomationControlled"  # 自動化検出の回避
+            ])
+        context = browser.new_context(locale='en-US', viewport={"width": 1920, "height": 1080}, screen={"width": 1920, "height": 1080}, user_agent=user_agent)
+        page = context.new_page()
+        #page.set_viewport_size({'width': 1280, 'height': 1280})
+        
+        # ヘッドレスモードを隠すためのスクリプト
+        page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+        });
+        """)
+
+        # フィンガープリントを偽装するスクリプトを挿入
+        page.add_init_script("""
+        Object.defineProperty(window, 'chrome', {
+        get: () => ({ runtime: {} }),
+        });
+
+        Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3],  // プラグイン情報を設定
+        });
+
+        Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en']
+        });
+        """)
+
+        # Pixivのログインページにアクセス
+        print("Navigating to Pixiv...")
         page.goto("https://www.pixiv.net/")
-        time.sleep(random.uniform(1,5))
-        page.get_by_role("link", name="ログイン").click()
+        time.sleep(random.uniform(1, 5))
+        
+        # ログインリンクをクリック
+        print("Clicking login link...")
+        page.get_by_role("link", name="Login").click()
+
+        # ユーザー情報を入力
+        page.get_by_placeholder("E-mail address or pixiv ID").click()
         mail = input("メールアドレスを入力してください: ")
-        page.get_by_placeholder("メールアドレスまたはpixiv ID").fill(mail)
+        page.get_by_placeholder("E-mail address or pixiv ID").fill(mail)
+        page.get_by_placeholder("Password").click()
         pswd = input("パスワードを入力してください: ")
-        page.get_by_placeholder("パスワード").fill(pswd)
-        time.sleep(random.uniform(2,5))
-        page.get_by_role("button", name="ログイン", exact=True).click()
-        # リダイレクトが完全に終わるまで待つ
-        def wait_for_redirects(page):
-            while True:
+        page.get_by_placeholder("Password").fill(pswd)
+        
+        time.sleep(random.uniform(2, 5))
+        print("Attempting to log in...")
+        page.get_by_role("button", name="Log In", exact=True).click()
+
+        # リキャプチャの確認を1度だけ行う
+        time.sleep(random.uniform(2, 5))
+        print(f"Current URL after login attempt: {page.url}")
+        if "accounts.pixiv.net" in page.url:  # Pixivのログインページに留まっている場合
+            print("reCAPTCHA detected. Solving...")
+            try:
+                with recaptchav2.SyncSolver(page) as solver:
+                    token = solver.solve_recaptcha(wait=True)
+                    print(f"reCAPTCHA token obtained: {token}")
+                    if not token:
+                        raise ValueError("Failed to retrieve a valid reCAPTCHA token.")
+                print("Retrying login after solving reCAPTCHA...")
+                page.get_by_role("button", name="Log In", exact=True).click()
+                time.sleep(random.uniform(2, 5))
+            except Exception as e:
+                print(f"Failed to solve reCAPTCHA: {e}")
+                return
+
+        # ログイン成功後、リダイレクト処理を待機
+        def wait_for_redirects(page, is_2fa=False, timeout=60):
+            start_time = time.time()
+            while time.time() - start_time < timeout:
                 page.wait_for_load_state("load")
-                if page.url.startswith("https://accounts.pixiv.net/login/two-factor-authentication?") or page.url == "https://www.pixiv.net/":    
-                    break
-        wait_for_redirects(page)
-        if "two-factor-authentication" in page.url:
-            time.sleep(random.uniform(1,5))
-            page.get_by_label("このブラウザを信頼する").check()
-            tfak = input("2段階認証のコードを入力してください: ")
-            page.get_by_placeholder("確認コード").fill(tfak)
-            time.sleep(random.uniform(1,5))
-            page.get_by_role("button", name="ログイン").click()
-            def wait_for_redirects_2fa(page):
-                while True:
-                    page.wait_for_load_state("load")
-                    if page.url == "https://www.pixiv.net/":
-                        break
-            wait_for_redirects_2fa(page)
+                print(f"Waiting for redirects... Current URL: {page.url}")
+                
+                # 2段階認証ページが表示された場合
+                if "two-factor-authentication" in page.url and not is_2fa:
+                    print("Two-factor authentication page detected.")
+                    return "two-factor-authentication"
+                
+                # ホームページに到達した場合
+                if page.url in ["https://www.pixiv.net/", "https://www.pixiv.net/en/"]:
+                    print("Successfully redirected to Pixiv homepage.")
+                    return "success"
+            return "timeout"
+
+        redirect_status = wait_for_redirects(page)
+        
+        if redirect_status == "timeout":
+            print("Redirect did not complete within the timeout period.")
+            return
+        
+        if redirect_status == "two-factor-authentication":
+            # 2段階認証処理
+            print("2-factor authentication required.")
+            time.sleep(random.uniform(1, 5))
+            page.get_by_label("Trust this browser").check()  # ブラウザを信頼する
+            tfak = input("2段階認証のコードを入力してください: ")  # ユーザーにコードを入力させる
+            page.get_by_placeholder("Verification code").fill(tfak)
+            time.sleep(random.uniform(1, 5))
+            page.get_by_role("button", name="Log In").click()  # ログインボタンをクリック
+
+            # 2段階認証後のリダイレクトを待機（is_2fa=Trueとして呼び出し）
+            print("Waiting for redirect after 2-factor authentication...")
+            redirect_status = wait_for_redirects(page, is_2fa=True)
+            if redirect_status == "timeout":
+                print("Redirect after 2-factor authentication did not complete.")
+                return
+
+        # ログイン完了
+        print(f"Login successful. Final URL: {page.url}")
 
         cookies = context.cookies()
         user_agent = page.evaluate("() => navigator.userAgent")
+        
         with open(cookie_path, 'w', encoding='utf-8') as f:
-            json.dump(cookies, f)
-        with open(ua_path, 'w', encoding='utf-8') as f:
-            f.write(user_agent)
-        page.close()
+            json.dump({'cookies': cookies, 'user_agent': user_agent}, f, ensure_ascii=False, indent=4)
 
         # ---------------------
         context.close()
@@ -128,22 +256,19 @@ def init(folder_path, is_login, interval):
     global pixiv_cookie
     global pixiv_header
 
+    if os.path.isfile(cookie_path):
+        pixiv_cookie, ua = load_cookies_from_json(cookie_path)
+
     if is_login:
 
-        try:
-            with open(ua_path, 'r', encoding='utf-8') as f:
-                ua = f.read()
-        except FileNotFoundError:
-            ua = False
 
         # cookieの有無とログイン状態を確認
-        if not os.path.isfile(cookie_path) or not os.path.isfile(ua_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=load_cookies_from_json(cookie_path), headers={'User-Agent': str(ua)}).history):
+        if not os.path.isfile(cookie_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=pixiv_cookie, headers={'User-Agent': str(ua)}).history):
             with sync_playwright() as playwright:
                 login(playwright)      
 
-        pixiv_cookie = load_cookies_from_json(cookie_path)
-        with open(ua_path, 'r', encoding='utf-8') as f:
-            ua = f.read()
+        pixiv_cookie, ua = load_cookies_from_json(cookie_path)
+
     else:
 
         pixiv_cookie = {}
@@ -184,9 +309,27 @@ def find_key_recursively(data, target_key):
     return None
 
 # クッキーを使ってGETリクエストを送信
-def get_with_cookie(url):
-    response = requests.get(url, cookies=pixiv_cookie, headers=pixiv_header)
-    return response
+def get_with_cookie(url, retries=5, delay=1):
+    for i in range(retries):
+        try:
+            response = requests.get(url, cookies=pixiv_cookie, headers=pixiv_header, timeout=10)
+            response.raise_for_status()  # HTTPエラーをキャッチ
+            return response
+        except (ConnectionError, Timeout) as e:
+            print(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
+        except RequestException as e:
+            # 404エラーを特別扱い
+            if response.status_code == 404:
+                print("\n404 Error: Resource not found.")
+                return None  # 404エラーの場合はリトライしない
+            else:
+                print(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
+        
+        if i < retries - 1:
+            time.sleep(delay * (2 ** i))  # 指数バックオフ
+        else:
+            print("\nThe retry limit has been reached. No response received.。")
+            return None  # リトライ限界に達した場合
 
 # レスポンスからjsonデータ(本文データ)を返却
 def return_content_json(novelid):
@@ -254,7 +397,7 @@ def format_image(id, episode, series, data, json_data, folder_path):
     for art_id, img_nums in link_dict.items():
         illust_json = get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages").json()
         illust_datas = find_key_recursively(illust_json, 'body')
-        for index, i in tqdm(enumerate(illust_datas), desc=f"Downloadong illusts from https://www.pixiv.net/artworks/{art_id}", unit="illusts", total=len(illust_datas), leave=False):
+        for index, i in tqdm(enumerate(illust_datas), desc=f"Downloading illusts from https://www.pixiv.net/artworks/{art_id}", unit="illusts", total=len(illust_datas), leave=False):
             time.sleep(interval_sec)
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
@@ -273,20 +416,32 @@ def format_image(id, episode, series, data, json_data, folder_path):
 
     return data
 
-#各話の表紙のダウンロード
+# 各話の表紙のダウンロード
 def get_cover(raw_small_url, folder_path):
-    small_url = raw_small_url.replace('c/600x600/novel-cover-master', 'novel-cover-original').replace('_master1200', '')
-    ep_cover = small_url.replace('jpg', 'png')
-    #jpegの時
-    if get_with_cookie(ep_cover).status_code == 404:
-        ep_cover = small_url
-        #gifだった時
-        if get_with_cookie(ep_cover).status_code == 404:
-            ep_cover = small_url.replace('jpg', 'gif')
+    original_url = raw_small_url
+    # URLの候補リストを作成
+    url_variants = [
+        raw_small_url.replace('c/600x600/novel-cover-master', 'novel-cover-original').replace('_master1200', '').replace('.jpg', ext)
+        for ext in ['.png', '.jpg', '.jpeg', '.gif']
+    ]
     
-    ep_cover_data = get_with_cookie(ep_cover)
-    with open(os.path.join(folder_path, f'cover{os.path.splitext(ep_cover)[1]}'), 'wb') as f:
-        f.write(ep_cover_data.content)
+    #tqdmの表示崩れ対策用
+    #print('')
+
+    # 各URLを試行
+    for ep_cover in url_variants:
+        #print(f"Download cover image from: {ep_cover}")
+        response = get_with_cookie(ep_cover)
+        if response is not None and response.status_code == 200:
+            # ファイルを保存
+            file_extension = os.path.splitext(ep_cover)[1]
+            with open(os.path.join(folder_path, f'cover{file_extension}'), 'wb') as f:
+                f.write(response.content)
+            #print(f"Save compleat!: {ep_cover}")
+            return  # 成功したら終了
+
+    # 全てのURLが404だった場合
+    print("Failed to download cover image.")
 
 #チャプタータグの除去
 def remove_chapter_tag(data):
@@ -453,7 +608,7 @@ def dl_series(series_id, folder_path, key_data, update):
         }
 
     # 作成日で並び替え
-    episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
+    #episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
     
     novel = {
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
@@ -607,7 +762,7 @@ def dl_user(user_id, folder_path, key_data, update):
     print(f'User Name: {user_name}')
     #ユーザーの小説と小説シリーズがない場合
     if not user_all_novels and not user_all_novel_series:
-        print("No novels or novel series found.")
+        print("No novels or novel series found.\n")
         return
     #シリーズIDの取得
     for ns in user_all_novel_series:
@@ -881,8 +1036,9 @@ def convert(folder_path, key_data, data_path, host_name):
     folder_names = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
 
     for i in folder_names:
-        with open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
-            raw_json_data = json.load(f)
-        cn.narou_gen(raw_json_data, os.path.join(folder_path, i), key_data, data_folder, host)
+        if os.path.exists(os.path.join(folder_path, i, 'raw', 'raw.json')) and os.path.exists(os.path.join(folder_path, i, 'info', 'index.html')):
+            with open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+                raw_json_data = json.load(f)
+            cn.narou_gen(raw_json_data, os.path.join(folder_path, i), key_data, data_folder, host)
 
     gen_pixiv_index(folder_path, key_data)

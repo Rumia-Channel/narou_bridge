@@ -10,9 +10,14 @@ wheels/
 .venv
 
 data
+cookie
 *.json
 *.html
 *.js
 *.key
 requirements.lock
 requirements-dev.lock
+
+*.7z
+*.zip
+*.tar.gz

@@ -8,13 +8,15 @@ authors = [
 dependencies = [
     "pyotp>=2.9.0",
     "configparser>=7.1.0",
-    "nuitka>=2.4.7",
     "playwright>=1.46.0",
     "requests>=2.32.3",
     "beautifulsoup4>=4.12.3",
     "brotli>=1.1.0",
     "jsondiff>=2.2.1",
     "tqdm>=4.66.5",
+    "flask>=3.0.3",
+    "pycryptodome>=3.21.0",
+    "playwright-recaptcha>=0.5.1",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
