@@ -9,7 +9,7 @@ import string
 from datetime import datetime
 
 # アクセスを制限するファイルやフォルダのリスト
-restricted_items = ['cookie.json', 'ua.txt', '.json', '.js', '.key']
+restricted_items = ['login.json', '.js', '.key']
 
 # リクエストIDの保存用辞書
 recent_request_ids = {}
