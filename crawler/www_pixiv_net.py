@@ -95,14 +95,18 @@ def gen_pixiv_index(folder_path ,key_data):
 # クッキーを読みこみ
 def load_cookies_from_json(input_file):
     with open(input_file, 'r', encoding='utf-8') as f:
-        cookies = json.load(f)
+        data = json.load(f)  # 1 回だけファイルを読み込む
+        cookies = data.get('cookies', {})
+        ua = data.get('user_agent')
 
     # requests用にCookieを変換
     cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
-    return cookies_dict
+    return cookies_dict, ua
 
 #初期化処理
-def init(folder_path, cookie_path, is_login, interval):
+def init(cookie_path, is_login, interval):
+
+    cookie_path = os.path.join(cookie_path, 'login.json')
 
     global interval_sec
     global g_count
@@ -110,9 +114,6 @@ def init(folder_path, cookie_path, is_login, interval):
     g_count = 1
 
     print(f'Login : {is_login}')
-    cookie_path = os.path.join(folder_path, 'cookie.json')
-    ua_path = os.path.join(folder_path, 'ua.txt')
-
 
     def login(playwright: Playwright) -> None:
         # ブラウザ設定
@@ -244,7 +245,7 @@ def init(folder_path, cookie_path, is_login, interval):
         cookies = context.cookies()
         user_agent = page.evaluate("() => navigator.userAgent")
         
-        with open(os.path.join(cookie_path, 'login.json'), 'w', encoding='utf-8') as f:
+        with open(cookie_path, 'w', encoding='utf-8') as f:
             json.dump({'cookies': cookies, 'user_agent': user_agent}, f, ensure_ascii=False, indent=4)
 
         # ---------------------
@@ -255,22 +256,19 @@ def init(folder_path, cookie_path, is_login, interval):
     global pixiv_cookie
     global pixiv_header
 
+    if os.path.isfile(cookie_path):
+        pixiv_cookie, ua = load_cookies_from_json(cookie_path)
+
     if is_login:
 
-        try:
-            with open(ua_path, 'r', encoding='utf-8') as f:
-                ua = f.read()
-        except FileNotFoundError:
-            ua = False
 
         # cookieの有無とログイン状態を確認
-        if not os.path.isfile(cookie_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=load_cookies_from_json(cookie_path), headers={'User-Agent': str(ua)}).history):
+        if not os.path.isfile(cookie_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=pixiv_cookie, headers={'User-Agent': str(ua)}).history):
             with sync_playwright() as playwright:
                 login(playwright)      
 
-        pixiv_cookie = load_cookies_from_json(cookie_path)
-        with open(ua_path, 'r', encoding='utf-8') as f:
-            ua = f.read()
+        pixiv_cookie, ua = load_cookies_from_json(cookie_path)
+
     else:
 
         pixiv_cookie = {}
@@ -284,12 +282,6 @@ def init(folder_path, cookie_path, is_login, interval):
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.101 Safari/537.36"  # Linux
         ]
         ua = random.choice(ua_list)
-
-    print(cookie_path)
-    with open(os.path.join(cookie_path, 'login.json'), 'w', encoding='utf-8') as f:
-        json.dump({'cookies': pixiv_cookie, 'user_agent': ua}, f, ensure_ascii=False, indent=4)
-
-
 
     pixiv_header = {
         'User-Agent': ua,
