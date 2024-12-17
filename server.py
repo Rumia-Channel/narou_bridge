@@ -181,7 +181,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
                         self.wfile.write(b"Invalid update_parm value")
                         return
                     print(f'Update: {site}\n')
-                    globals()[site].init(folder_path[site], cookie_path[site],  is_login, interval)
+                    globals()[site].init(cookie_path[site], is_login, interval)
                     globals()[site].update(folder_path[site], key_data, data_path, host_name)
                 else:
                     # 全更新処理
@@ -200,7 +200,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
                             return
                         
                         print(f'Update: {site}\n')
-                        globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                        globals()[site].init(cookie_path[site], is_login, interval)
                         globals()[site].update(folder_path[site], key_data, data_path, host_name)
                 
                 print("\nUpdate Complete\n")
@@ -232,7 +232,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
                         self.wfile.write(b"Invalid re_download_param value")
                         return
                     print(f'Re Download: {site}\n')
-                    globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                    globals()[site].init(cookie_path[site], is_login, interval)
                     globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
                 else:
                     # 全更新処理
@@ -251,7 +251,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
                             return
                         
                         print(f'Re Download: {site}\n')
-                        globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                        globals()[site].init(cookie_path[site], is_login, interval)
                         globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
                 
                 print("\nRe Download Complete\n")
@@ -283,7 +283,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
                         self.wfile.write(b"Invalid convert_param value")
                         return
                     print(f'Convert: {site}\n')
-                    globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                    globals()[site].init(cookie_path[site], is_login, interval)
                     globals()[site].convert(folder_path[site], key_data, data_path, host_name)
                 else:
                     # 全変換処理
@@ -301,7 +301,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
                             self.wfile.write(return_text.encode('utf-8'))
                             return
                         print(f'Convert: {site}\n')
-                        globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                        globals()[site].init(cookie_path[site], is_login, interval)
                         globals()[site].convert(folder_path[site], key_data, data_path, host_name)
                 
                 print("\nConvert Complete\n")
@@ -330,7 +330,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
                         self.wfile.write(b"Invalid update_parm value")
                         return
                     print(f'Update: {site}\n')
-                    globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                    globals()[site].init(cookie_path[site], is_login, interval)
                     globals()[site].update(folder_path[site], key_data, data_path, host_name)
                 else:
                     # 全更新処理
@@ -348,7 +348,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
                             return
                         
                         print(f'Update: {site}\n')
-                        globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                        globals()[site].init(cookie_path[site], is_login, interval)
                         globals()[site].update(folder_path[site], key_data, data_path, host_name)
                 
                 print("\nUpdate Complete\n")
@@ -380,7 +380,7 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
 
                 print(f'Web site: {site}')
                 print(f'URL: {add_param}')
-                globals()[site].init(folder_path[site], cookie_path[site], is_login, interval)
+                globals()[site].init(cookie_path[site], is_login, interval)
                 globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
 
             # 古いリクエストIDのクリーンアップ
