@@ -51,38 +51,98 @@ def gen_pixiv_index(folder_path ,key_data):
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
         f.write('<title>Pixiv Index</title>\n')
+        # CSS追加
+        f.write('<style>\n')
+        f.write('table { width: 100%; border-collapse: collapse; }\n')
+        f.write('th, td { border: 1px solid #ccc; padding: 8px; text-align: left; overflow-wrap: break-word; word-wrap: break-word; }\n')
+        f.write('</style>\n')
         f.write('</head>\n')
         f.write('<body>\n')
+        
+        # 戻るリンク
         f.write(f'<a href="../{key_data}">戻る</a>\n')
+
+        # 右寄せで数値入力欄とボタン
+        f.write('''<div style="text-align: right; margin-top: 10px;">
+            折り返し文字数 <input type="number" id="maxLengthInput" value="10" min="1" style="width: 60px;" />
+            <button id="saveButton">保存</button>
+        </div>\n''')
+
         f.write('<h1>Pixiv 小説一覧</h1>\n')
         f.write('<table>\n')
         f.write('<tr><th>掲載タイプ</th><th>タイトル</th><th>作者名</th><th>掲載日時</th><th>更新日時</th></tr>\n')
+        
+        # 各行のデータ出力
         for folder, info in pairs.items():
             f.write(f'''<tr><td>{info["type"]}</td>
-                    <td ><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
-                    <td ><a href="https://www.pixiv.net/users/{info["author_id"]}" class="text">{info["author"]}</a></td>
-                    <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
-                    <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
+                        <td class="text"><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
+                        <td class="text"><a href="https://www.pixiv.net/users/{info["author_id"]}">{info["author"]}</a></td>
+                        <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
+                        <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
+        
         f.write('</table>\n')
+        
+        # JavaScriptによる折り返し処理
         f.write("""<script>
-        // テキスト折り返し関数
-        const wrapTextByLength = (text, maxLength) => {
-            // 指定した長さでテキストを分割し、<br>タグで改行を追加
-            return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
-        };
+            // テキスト折り返し関数
+            const wrapTextByLength = (text, maxLength) => {
+                // 指定した長さでテキストを分割し、<br>タグで改行を追加
+                return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
+            };
 
-        // localStorageから折り返し文字数を取得し、なければデフォルト（20）を使用
-        const maxLength = localStorage.getItem('maxLength') || 10;
+            // localStorageから折り返し文字数を取得し、なければデフォルト（10文字）を使用
+            let maxLength = localStorage.getItem('maxLength') || 10;
 
-        // テキストを取得し、指定された文字数で折り返し
-        const textElement = document.querySelector('.text');
-        if (textElement) {
-            // 文字列を指定した長さで折り返し、<br>で改行を追加
-            textElement.innerHTML = wrapTextByLength(textElement.textContent, maxLength);
-        }
+            // 数値入力欄にローカルストレージの値を表示
+            document.getElementById('maxLengthInput').value = maxLength;
+
+            // テーブル内の特定の列を対象に折り返し処理を適用
+            document.querySelectorAll('table tr').forEach(row => {
+                // タイトル列（2列目）と作者名列（3列目）を取得
+                const titleCell = row.cells[1];
+                const authorCell = row.cells[2];
+
+                if (titleCell) {
+                    // タイトルセル内のリンク部分を保持しつつ、テキストを折り返し
+                    const titleLink = titleCell.querySelector('a');
+                    const titleText = titleLink ? titleLink.textContent : titleCell.textContent;
+
+                    if (titleLink) {
+                        titleLink.innerHTML = wrapTextByLength(titleText, maxLength);
+                    } else {
+                        titleCell.innerHTML = wrapTextByLength(titleText, maxLength);
+                    }
+                }
+
+                if (authorCell) {
+                    // 作者名セル内のリンク部分を保持しつつ、テキストを折り返し
+                    const authorLink = authorCell.querySelector('a');
+                    const authorText = authorLink ? authorLink.textContent : authorCell.textContent;
+                    
+                    if (authorLink) {
+                        authorLink.innerHTML = wrapTextByLength(authorText, maxLength);
+                    } else {
+                        authorCell.innerHTML = wrapTextByLength(authorText, maxLength);
+                    }
+                }
+            });
+
+            // 保存ボタンのイベント
+            document.getElementById('saveButton').addEventListener('click', () => {
+                const inputValue = document.getElementById('maxLengthInput').value;
+                if (inputValue && inputValue > 0) {
+                    // 新しい文字数をローカルストレージに保存
+                    localStorage.setItem('maxLength', inputValue);
+
+                    // 保存後、ページをリロードして変更を適用
+                    location.reload();
+                }
+            });
         </script>""")
+        
         f.write('</body>\n')
         f.write('</html>\n')
+
     
     with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
         json.dump(pairs, f, ensure_ascii=False, indent=4)
