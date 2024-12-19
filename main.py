@@ -1,6 +1,8 @@
 import os
 import server
-from . import load_data as ld
+
+#共通設定の読み込み
+import common as cm
 
 def create_index(data_path, config):
     # Indexファイルを作成
@@ -150,7 +152,7 @@ def create_index(data_path, config):
         f.write('</html>\n')
 
 if __name__ == '__main__':
-    config, reload_time, interval, site_dic, login_dic, folder_path, data_path, cookie_path, key, use_ssl, port, domain = ld.load()
+    config, reload_time, interval, site_dic, login_dic, folder_path, data_path, cookie_path, key, use_ssl, port, domain = cm.load_config()
 
     # Indexファイルを作成
     create_index(data_path, config)
