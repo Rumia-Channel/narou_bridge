@@ -15,8 +15,8 @@ import random
 from tqdm import tqdm
 
 #共通の処理
+import common as cm
 from . import convert_narou as cn
-from . import common as cm
 
 def gen_pixiv_index(folder_path ,key_data):
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]

@@ -8,6 +8,9 @@ import random
 import string
 from datetime import datetime
 
+#共通設定の読み込み
+import common as cm
+
 # アクセスを制限するファイルやフォルダのリスト
 restricted_items = ['login.json', '.js', '.key']
 
@@ -22,10 +25,7 @@ def cleanup_expired_requests(requests_dict, expiration_time):
 
 def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path, enc_key, use_ssl, port, domain):
 
-    for site_key, value in site_dic.items():
-        module_name = 'crawler.' + value.replace('.py', '')
-        module = importlib.import_module(module_name)
-        globals()[site_key] = module
+    globals().update(cm.import_modules(site_dic))
 
     class RequestHandler(BaseHTTPRequestHandler):
         def parse_query_params(self):
