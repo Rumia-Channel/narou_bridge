@@ -4,7 +4,7 @@ name: &name Pixiv
 sitename: *name
 domain: www.pixiv.net
 top_url: http://localhost:8080
-url: http://localhost:8080/pixiv/(?<ncode>[ns]\d+)/
+url: \\k<top_url>/pixiv/(?<ncode>[ns]\d+)/
 encoding: UTF-8
 confirm_over18: yes
 append_title_to_folder_name: yes
