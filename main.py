@@ -1,8 +1,8 @@
-import configparser
 import os
 import server
+from . import load_data as ld
 
-def create_index(data_path, key, config):
+def create_index(data_path, config):
     # Indexファイルを作成
     with open(os.path.join(data_path, 'index.html'), 'w', encoding='utf-8') as f:
         f.write('<!DOCTYPE html>\n')
@@ -149,56 +149,10 @@ def create_index(data_path, key, config):
         f.write('</body>\n')
         f.write('</html>\n')
 
-def initialize():
-    site_dic = {}
-    login_dic = {}
-
-    folder_path = {}
-    cookie_path = {}
-
-    # 設定の読み込み
-    config = configparser.ConfigParser()
-    config.read('setting.ini')
-
-    # Get the path from the data key
-    data_path = config['setting']['data']
-
-    # 指定されないならカレントディレクトリ
-    if not data_path:
-        data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-
-    #Cookieの保存先を指定
-    cookie_folder = config['setting']['cookie']
-
-    # 指定されないならカレントディレクトリ
-    if not cookie_folder:
-        cookie_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookie')
-
-
-    # ないなら作れdataフォルダ
-    if not os.path.exists(data_path):
-        os.makedirs(data_path)
-
-    # dataフォルダcookieフォルダとサイト名のマトリョシカを作成
-    for key in config['crawler']:
-        folder_name = key
-        site_dic[key] = config['crawler'][key]
-        login_dic[key] = int(config['login'][key])
-        folder_path[key] = os.path.join(data_path, folder_name)
-        cookie_path[key] = os.path.join(cookie_folder, folder_name)
-        if not os.path.exists(folder_path[key]):
-            os.makedirs(folder_path[key])
-        if not os.path.exists(cookie_path[key]):
-            os.makedirs(cookie_path[key])
-        
-    
-    # Indexファイルを作成
-    create_index(data_path, key, config)
-
-    print("Initialize successfully!")
-    return int(config['setting']['reload']), int(config['setting']['interval']), site_dic, login_dic, folder_path, data_path, cookie_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
-
 if __name__ == '__main__':
-    reload_time, interval, site_dic, login_dic, folder_path, data_path, cookie_path, key, use_ssl, port, domain = initialize()
+    config, reload_time, interval, site_dic, login_dic, folder_path, data_path, cookie_path, key, use_ssl, port, domain = ld.load()
+
+    # Indexファイルを作成
+    create_index(data_path, config)
 
     server.http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,  key, use_ssl, port, domain)
