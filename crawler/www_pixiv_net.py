@@ -15,8 +15,8 @@ import random
 from tqdm import tqdm
 
 #共通の処理
-import common as cm
-from . import convert_narou as cn
+import crawler.common as cm
+import crawler.convert_narou as cn
 
 def gen_pixiv_index(folder_path ,key_data):
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
@@ -295,8 +295,7 @@ def init(cookie_path, is_login, interval):
         cookies = context.cookies()
         user_agent = page.evaluate("() => navigator.userAgent")
         
-        with open(cookie_path, 'w', encoding='utf-8') as f:
-            json.dump({'cookies': cookies, 'user_agent': user_agent}, f, ensure_ascii=False, indent=4)
+        cm.save_cookies_and_ua(cookie_path, cookies, user_agent)
 
         # ---------------------
         context.close()
