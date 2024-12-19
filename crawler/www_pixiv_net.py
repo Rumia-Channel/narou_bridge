@@ -2,20 +2,21 @@ import re
 import os
 import shutil
 import requests
-from requests.exceptions import RequestException, ConnectionError, Timeout
 from urllib.parse import unquote
 import json
 from playwright.sync_api import Playwright, sync_playwright, expect
 from playwright_recaptcha import recaptchav2
 from html import unescape
 from datetime import datetime, timezone, timedelta
-from jsondiff import diff
-from . import convert_narou as cn
 
 #リキャプチャ対策
 import time
 import random
 from tqdm import tqdm
+
+#共通の処理
+from . import convert_narou as cn
+from . import common as cm
 
 def gen_pixiv_index(folder_path ,key_data):
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
@@ -51,38 +52,98 @@ def gen_pixiv_index(folder_path ,key_data):
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
         f.write('<title>Pixiv Index</title>\n')
+        # CSS追加
+        f.write('<style>\n')
+        f.write('table { width: 100%; border-collapse: collapse; }\n')
+        f.write('th, td { border: 1px solid #ccc; padding: 8px; text-align: left; overflow-wrap: break-word; word-wrap: break-word; }\n')
+        f.write('</style>\n')
         f.write('</head>\n')
         f.write('<body>\n')
+        
+        # 戻るリンク
         f.write(f'<a href="../{key_data}">戻る</a>\n')
+
+        # 右寄せで数値入力欄とボタン
+        f.write('''<div style="text-align: right; margin-top: 10px;">
+            折り返し文字数 <input type="number" id="maxLengthInput" value="10" min="1" style="width: 60px;" />
+            <button id="saveButton">保存</button>
+        </div>\n''')
+
         f.write('<h1>Pixiv 小説一覧</h1>\n')
         f.write('<table>\n')
         f.write('<tr><th>掲載タイプ</th><th>タイトル</th><th>作者名</th><th>掲載日時</th><th>更新日時</th></tr>\n')
+        
+        # 各行のデータ出力
         for folder, info in pairs.items():
             f.write(f'''<tr><td>{info["type"]}</td>
-                    <td ><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
-                    <td ><a href="https://www.pixiv.net/users/{info["author_id"]}" class="text">{info["author"]}</a></td>
-                    <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
-                    <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
+                        <td class="text"><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
+                        <td class="text"><a href="https://www.pixiv.net/users/{info["author_id"]}">{info["author"]}</a></td>
+                        <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
+                        <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
+        
         f.write('</table>\n')
+        
+        # JavaScriptによる折り返し処理
         f.write("""<script>
-        // テキスト折り返し関数
-        const wrapTextByLength = (text, maxLength) => {
-            // 指定した長さでテキストを分割し、<br>タグで改行を追加
-            return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
-        };
+            // テキスト折り返し関数
+            const wrapTextByLength = (text, maxLength) => {
+                // 指定した長さでテキストを分割し、<br>タグで改行を追加
+                return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
+            };
 
-        // localStorageから折り返し文字数を取得し、なければデフォルト（20）を使用
-        const maxLength = localStorage.getItem('maxLength') || 10;
+            // localStorageから折り返し文字数を取得し、なければデフォルト（10文字）を使用
+            let maxLength = localStorage.getItem('maxLength') || 10;
 
-        // テキストを取得し、指定された文字数で折り返し
-        const textElement = document.querySelector('.text');
-        if (textElement) {
-            // 文字列を指定した長さで折り返し、<br>で改行を追加
-            textElement.innerHTML = wrapTextByLength(textElement.textContent, maxLength);
-        }
+            // 数値入力欄にローカルストレージの値を表示
+            document.getElementById('maxLengthInput').value = maxLength;
+
+            // テーブル内の特定の列を対象に折り返し処理を適用
+            document.querySelectorAll('table tr').forEach(row => {
+                // タイトル列（2列目）と作者名列（3列目）を取得
+                const titleCell = row.cells[1];
+                const authorCell = row.cells[2];
+
+                if (titleCell) {
+                    // タイトルセル内のリンク部分を保持しつつ、テキストを折り返し
+                    const titleLink = titleCell.querySelector('a');
+                    const titleText = titleLink ? titleLink.textContent : titleCell.textContent;
+
+                    if (titleLink) {
+                        titleLink.innerHTML = wrapTextByLength(titleText, maxLength);
+                    } else {
+                        titleCell.innerHTML = wrapTextByLength(titleText, maxLength);
+                    }
+                }
+
+                if (authorCell) {
+                    // 作者名セル内のリンク部分を保持しつつ、テキストを折り返し
+                    const authorLink = authorCell.querySelector('a');
+                    const authorText = authorLink ? authorLink.textContent : authorCell.textContent;
+                    
+                    if (authorLink) {
+                        authorLink.innerHTML = wrapTextByLength(authorText, maxLength);
+                    } else {
+                        authorCell.innerHTML = wrapTextByLength(authorText, maxLength);
+                    }
+                }
+            });
+
+            // 保存ボタンのイベント
+            document.getElementById('saveButton').addEventListener('click', () => {
+                const inputValue = document.getElementById('maxLengthInput').value;
+                if (inputValue && inputValue > 0) {
+                    // 新しい文字数をローカルストレージに保存
+                    localStorage.setItem('maxLength', inputValue);
+
+                    // 保存後、ページをリロードして変更を適用
+                    location.reload();
+                }
+            });
         </script>""")
+        
         f.write('</body>\n')
         f.write('</html>\n')
+
     
     with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
         json.dump(pairs, f, ensure_ascii=False, indent=4)
@@ -91,17 +152,6 @@ def gen_pixiv_index(folder_path ,key_data):
         print(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.\n")
 
     print('目次の生成が完了しました')
-
-# クッキーを読みこみ
-def load_cookies_from_json(input_file):
-    with open(input_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)  # 1 回だけファイルを読み込む
-        cookies = data.get('cookies', {})
-        ua = data.get('user_agent')
-
-    # requests用にCookieを変換
-    cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
-    return cookies_dict, ua
 
 #初期化処理
 def init(cookie_path, is_login, interval):
@@ -257,7 +307,7 @@ def init(cookie_path, is_login, interval):
     global pixiv_header
 
     if os.path.isfile(cookie_path):
-        pixiv_cookie, ua = load_cookies_from_json(cookie_path)
+        pixiv_cookie, ua = cm.load_cookies_and_ua(cookie_path)
 
     if is_login:
 
@@ -267,7 +317,7 @@ def init(cookie_path, is_login, interval):
             with sync_playwright() as playwright:
                 login(playwright)      
 
-        pixiv_cookie, ua = load_cookies_from_json(cookie_path)
+        pixiv_cookie, ua = cm.load_cookies_and_ua(cookie_path)
 
     else:
 
@@ -291,49 +341,9 @@ def init(cookie_path, is_login, interval):
         'Referer': 'https://www.pixiv.net/',
     }
 
-# 再帰的にキーを探す
-def find_key_recursively(data, target_key):
-    if isinstance(data, dict):
-        for key, value in data.items():
-            if key == target_key:
-                return value
-            elif isinstance(value, (dict, list)):
-                result = find_key_recursively(value, target_key)
-                if result is not None:
-                    return result
-    elif isinstance(data, list):
-        for item in data:
-            result = find_key_recursively(item, target_key)
-            if result is not None:
-                return result
-    return None
-
-# クッキーを使ってGETリクエストを送信
-def get_with_cookie(url, retries=5, delay=1):
-    for i in range(retries):
-        try:
-            response = requests.get(url, cookies=pixiv_cookie, headers=pixiv_header, timeout=10)
-            response.raise_for_status()  # HTTPエラーをキャッチ
-            return response
-        except (ConnectionError, Timeout) as e:
-            print(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
-        except RequestException as e:
-            # 404エラーを特別扱い
-            if response.status_code == 404:
-                print("\n404 Error: Resource not found.")
-                return None  # 404エラーの場合はリトライしない
-            else:
-                print(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
-        
-        if i < retries - 1:
-            time.sleep(delay * (2 ** i))  # 指数バックオフ
-        else:
-            print("\nThe retry limit has been reached. No response received.。")
-            return None  # リトライ限界に達した場合
-
 # レスポンスからjsonデータ(本文データ)を返却
 def return_content_json(novelid):
-    novel_data = get_with_cookie(f"https://www.pixiv.net/ajax/novel/{novelid}").text
+    novel_data = cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/{novelid}", pixiv_cookie, pixiv_header).text
     json_data = json.loads(unescape(novel_data))
     return json_data
 
@@ -351,19 +361,6 @@ def format_survey(survey):
         result += f'　　　{choice["text"]}　　{choice["count"]}票\n'
     
     return result
-
-#ベースフォルダ作成
-def make_dir(id, folder_path, series):
-    if series:
-        full_path = os.path.join(folder_path, f's{id}')
-    else:
-        full_path = os.path.join(folder_path, f'n{id}')
-    if not os.path.exists(full_path):
-        os.makedirs(full_path)
-    if not os.path.exists(f'{full_path}/raw'):
-        os.makedirs(f'{full_path}/raw')
-    if not os.path.exists(f'{full_path}/info'):
-        os.makedirs(f'{full_path}/info')
 
 #ルビ形式の整形
 def format_ruby(data):
@@ -395,21 +392,21 @@ def format_image(id, episode, series, data, json_data, folder_path):
         link_dict[art_id].append(img_num)
     #画像リンクの形式を[リンク名](リンク先)に変更
     for art_id, img_nums in link_dict.items():
-        illust_json = get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages").json()
-        illust_datas = find_key_recursively(illust_json, 'body')
+        illust_json = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages", pixiv_cookie, pixiv_header).json()
+        illust_datas = cm.find_key_recursively(illust_json, 'body')
         for index, i in tqdm(enumerate(illust_datas), desc=f"Downloading illusts from https://www.pixiv.net/artworks/{art_id}", unit="illusts", total=len(illust_datas), leave=False):
             time.sleep(interval_sec)
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
-                img_data = get_with_cookie(img_url)
+                img_data = cm.get_with_cookie(img_url, pixiv_cookie, pixiv_header)
                 with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
                     f.write(img_data.content)
                 data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
     #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
     for inner_link in tqdm(inner_links, desc=f"Downloading inner illusts from {url}", unit="illusts", total=len(inner_links), leave=False):
         time.sleep(interval_sec)
-        in_img_url = find_key_recursively(json_data, inner_link).get('urls').get('original')
-        in_img_data = get_with_cookie(in_img_url)
+        in_img_url = cm.find_key_recursively(json_data, inner_link).get('urls').get('original')
+        in_img_data = cm.get_with_cookie(in_img_url, pixiv_cookie, pixiv_header)
         with open(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
             f.write(in_img_data.content)
         data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({inner_link}{os.path.splitext(in_img_url)[1]})')
@@ -431,7 +428,7 @@ def get_cover(raw_small_url, folder_path):
     # 各URLを試行
     for ep_cover in url_variants:
         #print(f"Download cover image from: {ep_cover}")
-        response = get_with_cookie(ep_cover)
+        response = cm.get_with_cookie(ep_cover, pixiv_cookie, pixiv_header)
         if response is not None and response.status_code == 200:
             # ファイルを保存
             file_extension = os.path.splitext(ep_cover)[1]
@@ -468,15 +465,15 @@ def dl_series(series_id, folder_path, key_data, update):
     global g_count
     # seriesNavDataの内部にあるseriesIdを取得
     print(f"Series ID: {series_id}")
-    s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
-    s_toc = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
-    s_toc_u = get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}")
+    s_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}", pixiv_cookie, pixiv_header).text), "body")
+    s_toc = cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles", pixiv_cookie, pixiv_header)
+    s_toc_u = cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}", pixiv_cookie, pixiv_header)
     series_title = s_detail.get('title')
     series_author = s_detail.get('userName')
     series_author_id = s_detail.get('userId')
     series_episodes = s_detail.get('total')
     series_chara = s_detail.get('publishedTotalCharacterCount')
-    series_caption_data = find_key_recursively(s_detail, 'caption')
+    series_caption_data = cm.find_key_recursively(s_detail, 'caption')
     series_create_day = datetime.fromisoformat(s_detail.get('createDate'))
     series_update_day = datetime.fromisoformat(s_detail.get('updateDate'))
     if series_caption_data:
@@ -491,7 +488,7 @@ def dl_series(series_id, folder_path, key_data, update):
     print(f"Series Total Characters: {series_chara}")
     print(f"Series Create Date: {series_create_day}")
     print(f"Series Update Date: {series_update_day}")
-    make_dir(series_id, folder_path, True)
+    cm.make_dir(series_id, 's'+folder_path)
     toc_json_data = json.loads(s_toc.text)
     toc_u_json_data = json.loads(s_toc_u.text)
     novel_toc = toc_json_data.get('body')
@@ -511,7 +508,7 @@ def dl_series(series_id, folder_path, key_data, update):
     #表紙のダウンロード
     if not update:
         series_cover = s_detail.get('cover').get('urls').get('original')
-        series_cover_data = get_with_cookie(series_cover)
+        series_cover_data = cm.get_with_cookie(series_cover, pixiv_cookie, pixiv_header)
         with open(os.path.join(series_path, f'cover{os.path.splitext(series_cover)[1]}'), 'wb') as f:
             f.write(series_cover_data.content)
 
@@ -566,9 +563,9 @@ def dl_series(series_id, folder_path, key_data, update):
             get_cover(json_data.get('body').get('coverUrl'), os.path.join(series_path, entry['id']))
 
 
-            introduction = find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
-            postscript = find_key_recursively(json_data, 'body').get('pollData')
-            text = find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
+            introduction = cm.find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
+            postscript = cm.find_key_recursively(json_data, 'body').get('pollData')
+            text = cm.find_key_recursively(json_data, 'body').get('content').replace('\r\n', '\n')
             if postscript:
                 postscript = format_survey(postscript)
             else:
@@ -591,7 +588,7 @@ def dl_series(series_id, folder_path, key_data, update):
             #更新日
             updatedate = str(datetime.fromisoformat(json_data.get('body').get('uploadDate')).astimezone(timezone(timedelta(hours=9))))
 
-            text_count = int(find_key_recursively(json_data, 'body').get('characterCount'))
+            text_count = int(cm.find_key_recursively(json_data, 'body').get('characterCount'))
 
             total_text += text_count
 
@@ -628,18 +625,8 @@ def dl_series(series_id, folder_path, key_data, update):
         'episodes': episode
     }
 
-    #生データがすでにあるなら差分を保管
-    if os.path.exists(raw_path):
-        with open(os.path.join(raw_path), 'r', encoding='utf-8') as f:
-            old_json = json.load(f)
-        old_json = json.loads(json.dumps(old_json))
-        new_json = json.loads(json.dumps(novel))
-        diff_json = convert_keys_to_str(diff(new_json,old_json))
-        if len(diff_json) == 1 and 'get_date' in diff_json:
-            pass
-        else:
-            with open(os.path.join(series_path, 'raw', f'diff_{str(novel["updateDate"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
-                json.dump(diff_json, f, ensure_ascii=False, indent=4)
+    #小説データの差分を保存
+    cm.save_raw_diff(raw_path, series_path, novel)
         
 
     #生データの書き出し
@@ -648,15 +635,6 @@ def dl_series(series_id, folder_path, key_data, update):
 
     cn.narou_gen(novel, os.path.join(series_path), key_data, data_folder, host)
     print("")
-
-# キーをすべて文字列に変換する関数
-def convert_keys_to_str(d):
-    if isinstance(d, dict):
-        return {str(k): convert_keys_to_str(v) for k, v in d.items()}
-    elif isinstance(d, list):
-        return [convert_keys_to_str(i) for i in d]
-    else:
-        return d
 
 #短編のダウンロードに関する処理
 def dl_novel(json_data, novel_id, folder_path, key_data):
@@ -670,7 +648,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     else:
         novel_caption = ''
     novel_text = novel_data.get('content').replace('\r\n', '\n')
-    novel_postscript = find_key_recursively(novel_data, 'pollData')
+    novel_postscript = cm.find_key_recursively(novel_data, 'pollData')
     if novel_postscript:
         novel_postscript = format_survey(novel_postscript)
     else:
@@ -684,7 +662,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Caption: {novel_caption}")
     print(f"Novel Create Date: {novel_create_day}")
     print(f"Novel Update Date: {novel_update_day}")
-    make_dir(novel_id, folder_path, False)
+    cm.make_dir(novel_id, 'n'+folder_path)
     novel_path = os.path.join(folder_path, f'n{novel_id}')
     raw_path = os.path.join(novel_path, 'raw', 'raw.json')
     #挿絵リンクへの置き換え
@@ -728,18 +706,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         'episodes': episode
     }
 
-    #生データがすでにあるなら差分を保管
-    if os.path.exists(raw_path):
-        with open(raw_path, 'r', encoding='utf-8') as f:
-            old_json = json.load(f)
-        old_json = json.loads(json.dumps(old_json))
-        new_json = json.loads(json.dumps(novel))
-        diff_json = convert_keys_to_str(diff(new_json,old_json))
-        if len(diff_json) == 1 and 'get_date' in diff_json:
-            pass
-        else:
-            with open(os.path.join(novel_path, 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
-                json.dump(diff_json, f, ensure_ascii=False, indent=4)
+    #小説データの差分を保存
+    cm.save_raw_diff(raw_path, novel_path, novel)
 
     #生データの書き出し
     with open(raw_path, 'w', encoding='utf-8') as f:
@@ -752,8 +720,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 def dl_user(user_id, folder_path, key_data, update):
     global g_count
     print(f'User ID: {user_id}')
-    user_data = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all").json()
-    user_name = get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}").json().get('body').get('name')
+    user_data = cm.get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all", pixiv_cookie, pixiv_header).json()
+    user_name = cm.get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}", pixiv_cookie, pixiv_header).json().get('body').get('name')
     user_all_novels = user_data.get('body').get('novels')
     user_all_novel_series = user_data.get('body').get('novelSeries')
     user_novel_series = []
@@ -772,7 +740,7 @@ def dl_user(user_id, folder_path, key_data, update):
     #シリーズとの重複を除去
     for i in user_novel_series:
         time.sleep(interval_sec)
-        for nid in get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles").json().get('body'):
+        for nid in cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles", pixiv_cookie, pixiv_header).json().get('body'):
             in_novel_series.append(nid.get('id'))
     user_novels = [n for n in user_novels if n not in in_novel_series]
     print(f'User Novels: {len(user_novels)}')
@@ -783,7 +751,7 @@ def dl_user(user_id, folder_path, key_data, update):
         if update:
             raw_path = os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')
             if os.path.isfile(raw_path):
-                series_update_date = datetime.fromisoformat(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").json().get('body').get('updateDate'))
+                series_update_date = datetime.fromisoformat(cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}", pixiv_cookie, pixiv_header).json().get('body').get('updateDate'))
                 with open (raw_path, 'r', encoding='utf-8') as f:
                     old_series_json = json.load(f)
                 series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
@@ -863,7 +831,7 @@ def download(url, folder_path, key_data, data_path, host_name):
     data_folder = data_path
     host = host_name
 
-    response = get_with_cookie(url)
+    response = cm.get_with_cookie(url, pixiv_cookie, pixiv_header)
 
     if response.status_code == 404:
         print("404 Not Found")
@@ -874,7 +842,7 @@ def download(url, folder_path, key_data, data_path, host_name):
         # JSONとして解析
         novel_id = re.search(r"id=(\d+)", url).group(1)
         json_data = return_content_json(novel_id)
-        series_nav_data = find_key_recursively(json_data, "seriesNavData")
+        series_nav_data = cm.find_key_recursively(json_data, "seriesNavData")
         if series_nav_data:
             series_id = series_nav_data.get("seriesId")
             dl_series(series_id, folder_path, key_data, False)
@@ -916,7 +884,7 @@ def update(folder_path, key_data, data_path, host_name):
             user_json = json.load(uf)
         for user_id, status in user_json.items():
             if status == 'enable':
-                if get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels').status_code == 404:
+                if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
                     print("404 Not Found")
                     print("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
@@ -930,7 +898,7 @@ def update(folder_path, key_data, data_path, host_name):
             continue
         if index_data.get("type") == "短編":
             novel_id = folder_name.replace('n', '')
-            if get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}').status_code == 404:
+            if cm.get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}', pixiv_cookie, pixiv_header).status_code == 404:
                 print("404 Not Found")
                 print("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
@@ -944,11 +912,11 @@ def update(folder_path, key_data, data_path, host_name):
 
         elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
             series_id = folder_name.replace('s', '')
-            if get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}').status_code == 404:
+            if cm.get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}', pixiv_cookie, pixiv_header).status_code == 404:
                 print("404 Not Found")
                 print("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
-            s_detail = find_key_recursively(json.loads(get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}").text), "body")
+            s_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}", pixiv_cookie, pixiv_header).text), "body")
             with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as osf:
                 old_series_json = json.load(osf)
 
@@ -985,7 +953,7 @@ def re_download(folder_path, key_data, data_path, host_name):
             user_json = json.load(uf)
         for user_id, status in user_json.items():
             if status == 'enable':
-                if get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels').status_code == 404:
+                if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
                     print("404 Not Found")
                     print("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
@@ -999,7 +967,7 @@ def re_download(folder_path, key_data, data_path, host_name):
             continue
         if index_data.get("type") == "短編":
             novel_id = folder_name.replace('n', '')
-            if get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}').status_code == 404:
+            if cm.get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}', pixiv_cookie, pixiv_header).status_code == 404:
                 print("404 Not Found")
                 print("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
@@ -1010,7 +978,7 @@ def re_download(folder_path, key_data, data_path, host_name):
 
         elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
             series_id = folder_name.replace('s', '')
-            if get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}').status_code == 404:
+            if cm.get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}', pixiv_cookie, pixiv_header).status_code == 404:
                 print("404 Not Found")
                 print("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
