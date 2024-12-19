@@ -3,13 +3,12 @@ import urllib.parse
 import ssl as ssl_lib
 import hashlib
 import os
-import importlib
 import random
 import string
 from datetime import datetime
 
 #共通設定の読み込み
-import common as cm
+import util
 
 # アクセスを制限するファイルやフォルダのリスト
 restricted_items = ['login.json', '.js', '.key']
@@ -25,7 +24,7 @@ def cleanup_expired_requests(requests_dict, expiration_time):
 
 def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path, enc_key, use_ssl, port, domain):
 
-    globals().update(cm.import_modules(site_dic))
+    globals().update(util.import_modules(site_dic))
 
     class RequestHandler(BaseHTTPRequestHandler):
         def parse_query_params(self):
