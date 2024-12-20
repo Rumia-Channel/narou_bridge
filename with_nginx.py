@@ -29,10 +29,10 @@ def process_request(req_data):
     convert_param = req_data.get("convert")
     re_download_param = req_data.get("re_download")
     request_id = req_data.get("request_id")
-    key_data = key
+    key_data = ''
 
     #ホスト名の確定
-    if use_ssl == 1:
+    if use_ssl:
         host_name = f'https://{domain}:{port}'
     else:
         host_name = f'http://{domain}:{port}'
