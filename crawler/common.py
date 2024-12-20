@@ -17,6 +17,11 @@ def load_cookies_and_ua(input_file):
     cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
     return cookies_dict, ua
 
+# Cookie とユーザーエージェントを保存する
+def save_cookies_and_ua(output_file, cookies, ua):
+    with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump({'cookies': cookies, 'user_agent': ua}, f, ensure_ascii=False, indent=4)
+
 # 再帰的にキーを探す
 def find_key_recursively(data, target_key):
     
