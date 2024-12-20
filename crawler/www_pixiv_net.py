@@ -15,8 +15,8 @@ import random
 from tqdm import tqdm
 
 #共通の処理
-from . import convert_narou as cn
-from . import common as cm
+import crawler.common as cm
+import crawler.convert_narou as cn
 
 def gen_pixiv_index(folder_path ,key_data):
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
@@ -295,8 +295,7 @@ def init(cookie_path, is_login, interval):
         cookies = context.cookies()
         user_agent = page.evaluate("() => navigator.userAgent")
         
-        with open(cookie_path, 'w', encoding='utf-8') as f:
-            json.dump({'cookies': cookies, 'user_agent': user_agent}, f, ensure_ascii=False, indent=4)
+        cm.save_cookies_and_ua(cookie_path, cookies, user_agent)
 
         # ---------------------
         context.close()
@@ -488,7 +487,7 @@ def dl_series(series_id, folder_path, key_data, update):
     print(f"Series Total Characters: {series_chara}")
     print(f"Series Create Date: {series_create_day}")
     print(f"Series Update Date: {series_update_day}")
-    cm.make_dir(series_id, 's'+folder_path)
+    cm.make_dir('s'+series_id, folder_path)
     toc_json_data = json.loads(s_toc.text)
     toc_u_json_data = json.loads(s_toc_u.text)
     novel_toc = toc_json_data.get('body')
@@ -662,7 +661,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Caption: {novel_caption}")
     print(f"Novel Create Date: {novel_create_day}")
     print(f"Novel Update Date: {novel_update_day}")
-    cm.make_dir(novel_id, 'n'+folder_path)
+    cm.make_dir('n'+novel_id, folder_path)
     novel_path = os.path.join(folder_path, f'n{novel_id}')
     raw_path = os.path.join(novel_path, 'raw', 'raw.json')
     #挿絵リンクへの置き換え
