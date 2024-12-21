@@ -13,9 +13,6 @@ import util
 # アクセスを制限するファイルやフォルダのリスト
 restricted_items = ['login.json', '.js', '.key']
 
-# リクエストIDの保存用辞書
-recent_request_ids = {}
-
 def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path, enc_key, use_ssl, port, domain):
 
     globals().update(util.import_modules(site_dic))
@@ -108,6 +105,9 @@ def http_run(interval, site_dic, login_dic, folder_path, data_path, cookie_path,
             return ext_to_mime.get(ext, 'application/octet-stream')  # デフォルトはバイナリ
 
         def do_POST(self):
+            # リクエストIDの保存用辞書
+            recent_request_ids = {}
+
             print(f'POST received: {datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S%z")}')
             req_key = self.parse_query_params()
             if not self.check_auth(req_key):
