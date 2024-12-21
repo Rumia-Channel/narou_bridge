@@ -487,7 +487,7 @@ def dl_series(series_id, folder_path, key_data, update):
     print(f"Series Total Characters: {series_chara}")
     print(f"Series Create Date: {series_create_day}")
     print(f"Series Update Date: {series_update_day}")
-    cm.make_dir('s'+series_id, folder_path)
+    cm.make_dir('s'+str(series_id), folder_path)
     toc_json_data = json.loads(s_toc.text)
     toc_u_json_data = json.loads(s_toc_u.text)
     novel_toc = toc_json_data.get('body')
@@ -661,7 +661,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     print(f"Novel Caption: {novel_caption}")
     print(f"Novel Create Date: {novel_create_day}")
     print(f"Novel Update Date: {novel_update_day}")
-    cm.make_dir('n'+novel_id, folder_path)
+    cm.make_dir('n'+str(novel_id), folder_path)
     novel_path = os.path.join(folder_path, f'n{novel_id}')
     raw_path = os.path.join(novel_path, 'raw', 'raw.json')
     #挿絵リンクへの置き換え
