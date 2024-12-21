@@ -21,3 +21,5 @@ requirements-dev.lock
 *.7z
 *.zip
 *.tar.gz
+
+!unit-config.json
