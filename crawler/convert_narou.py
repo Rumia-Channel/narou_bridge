@@ -220,7 +220,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('</head>\n')
         f.write('<body>\n')
         f.write(f'<a href="../{key_data}">戻る</a>\n')
-        f.write(f'<h1><a href="{data.get('url')}">{data.get("title")}</a></h1>\n')
+        f.write(f'<h1><a href="{data.get("url")}">{data.get("title")}</a></h1>\n')
         if data.get("type") == "短編":
             f.write(f'<div><span id="noveltype">短編</span></div>\n')
         else:
@@ -246,7 +246,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>文字数</th>\n')
-        f.write(f'<td>{str(f'{int(data.get("total_characters")):,}')}文字</td>\n')
+        f.write(f'<td>{int(data.get("total_characters")):,}文字</td>\n')
         f.write('</tr>\n')
         f.write('</table>\n')
         f.write('</body>\n')
@@ -282,4 +282,4 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('</body>\n')
             f.write('</html>\n')
     #完了
-    print(f'{data.get("title")}の変換が完了しました。 終了時刻: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S%z')}')
+    print(f'{data.get("title")}の変換が完了しました。 終了時刻: {datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S%z")}')

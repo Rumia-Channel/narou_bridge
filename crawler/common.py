@@ -86,7 +86,7 @@ def save_raw_diff(raw_path, novel_path, novel):
         if len(diff_json) == 1 and 'get_date' in diff_json:
             pass
         else:
-            with open(os.path.join(novel_path, 'raw', f'diff_{str(old_json["get_date"]).replace(':', '-').replace(' ', '_')}.json'), 'w', encoding='utf-8') as f:
+            with open(os.path.join(novel_path, 'raw', f'diff_{str(old_json["get_date"]).replace(":", "-").replace(" ", "_")}.json'), 'w', encoding='utf-8') as f:
                 json.dump(diff_json, f, ensure_ascii=False, indent=4)
 
 #ベースフォルダ作成
