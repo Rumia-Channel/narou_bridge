@@ -755,7 +755,7 @@ def dl_user(user_id, folder_path, key_data, update):
                     old_series_json = json.load(f)
                 series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
                 if series_update_date == series_old_update_date:
-                    print(f'{old_series_json['title']} に更新はありません。\n')
+                    print(f"{old_series_json['title']} に更新はありません。\n")
                     if g_count == 10:
                         time.sleep(random.uniform(10,30))
                         g_count = 1
@@ -783,7 +783,7 @@ def dl_user(user_id, folder_path, key_data, update):
                     old_novel_json = json.load(f)
                 novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
                 if novel_update_date == novel_old_update_date:
-                    print(f'{old_novel_json['title']} に更新はありません。\n')
+                    print(f"{old_novel_json['title']} に更新はありません。\n")
                     if g_count == 10:
                         time.sleep(random.uniform(10,30))
                         g_count = 1
