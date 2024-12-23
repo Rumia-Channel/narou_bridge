@@ -1,4 +1,5 @@
 import os
+import json
 import importlib
 import configparser
 from datetime import datetime
@@ -358,10 +359,31 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
 
 #リクエストIDの削除
 def cleanup_expired_requests(requests_dict, expiration_time):
+    """
+    指定した有効期限を超えたリクエストIDを削除し、リクエストID以外が同じ内容の重複リクエストを削除する。
+    """
     current_time = datetime.now()
+    processed_signatures = set()  # 処理済みのリクエスト内容を記録する集合
+
     for key in list(requests_dict):
         request_time = requests_dict[key]["time"]
+        request_data = requests_dict[key]["data"]
+
+        # リクエストの有効期限を確認
         if (current_time - request_time).total_seconds() > expiration_time:
             del requests_dict[key]
-    
-    return requests_dict
+            continue
+
+        # リクエストの内容を識別するためのシグネチャを生成（リクエストIDを除く）
+        signature = json.dumps({k: v for k, v in request_data.items() if k != "request_id"}, sort_keys=True)
+
+        # シグネチャが既に存在する場合、このリクエストを削除
+        if signature in processed_signatures:
+            del requests_dict[key]
+            queue_stop = True
+        else:
+            # 新しいシグネチャを記録
+            processed_signatures.add(signature)
+            queue_stop = False
+
+    return requests_dict, queue_stop
