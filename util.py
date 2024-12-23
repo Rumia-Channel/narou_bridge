@@ -360,7 +360,8 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
 def cleanup_expired_requests(requests_dict, expiration_time):
     current_time = datetime.now()
     for key in list(requests_dict):
-        if (current_time - requests_dict[key]).total_seconds() > expiration_time:
+        request_time = requests_dict[key]["time"]
+        if (current_time - request_time).total_seconds() > expiration_time:
             del requests_dict[key]
     
     return requests_dict

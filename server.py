@@ -1,10 +1,13 @@
-from flask import Flask, request, jsonify, abort, send_from_directory, Response
+import queue
 from datetime import datetime
 import threading
-import util
 import time
 import os
 import json
+from flask import Flask, request, jsonify, abort, send_from_directory, Response
+
+#共通設定の読み込み
+import util
 
 def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, data_path, cookie_path, key, use_ssl, port, domain):
     app = Flask(__name__, static_folder=data_path)  # data_path を静的ファイルのルートとして設定
@@ -47,14 +50,15 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
             print(f"Folder or index.html not found for {folder}: {index_path}")
             return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
 
-    # リクエストを格納するリスト
-    request_queue = []
+    global request_datas
+    # リクエストデータを格納する辞書
+    request_datas = {}
 
     # スレッドセーフにするためのロック
     lock = threading.Lock()
 
-    # recent_request_ids をスレッドセーフに管理
-    recent_request_ids = {}
+    # リクエストを順番に処理するためのキュー
+    request_queue = queue.Queue()
 
     util.init_import(site_dic)
     util.create_index(data_path, config, 'api')
@@ -123,8 +127,23 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
         response.status_code = 200
         return response
 
+    def process_queue():
+        """キューからリクエストを順番に取り出して処理するバックグラウンドスレッド"""
+        while True:
+            req_data = request_queue.get()  # キューからリクエストを取り出す
+            if req_data is None:  # None が入った場合はスレッドを終了
+                break
+            process_request(req_data)
+            request_queue.task_done()  # 処理が終わったら task_done を呼ぶ
+
+    # キュー処理用のスレッドを開始
+    queue_thread = threading.Thread(target=process_queue)
+    queue_thread.daemon = True  # デーモンスレッドとして実行
+    queue_thread.start()
+
     @app.route('/api/', methods=['POST'])
     def handle_post():
+        global request_datas
         """POSTリクエストを受け取って処理を開始する"""
         print(f"POST received: {datetime.now().isoformat()}")
 
@@ -138,17 +157,30 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
         if not request_id:
             return create_error_response(400, "Missing request_id")
 
-
         with lock:
             # 古いリクエストIDを削除
-            util.cleanup_expired_requests(recent_request_ids, expiration_time=int(reload_time))
+            request_datas = util.cleanup_expired_requests(request_datas, expiration_time=int(reload_time))
 
-            print(f'リクエストID: {recent_request_ids}')
 
-            if request_id in recent_request_ids:
-                return create_error_response(429, "Duplicate request detected")
+            # リクエストIDが既に存在し、再送信がreload_time以内の場合、エラーを返す
+            if request_id in request_datas:
+                previous_request_time = request_datas[request_id]['time']
+                time_diff = (datetime.now() - previous_request_time).total_seconds()
+                if time_diff <= int(reload_time):
+                    return create_error_response(429, f"Request {request_id} already exists within reload time.")
 
-            recent_request_ids[request_id] = datetime.now()
+            # リクエストデータを保存
+            request_datas[request_id] = {
+                "time": datetime.now(),
+                "data": {
+                    "add": add_param,
+                    "update": update_param,
+                    "convert": convert_param,
+                    "re_download": re_download_param,
+                }
+            }
+
+        print(f'リクエストID: {request_datas}')
 
         # キューにリクエストを追加
         req_data = {
@@ -159,7 +191,7 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
             "request_id": request_id,
         }
 
-        threading.Thread(target=process_request, args=(req_data,)).start()
+        request_queue.put(req_data)  # リクエストをキューに追加
 
         return jsonify({"status": "queued", "request_id": request_id})
 
@@ -177,39 +209,3 @@ def http_run(config, reload_time, interval, site_dic, login_dic, folder_path, da
     # サーバーが動作している間、メインスレッドで待機
     while True:
         time.sleep(1)
-
-if __name__ == "__main__":
-    import argparse
-
-    # コマンドライン引数を定義
-    parser = argparse.ArgumentParser(description="Start the Flask API server.")
-    parser.add_argument("--config", required=True, help="Path to the configuration file.")
-    parser.add_argument("--reload_time", type=int, required=True, help="Reload interval time in seconds.")
-    parser.add_argument("--interval", type=int, required=True, help="Request interval time in seconds.")
-    parser.add_argument("--site_dic", required=True, help="Site dictionary.")
-    parser.add_argument("--login_dic", required=True, help="Login dictionary.")
-    parser.add_argument("--folder_path", required=True, help="Folder path.")
-    parser.add_argument("--data_path", required=True, help="Data path.")
-    parser.add_argument("--cookie_path", required=True, help="Cookie path.")
-    parser.add_argument("--key", required=True, help="Encryption key.")
-    parser.add_argument("--use_ssl", action="store_true", help="Use SSL.")
-    parser.add_argument("--port", type=int, required=True, help="Port number.")
-    parser.add_argument("--domain", required=True, help="Domain name.")
-
-    args = parser.parse_args()
-
-    # 設定をアプリに渡す
-    http_run(
-        config=args.config,
-        reload_time=args.reload_time,
-        interval=args.interval,
-        site_dic=args.site_dic,
-        login_dic=args.login_dic,
-        folder_path=args.folder_path,
-        data_path=args.data_path,
-        cookie_path=args.cookie_path,
-        key=args.key,
-        use_ssl=args.use_ssl,
-        port=args.port,
-        domain=args.domain
-    )
