@@ -158,9 +158,6 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
             return create_error_response(400, "Missing request_id")
 
         with lock:
-            # 古いリクエストIDを削除
-            request_datas = util.cleanup_expired_requests(request_datas, expiration_time=int(reload_time))
-
 
             # リクエストIDが既に存在し、再送信がreload_time以内の場合、エラーを返す
             if request_id in request_datas:
@@ -180,20 +177,26 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
                 }
             }
 
-        print(f'リクエストID: {request_datas}')
+            # 古いリクエストIDを削除
+            request_datas, queue_stop = util.cleanup_expired_requests(request_datas, expiration_time=int(reload_time))
 
-        # キューにリクエストを追加
-        req_data = {
-            "add": add_param,
-            "update": update_param,
-            "convert": convert_param,
-            "re_download": re_download_param,
-            "request_id": request_id,
-        }
+        print(f'Current queue: {request_datas}')
 
-        request_queue.put(req_data)  # リクエストをキューに追加
+        if not queue_stop:
+            # キューにリクエストを追加
+            req_data = {
+                "add": add_param,
+                "update": update_param,
+                "convert": convert_param,
+                "re_download": re_download_param,
+                "request_id": request_id,
+            }
 
-        return jsonify({"status": "queued", "request_id": request_id})
+            request_queue.put(req_data)  # リクエストをキューに追加
+
+            return jsonify({"status": "queued", "request_id": request_id})
+        else:
+            return jsonify({"status": "stoped", "request_id": request_id})
 
     return app
 
