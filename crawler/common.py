@@ -5,6 +5,9 @@ import requests
 from requests.exceptions import RequestException, ConnectionError, Timeout
 import time
 
+#ログを保存
+import logging
+
 # Cookie とユーザーエージェントを返す
 def load_cookies_and_ua(input_file):
     
@@ -51,19 +54,19 @@ def get_with_cookie(url, cookie, header, retries=5, delay=1):
             response.raise_for_status()  # HTTPエラーをキャッチ
             return response
         except (ConnectionError, Timeout) as e:
-            print(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
+            logging.error(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
         except RequestException as e:
             # 404エラーを特別扱い
             if response.status_code == 404:
-                print("\n404 Error: Resource not found.")
+                logging.error("\n404 Error: Resource not found.")
                 return None  # 404エラーの場合はリトライしない
             else:
-                print(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
+                logging.error(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
         
         if i < retries - 1:
             time.sleep(delay * (2 ** i))  # 指数バックオフ
         else:
-            print("\nThe retry limit has been reached. No response received.。")
+            logging.error("\nThe retry limit has been reached. No response received.。")
             return None  # リトライ限界に達した場合
         
 # キーをすべて文字列に変換する関数

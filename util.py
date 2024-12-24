@@ -1,8 +1,11 @@
 import os
+import json
 import importlib
 import configparser
-import json
 from datetime import datetime
+
+#ログを保存
+import logging
 
 #utilで使うモジュールのインポート
 def init_import(site_dic):
@@ -47,6 +50,19 @@ def create_index(data_path, config, post_path=''):
         f.write('  };\n')
         f.write('}\n')
 
+        # メッセージの表示
+        f.write('function showMessage(color, message) {\n')
+        f.write('  var existingMessages = document.querySelectorAll(".response-message");\n')
+        f.write('  existingMessages.forEach(function(msg) {\n')
+        f.write('    msg.remove();\n')
+        f.write('  });\n')
+        f.write('  var div = document.createElement("div");\n')
+        f.write('  div.style.color = color;\n')
+        f.write('  div.className = "response-message";\n')
+        f.write('  div.textContent = message;\n')
+        f.write('  document.body.appendChild(div);\n')
+        f.write('}\n')
+
         # デバウンスされたsubmit関数
         f.write('var debouncedSubmit = debounce(submit, 1000);\n')
 
@@ -66,16 +82,20 @@ def create_index(data_path, config, post_path=''):
         f.write('  xhr.onreadystatechange = function() {\n')
         f.write('    if (xhr.readyState === 4) {\n')
         f.write('      if (xhr.status === 200) {\n')
-        f.write('        alert("Compleat !!");\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var successMsg = response.message || "リクエストは正常に送信されました";\n')
+        f.write('        showMessage("green", successMsg);\n')
         f.write('      } else {\n')
-        f.write('        document.body.innerHTML += xhr.responseText;\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var errorMsg = response.message || "エラーが発生しました";\n')
+        f.write('        showMessage("red", errorMsg);\n')
         f.write('      }\n')
         f.write('    }\n')
         f.write('  };\n')
         f.write('  xhr.send("add=" + encodeURIComponent(input1) + "&request_id=" + requestId);\n')
         f.write('}\n')
 
-        # updateパラメーターを持ったリクエストを送信する関数
+        # submitUpdate関数
         f.write('function submitUpdate(key) {\n')
         f.write('  var requestId = generateRequestId();\n')
         f.write(f'  var url = "{post_url}?update=" + encodeURIComponent(key);\n')
@@ -85,16 +105,20 @@ def create_index(data_path, config, post_path=''):
         f.write('  xhr.onreadystatechange = function() {\n')
         f.write('    if (xhr.readyState === 4) {\n')
         f.write('      if (xhr.status === 200) {\n')
-        f.write('        alert("Compleat !!");\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var successMsg = response.message || "リクエストは正常に送信されました";\n')
+        f.write('        showMessage("green", successMsg);\n')
         f.write('      } else {\n')
-        f.write('        document.body.innerHTML += xhr.responseText;\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var errorMsg = response.message || "エラーが発生しました";\n')
+        f.write('        showMessage("red", errorMsg);\n')
         f.write('      }\n')
         f.write('    }\n')
         f.write('  };\n')
         f.write('  xhr.send("update=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
         f.write('}\n')
 
-        # convertパラメーターを持ったリクエストを送信する関数
+        # submitConvert関数
         f.write('function submitConvert(key) {\n')
         f.write('  var requestId = generateRequestId();\n')
         f.write(f'  var url = "{post_url}?convert=" + encodeURIComponent(key);\n')
@@ -104,32 +128,40 @@ def create_index(data_path, config, post_path=''):
         f.write('  xhr.onreadystatechange = function() {\n')
         f.write('    if (xhr.readyState === 4) {\n')
         f.write('      if (xhr.status === 200) {\n')
-        f.write('        alert("Compleat !!");\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var successMsg = response.message || "リクエストは正常に送信されました";\n')
+        f.write('        showMessage("green", successMsg);\n')
         f.write('      } else {\n')
-        f.write('        document.body.innerHTML += xhr.responseText;\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var errorMsg = response.message || "エラーが発生しました";\n')
+        f.write('        showMessage("red", errorMsg);\n')
         f.write('      }\n')
         f.write('    }\n')
         f.write('  };\n')
         f.write('  xhr.send("convert=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
         f.write('}\n')
 
-        # re_downloadパラメーターを持ったリクエストを送信する関数
+        # submitReDownload関数
         f.write('function submitReDownload(key) {\n')
         f.write('  var requestId = generateRequestId();\n')
-        f.write(f'  var url = "{post_url}?re_download=" + encodeURIComponent(key);\n')
+        f.write(f'  var url = "{post_url}?redownload=" + encodeURIComponent(key);\n')
         f.write('  var xhr = new XMLHttpRequest();\n')
         f.write('  xhr.open("POST", url, true);\n')
         f.write('  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");\n')
         f.write('  xhr.onreadystatechange = function() {\n')
         f.write('    if (xhr.readyState === 4) {\n')
         f.write('      if (xhr.status === 200) {\n')
-        f.write('        alert("Compleat !!");\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var successMsg = response.message || "リクエストは正常に送信されました";\n')
+        f.write('        showMessage("green", successMsg);\n')
         f.write('      } else {\n')
-        f.write('        document.body.innerHTML += xhr.responseText;\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var errorMsg = response.message || "エラーが発生しました";\n')
+        f.write('        showMessage("red", errorMsg);\n')
         f.write('      }\n')
         f.write('    }\n')
         f.write('  };\n')
-        f.write('  xhr.send("re_download=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
+        f.write('  xhr.send("redownload=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
         f.write('}\n')
 
         f.write('</script>\n')
@@ -141,21 +173,17 @@ def create_index(data_path, config, post_path=''):
         f.write('<input type="text" id="input1" placeholder="登録URL">\n')
         f.write('<button onclick="debouncedSubmit()">送信</button><br><br><br>\n')
 
-        f.write(f'<button onclick="submitUpdate(\'all\')">全て 更新</button>\n')  # 更新ボタン追加
-        f.write(f'<button onclick="submitConvert(\'all\')">全て 変換</button>\n')  # 変換ボタン追加
-        f.write(f'<button onclick="submitReDownload(\'all\')">全て 再ダウンロード</button>\n<br>')  # 再ダウンロードボタン追加
+        f.write(f'<button onclick="submitUpdate(\'all\')">全て 更新</button>\n')
+        f.write(f'<button onclick="submitConvert(\'all\')">全て 変換</button>\n')
+        f.write(f'<button onclick="submitReDownload(\'all\')">全て 再ダウンロード</button>\n<br>')
 
         # config['crawler']のキーを使ったボタン生成
         for key in config['crawler']:
-            f.write(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>\n')  # サイトごとの更新ボタン追加
-            f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n')  # サイトごとの変換ボタン追加
-            f.write(f'<button onclick="submitReDownload(\'{key}\')">{key} 再ダウンロード</button>\n<br>')  # サイトごとの再ダウンロードボタン追加
-
+            f.write(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>\n')
+            f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n')
+            f.write(f'<button onclick="submitReDownload(\'{key}\')">{key} 再ダウンロード</button>\n<br>')
+        
         f.write('<br><br><br>\n')
-
-        # config['crawler']内のキーを使った動的リンクの生成（オプション）
-        for key in config['crawler']:
-            f.write(f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>\n')
 
         f.write('</body>\n')
         f.write('</html>\n')
@@ -186,6 +214,11 @@ def load_config():
     if not cookie_folder:
         cookie_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookie')
 
+    log_path = config['setting']['log']
+
+    # 指定されないならカレントディレクトリ
+    if not log_path:
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
 
     # ないなら作れdataフォルダ
     if not os.path.exists(data_path):
@@ -203,8 +236,12 @@ def load_config():
         if not os.path.exists(cookie_path[key]):
             os.makedirs(cookie_path[key])
 
+    # ログフォルダがないなら作成
+    if not os.path.exists(log_path):
+        os.makedirs(log_path)
+
     print("Initialize successfully!")
-    return config, int(config['setting']['reload']), int(config['setting']['interval']), site_dic, login_dic, folder_path, data_path, cookie_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
+    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
 
 # clawler　フォルダ内のモジュールをインポート
 def import_modules(site_dic):
@@ -231,7 +268,7 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
         else:
             return 400
         
-        print(f'Update: {site}\n')
+        logging.info(f'Update: {site}')
         globals()[site].init(cookie_path[site], is_login, interval)
         globals()[site].update(folder_path[site], key_data, data_path, host_name)
 
@@ -244,7 +281,7 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
             else:
                 return 400
             
-            print(f'Update: {site}\n')
+            logging.info(f'Update: {site}')
             globals()[site].init(cookie_path[site], is_login, interval)
             globals()[site].update(folder_path[site], key_data, data_path, host_name)
 
@@ -268,7 +305,7 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
         else:
             return 400
 
-        print(f'Re Download: {site}\n')
+        logging.info(f'Re Download: {site}')
         globals()[site].init(cookie_path[site], is_login, interval)
         globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
 
@@ -281,7 +318,7 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
             else:
                 return 400
             
-            print(f'Re Download: {site}\n')
+            logging.info(f'Re Download: {site}')
             globals()[site].init(cookie_path[site], is_login, interval)
             globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
 
@@ -302,7 +339,7 @@ def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_p
         else:
             return 400
 
-        print(f'Convert: {site}\n')
+        logging.info(f'Convert: {site}')
         globals()[site].init(cookie_path[site], is_login, interval)
         globals()[site].convert(folder_path[site], key_data, data_path, host_name)
 
@@ -315,7 +352,7 @@ def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_p
             else:
                 return 400
 
-            print(f'Convert: {site}\n')
+            logging.info(f'Convert: {site}')
             globals()[site].init(cookie_path[site], is_login, interval)
             globals()[site].convert(folder_path[site], key_data, data_path, host_name)
 
@@ -336,16 +373,38 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
         else:
             return 400
 
-    print(f'Web site: {site}')
-    print(f'URL: {add_param}')
+    logging.info(f'Web site: {site}')
+    logging.info(f'URL: {add_param}')
     globals()[site].init(cookie_path[site], is_login, interval)
     globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
 
 #リクエストIDの削除
 def cleanup_expired_requests(requests_dict, expiration_time):
+    """
+    指定した有効期限を超えたリクエストIDを削除し、リクエストID以外が同じ内容の重複リクエストを削除する。
+    """
     current_time = datetime.now()
+    processed_signatures = set()  # 処理済みのリクエスト内容を記録する集合
+
     for key in list(requests_dict):
-        if (current_time - requests_dict[key]).total_seconds() > expiration_time:
+        request_time = requests_dict[key]["time"]
+        request_data = requests_dict[key]["data"]
+
+        # リクエストの有効期限を確認
+        if (current_time - request_time).total_seconds() > expiration_time:
             del requests_dict[key]
-    
-    return requests_dict
+            continue
+
+        # リクエストの内容を識別するためのシグネチャを生成（リクエストIDを除く）
+        signature = json.dumps({k: v for k, v in request_data.items() if k != "request_id"}, sort_keys=True)
+
+        # シグネチャが既に存在する場合、このリクエストを削除
+        if signature in processed_signatures:
+            del requests_dict[key]
+            queue_stop = True
+        else:
+            # 新しいシグネチャを記録
+            processed_signatures.add(signature)
+            queue_stop = False
+
+    return requests_dict, queue_stop
