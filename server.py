@@ -1,7 +1,12 @@
 import os
 import json
+import random
+
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+
+import requests
+
 import threading
 import queue
 
@@ -13,16 +18,79 @@ import logging
 # 共通設定の読み込み
 import util
 
+class NoNewlineFormatter(logging.Formatter):
+    """改行をスペースに置き換えるフォーマッター"""
+    def format(self, record):
+        message = super().format(record)
+        # 改行をスペースに置き換える
+        return message.replace("\n", " ").replace("\r", " ")
+
 def setup_logging(log_path):
     """ログ設定を初期化"""
+    # 共通フォーマット
+    common_format = '%(asctime)s - %(levelname)s - %(message)s'
+    
+    # コンソールログ（改行そのまま）
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(common_format))
+    
+    # ファイルログ（改行を除去）
+    file_handler = logging.FileHandler(os.path.join(log_path, 'server.log'), encoding='utf-8')
+    file_handler.setFormatter(NoNewlineFormatter(common_format))
+
+    # ログ設定
     logging.basicConfig(
-        level=logging.DEBUG,  # DEBUGレベル以上のログを記録
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),  # コンソール出力
-            logging.FileHandler(os.path.join(log_path,'server.log'), encoding='utf-8')  # ファイル出力
-        ]
+        level=logging.DEBUG,  # DEBUGレベル以上を記録
+        handlers=[console_handler, file_handler]
     )
+
+def generate_request_id():
+    """JavaScriptと同じプロセスでリクエストIDを生成"""
+    request_id_template = "xxxx-xxxx-4xxx-yxxx-xxxx"
+
+    def replace_char(c):
+        """ランダムな16進数（0-15）でcを置き換える"""
+        r = random.randint(0, 15)  # 0から15までのランダムな値を生成
+        if c == 'x':
+            return hex(r)[2:]  # 'x'の場合はランダムな16進数（0-9、a-f）を返す
+        elif c == 'y':
+            return hex(r & 0x3 | 0x8)[2:]  # 'y'の場合は条件に合わせてランダムな16進数（8-11）を返す
+        elif c == '4':
+            return '4'  # '4'は固定
+        return c
+
+    # テンプレート文字列を置換してリクエストIDを生成
+    return ''.join(replace_char(c) for c in request_id_template)
+
+# サーバー起動後に自動的に更新する処理
+def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl):
+    """auto_updateが有効な場合、指定された間隔で定期的にupdate_param=allをPOSTする"""
+    while True:
+        if auto_update:
+            logging.info("Sending auto-update request with update_param=all")
+            try:
+                # SSL対応のURLを設定
+                url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:{port}/api/"
+                # POSTリクエストのデータ
+                payload = {
+                    "update": "all",
+                    "request_id": str(generate_request_id())
+                }
+                # リクエストを送信
+                response = requests.post(url, data=payload)
+                if response.status_code == 200:
+                    logging.info("Auto-update request succeeded")
+                else:
+                    logging.warning(f"Auto-update request failed with status {response.status_code}")
+            except Exception as e:
+                logging.error(f"Auto-update failed: {e}")
+
+        # 次の更新時刻を計算
+        next_update_time = datetime.now() + timedelta(seconds=auto_update_interval)
+        logging.info(f"Next update will be at: {next_update_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # 指定されたインターバルでスリープ
+        time.sleep(auto_update_interval)
 
 def create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain):
     setup_logging(log_path)
@@ -67,6 +135,12 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
         else:
             logging.warning(f"Folder or index.html not found for {folder}: {index_path}")
             return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
+
+    # auto_updateスレッドを開始する部分
+    if auto_update:
+        update_thread = threading.Thread(target=auto_update_task, args=(domain, port, auto_update, auto_update_interval, use_ssl))
+        update_thread.daemon = True
+        update_thread.start()
 
     global request_datas
     # リクエストデータを格納する辞書
