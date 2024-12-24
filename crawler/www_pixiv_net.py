@@ -152,7 +152,7 @@ def gen_pixiv_index(folder_path ,key_data):
         json.dump(pairs, f, ensure_ascii=False, indent=4)
 
     if no_raw:
-        logging.warning(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.\n")
+        logging.warning(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.")
 
     logging.info('目次の生成が完了しました')
 
@@ -732,7 +732,7 @@ def dl_user(user_id, folder_path, key_data, update):
     logging.info(f'User Name: {user_name}')
     #ユーザーの小説と小説シリーズがない場合
     if not user_all_novels and not user_all_novel_series:
-        logging.error("No novels or novel series found.\n")
+        logging.error("No novels or novel series found.")
         return
     #シリーズIDの取得
     for ns in user_all_novel_series:
@@ -748,7 +748,7 @@ def dl_user(user_id, folder_path, key_data, update):
     logging.info(f'User Novels: {len(user_novels)}')
     logging.info(f'User Novel Series: {len(user_novel_series)}')
 
-    logging.info("\nSeries Download Start\n")
+    logging.info("Series Download Start")
     for series_id in user_novel_series:
         if update:
             raw_path = os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')
@@ -758,7 +758,7 @@ def dl_user(user_id, folder_path, key_data, update):
                     old_series_json = json.load(f)
                 series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
                 if series_update_date == series_old_update_date:
-                    logging.info(f"{old_series_json['title']} に更新はありません。\n")
+                    logging.info(f"{old_series_json['title']} に更新はありません。")
                     if g_count == 10:
                         time.sleep(random.uniform(10,30))
                         g_count = 1
@@ -776,7 +776,7 @@ def dl_user(user_id, folder_path, key_data, update):
                 g_count += 1
             dl_series(series_id, folder_path, key_data, False)
 
-    logging.info("\nNovel Download Start\n")
+    logging.info("Novel Download Start")
     for novel_id in user_novels:
         if update:
             raw_path = os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json')
@@ -786,7 +786,7 @@ def dl_user(user_id, folder_path, key_data, update):
                     old_novel_json = json.load(f)
                 novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
                 if novel_update_date == novel_old_update_date:
-                    logging.info(f"{old_novel_json['title']} に更新はありません。\n")
+                    logging.info(f"{old_novel_json['title']} に更新はありません。")
                     if g_count == 10:
                         time.sleep(random.uniform(10,30))
                         g_count = 1
@@ -863,7 +863,7 @@ def download(url, folder_path, key_data, data_path, host_name):
     #仕上げ処理(indexファイルの更新)
     gen_pixiv_index(folder_path, key_data)
 
-    logging.info("\nDownload Complete\n")
+    logging.info("Download Complete")
 
 #更新処理
 def update(folder_path, key_data, data_path, host_name):
@@ -910,7 +910,7 @@ def update(folder_path, key_data, data_path, host_name):
             if datetime.fromisoformat(json_data.get('body').get('uploadDate')) != datetime.fromisoformat(old_novel_json.get('updateDate')):
                 dl_novel(json_data, novel_id, folder_path, key_data)
             else:
-                logging.info(f'{index_data.get("title")} に更新はありません。\n')
+                logging.info(f'{index_data.get("title")} に更新はありません。')
 
         elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
             series_id = folder_name.replace('s', '')
@@ -925,7 +925,7 @@ def update(folder_path, key_data, data_path, host_name):
             if datetime.fromisoformat(s_detail.get('updateDate')) != datetime.fromisoformat(old_series_json.get('updateDate')):
                 dl_series(series_id, folder_path, key_data, True)
             else:
-                logging.info(f'{index_data.get("title")} に更新はありません。\n')
+                logging.info(f'{index_data.get("title")} に更新はありません。')
         if g_count == 10:
             time.sleep(random.uniform(10,30))
             g_count = 1
