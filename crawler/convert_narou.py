@@ -2,6 +2,9 @@ from datetime import datetime
 import os
 import re
 
+#ログを保存
+import logging
+
 #目次の書き込み
 def write_index(f, data, key_data):
     """エピソード情報を基に目次を生成する関数"""
@@ -143,7 +146,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         v_page = []
         v_page.append(page_counter)
 
-        #print(v_page[0]) # デバッグ用
+        logging.debug(v_page[0]) # デバッグ用
 
         # ページカウンターの更新ループ
         for match in pattern.finditer(ep['text']):
@@ -152,22 +155,22 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
                 # [newpage] タグのみの場合
                 page_counter += 1
                 v_page.append(page_counter)  # 仮想ページにページ番号を追加
-                #print(f'newpage: {page_counter}')  # デバッグ用
+                logging.debug(f'newpage: {page_counter}')  # デバッグ用
             elif match.group(0).startswith('[image]'):
                 # [image](...) タグがマッチしている場合
                 page_counter += 2
-                #print(f'image: {page_counter}')  # デバッグ用
+                logging.debug(f'image: {page_counter}')  # デバッグ用
             elif match.group(1):  # [image] の後に改行（文字列または実際の改行）と [newpage] の場合
                 page_counter += 2
                 if 'newpage' in match.group(0):
                     v_page.append(page_counter)  # 仮想ページにページ番号を追加
-                #print(f'image after newline and newpage: {page_counter}')  # デバッグ用
+                logging.debug(f'image after newline and newpage: {page_counter}')  # デバッグ用
             elif match.group(3):  # [newpage] の後に [image] の場合
                 page_counter += 1
                 if 'newpage' in match.group(0):
                     v_page.append(page_counter)  # 仮想ページにページ番号を追加
                 page_counter += 1 # 画像のページ
-                #print(f'newpage after image: {page_counter}')  # デバッグ用
+                logging.debug(f'newpage after image: {page_counter}')  # デバッグ用
             elif match.group(4):  # (?:\s*(?:\\n|\n)*\s*\[image\]\((.*?)\)\s*)+
                 # 連続する [image](...) タグの場合
                 images_count = len(match.group(4).strip().split())
@@ -282,4 +285,4 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('</body>\n')
             f.write('</html>\n')
     #完了
-    print(f'{data.get("title")}の変換が完了しました。 終了時刻: {datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S%z")}')
+    logging.info(f'{data.get("title")}の変換が完了しました。')
