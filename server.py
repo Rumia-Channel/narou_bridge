@@ -1,3 +1,4 @@
+import logging
 import queue
 from datetime import datetime
 import threading
@@ -6,10 +7,24 @@ import os
 import json
 from flask import Flask, request, jsonify, abort, send_from_directory, Response
 
-#共通設定の読み込み
+# 共通設定の読み込み
 import util
 
-def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, data_path, cookie_path, key, use_ssl, port, domain):
+def setup_logging(log_path):
+    """ログ設定を初期化"""
+    logging.basicConfig(
+        level=logging.DEBUG,  # DEBUGレベル以上のログを記録
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),  # コンソール出力
+            logging.FileHandler(os.path.join(log_path,'server.log'), encoding='utf-8')  # ファイル出力
+        ]
+    )
+
+def create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain):
+    setup_logging(log_path)
+    logging.debug(f"サーバー起動")
+
     app = Flask(__name__, static_folder=data_path)  # data_path を静的ファイルのルートとして設定
 
     # 静的ファイルのルートを設定（data_path をルートとして）
@@ -22,18 +37,18 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
     @app.before_request
     def log_request():
         """リクエストの前にパスをログに出力"""
-        print(f"Request URL: {request.url}")
-        print(f"Request Path: {request.path}")
+        logging.info(f"Request URL: {request.url}")
+        logging.info(f"Request Path: {request.path}")
 
     @app.route('/', methods=["GET"])
     def serve_root():
         """ルート / にアクセスされた場合、data_path 内の index.html を返す"""
         index_path = os.path.join(app.config['DATA_FOLDER'], "index.html")
         if os.path.exists(index_path):
-            print(f"Serving root index.html from: {index_path}")
+            logging.info(f"Serving root index.html from: {index_path}")
             return send_from_directory(app.config['DATA_FOLDER'], "index.html")
         else:
-            print(f"File not found: {index_path}")
+            logging.error(f"File not found: {index_path}")
             return jsonify({"status": "error", "message": "File not found"}), 404
 
     @app.route('/<path:folder>', methods=["GET"])
@@ -41,13 +56,13 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
         """指定されたフォルダ内の index.html を返す"""
         folder_path = os.path.join(app.config['DATA_FOLDER'], folder)
         index_path = os.path.join(folder_path, "index.html")
-        
+
         # フォルダ内に index.html があるか確認
         if os.path.isdir(folder_path) and os.path.exists(index_path):
-            print(f"Serving index.html from: {index_path}")
+            logging.info(f"Serving index.html from: {index_path}")
             return send_from_directory(folder_path, "index.html")
         else:
-            print(f"Folder or index.html not found for {folder}: {index_path}")
+            logging.warning(f"Folder or index.html not found for {folder}: {index_path}")
             return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
 
     global request_datas
@@ -113,16 +128,19 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
                 return create_error_response(400, "Missing parameters")
 
         except Exception as e:
+            logging.exception("リクエストにてエラーが発生しました")
             return create_error_response(500, str(e))
 
     def create_error_response(status_code, message):
         """エラーレスポンスを生成"""
+        logging.error(f"Error {status_code}: {message}")
         response = Response(json.dumps({"status": "error", "message": message}), mimetype="application/json")
         response.status_code = status_code
         return response
 
     def create_success_response(message):
         """成功レスポンスを生成"""
+        logging.info(f"Success: {message}")
         response = Response(json.dumps({"status": "success", "message": message}), mimetype="application/json")
         response.status_code = 200
         return response
@@ -145,7 +163,7 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
     def handle_post():
         global request_datas
         """POSTリクエストを受け取って処理を開始する"""
-        print(f"POST received: {datetime.now().isoformat()}")
+        logging.debug(f"POST received: {datetime.now().isoformat()}")
 
         # POSTデータの取得
         add_param = request.form.get("add")
@@ -180,7 +198,7 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
             # 古いリクエストIDを削除
             request_datas, queue_stop = util.cleanup_expired_requests(request_datas, expiration_time=int(reload_time))
 
-        print(f'Current queue: {request_datas}')
+        logging.debug(f'Current queue: {request_datas}')
 
         if not queue_stop:
             # キューにリクエストを追加
@@ -196,14 +214,14 @@ def create_app(config, reload_time, interval, site_dic, login_dic, folder_path, 
 
             return jsonify({"status": "queued", "request_id": request_id})
         else:
-            return jsonify({"status": "stoped", "request_id": request_id})
+            return jsonify({"status": "stopped", "request_id": request_id})
 
     return app
 
 # エクスポートされる関数
-def http_run(config, reload_time, interval, site_dic, login_dic, folder_path, data_path, cookie_path, key, use_ssl, port, domain):
-    app = create_app(config, reload_time, interval, site_dic, login_dic, folder_path, data_path, cookie_path, key, use_ssl, port, domain)
-    
+def http_run(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain):
+    app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain)
+
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
     server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
     server_thread.daemon = True

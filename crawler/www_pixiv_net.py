@@ -9,6 +9,9 @@ from playwright_recaptcha import recaptchav2
 from html import unescape
 from datetime import datetime, timezone, timedelta
 
+#ログを保存
+import logging
+
 #リキャプチャ対策
 import time
 import random
@@ -149,9 +152,9 @@ def gen_pixiv_index(folder_path ,key_data):
         json.dump(pairs, f, ensure_ascii=False, indent=4)
 
     if no_raw:
-        print(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.\n")
+        logging.warning(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.\n")
 
-    print('目次の生成が完了しました')
+    logging.info('目次の生成が完了しました')
 
 #初期化処理
 def init(cookie_path, is_login, interval):
@@ -163,7 +166,7 @@ def init(cookie_path, is_login, interval):
     interval_sec = int(interval)
     g_count = 1
 
-    print(f'Login : {is_login}')
+    logging.info(f'Login : {is_login}')
 
     def login(playwright: Playwright) -> None:
         # ブラウザ設定
@@ -210,12 +213,12 @@ def init(cookie_path, is_login, interval):
         """)
 
         # Pixivのログインページにアクセス
-        print("Navigating to Pixiv...")
+        logging.info("Navigating to Pixiv...")
         page.goto("https://www.pixiv.net/")
         time.sleep(random.uniform(1, 5))
         
         # ログインリンクをクリック
-        print("Clicking login link...")
+        logging.info("Clicking login link...")
         page.get_by_role("link", name="Login").click()
 
         # ユーザー情報を入力
@@ -227,25 +230,25 @@ def init(cookie_path, is_login, interval):
         page.get_by_placeholder("Password").fill(pswd)
         
         time.sleep(random.uniform(2, 5))
-        print("Attempting to log in...")
+        logging.info("Attempting to log in...")
         page.get_by_role("button", name="Log In", exact=True).click()
 
         # リキャプチャの確認を1度だけ行う
         time.sleep(random.uniform(2, 5))
-        print(f"Current URL after login attempt: {page.url}")
+        logging.info(f"Current URL after login attempt: {page.url}")
         if "accounts.pixiv.net" in page.url:  # Pixivのログインページに留まっている場合
-            print("reCAPTCHA detected. Solving...")
+            logging.info("reCAPTCHA detected. Solving...")
             try:
                 with recaptchav2.SyncSolver(page) as solver:
                     token = solver.solve_recaptcha(wait=True)
-                    print(f"reCAPTCHA token obtained: {token}")
+                    logging.info(f"reCAPTCHA token obtained: {token}")
                     if not token:
                         raise ValueError("Failed to retrieve a valid reCAPTCHA token.")
-                print("Retrying login after solving reCAPTCHA...")
+                logging.info("Retrying login after solving reCAPTCHA...")
                 page.get_by_role("button", name="Log In", exact=True).click()
                 time.sleep(random.uniform(2, 5))
             except Exception as e:
-                print(f"Failed to solve reCAPTCHA: {e}")
+                logging.info(f"Failed to solve reCAPTCHA: {e}")
                 return
 
         # ログイン成功後、リダイレクト処理を待機
@@ -253,28 +256,28 @@ def init(cookie_path, is_login, interval):
             start_time = time.time()
             while time.time() - start_time < timeout:
                 page.wait_for_load_state("load")
-                print(f"Waiting for redirects... Current URL: {page.url}")
+                logging.info(f"Waiting for redirects... Current URL: {page.url}")
                 
                 # 2段階認証ページが表示された場合
                 if "two-factor-authentication" in page.url and not is_2fa:
-                    print("Two-factor authentication page detected.")
+                    logging.info("Two-factor authentication page detected.")
                     return "two-factor-authentication"
                 
                 # ホームページに到達した場合
                 if page.url in ["https://www.pixiv.net/", "https://www.pixiv.net/en/"]:
-                    print("Successfully redirected to Pixiv homepage.")
+                    logging.info("Successfully redirected to Pixiv homepage.")
                     return "success"
             return "timeout"
 
         redirect_status = wait_for_redirects(page)
         
         if redirect_status == "timeout":
-            print("Redirect did not complete within the timeout period.")
+            logging.error("Redirect did not complete within the timeout period.")
             return
         
         if redirect_status == "two-factor-authentication":
             # 2段階認証処理
-            print("2-factor authentication required.")
+            logging.info("2-factor authentication required.")
             time.sleep(random.uniform(1, 5))
             page.get_by_label("Trust this browser").check()  # ブラウザを信頼する
             tfak = input("2段階認証のコードを入力してください: ")  # ユーザーにコードを入力させる
@@ -283,14 +286,14 @@ def init(cookie_path, is_login, interval):
             page.get_by_role("button", name="Log In").click()  # ログインボタンをクリック
 
             # 2段階認証後のリダイレクトを待機（is_2fa=Trueとして呼び出し）
-            print("Waiting for redirect after 2-factor authentication...")
+            logging.info("Waiting for redirect after 2-factor authentication...")
             redirect_status = wait_for_redirects(page, is_2fa=True)
             if redirect_status == "timeout":
-                print("Redirect after 2-factor authentication did not complete.")
+                logging.error("Redirect after 2-factor authentication did not complete.")
                 return
 
         # ログイン完了
-        print(f"Login successful. Final URL: {page.url}")
+        logging.info(f"Login successful. Final URL: {page.url}")
 
         cookies = context.cookies()
         user_agent = page.evaluate("() => navigator.userAgent")
@@ -437,7 +440,7 @@ def get_cover(raw_small_url, folder_path):
             return  # 成功したら終了
 
     # 全てのURLが404だった場合
-    print("Failed to download cover image.")
+    logging.error("Failed to download cover image.")
 
 #チャプタータグの除去
 def remove_chapter_tag(data):
@@ -463,7 +466,7 @@ def format_for_url(data):
 def dl_series(series_id, folder_path, key_data, update):
     global g_count
     # seriesNavDataの内部にあるseriesIdを取得
-    print(f"Series ID: {series_id}")
+    logging.info(f"Series ID: {series_id}")
     s_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}", pixiv_cookie, pixiv_header).text), "body")
     s_toc = cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles", pixiv_cookie, pixiv_header)
     s_toc_u = cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series_content/{series_id}", pixiv_cookie, pixiv_header)
@@ -479,14 +482,14 @@ def dl_series(series_id, folder_path, key_data, update):
         series_caption = series_caption_data.replace('<br />', '\n').replace('jump.php?', '')
     else:
         series_caption = ''
-    print(f"Series Title: {series_title}")
-    print(f"Series Author: {series_author}")
-    print(f"Series Author ID: {series_author_id}")
-    print(f"Series Caption: {series_caption}")
-    print(f"Series Total Episodes: {series_episodes}")
-    print(f"Series Total Characters: {series_chara}")
-    print(f"Series Create Date: {series_create_day}")
-    print(f"Series Update Date: {series_update_day}")
+    logging.info(f"Series Title: {series_title}")
+    logging.info(f"Series Author: {series_author}")
+    logging.info(f"Series Author ID: {series_author_id}")
+    logging.info(f"Series Caption: {series_caption}")
+    logging.info(f"Series Total Episodes: {series_episodes}")
+    logging.info(f"Series Total Characters: {series_chara}")
+    logging.info(f"Series Create Date: {series_create_day}")
+    logging.info(f"Series Update Date: {series_update_day}")
     cm.make_dir('s'+str(series_id), folder_path)
     toc_json_data = json.loads(s_toc.text)
     toc_u_json_data = json.loads(s_toc_u.text)
@@ -654,13 +657,13 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         novel_postscript = ''
     novel_create_day = datetime.fromisoformat(novel_data.get('createDate'))
     novel_update_day = datetime.fromisoformat(novel_data.get('uploadDate'))
-    print(f"Novel ID: {novel_id}")
-    print(f"Novel Title: {novel_title}")
-    print(f"Novel Author: {novel_author}")
-    print(f"Novel Author ID: {novel_author_id}")
-    print(f"Novel Caption: {novel_caption}")
-    print(f"Novel Create Date: {novel_create_day}")
-    print(f"Novel Update Date: {novel_update_day}")
+    logging.info(f"Novel ID: {novel_id}")
+    logging.info(f"Novel Title: {novel_title}")
+    logging.info(f"Novel Author: {novel_author}")
+    logging.info(f"Novel Author ID: {novel_author_id}")
+    logging.info(f"Novel Caption: {novel_caption}")
+    logging.info(f"Novel Create Date: {novel_create_day}")
+    logging.info(f"Novel Update Date: {novel_update_day}")
     cm.make_dir('n'+str(novel_id), folder_path)
     novel_path = os.path.join(folder_path, f'n{novel_id}')
     raw_path = os.path.join(novel_path, 'raw', 'raw.json')
@@ -718,7 +721,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 #ユーザーページからのダウンロード
 def dl_user(user_id, folder_path, key_data, update):
     global g_count
-    print(f'User ID: {user_id}')
+    logging.info(f'User ID: {user_id}')
     user_data = cm.get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all", pixiv_cookie, pixiv_header).json()
     user_name = cm.get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}", pixiv_cookie, pixiv_header).json().get('body').get('name')
     user_all_novels = user_data.get('body').get('novels')
@@ -726,10 +729,10 @@ def dl_user(user_id, folder_path, key_data, update):
     user_novel_series = []
     in_novel_series = []
     user_novels = []
-    print(f'User Name: {user_name}')
+    logging.info(f'User Name: {user_name}')
     #ユーザーの小説と小説シリーズがない場合
     if not user_all_novels and not user_all_novel_series:
-        print("No novels or novel series found.\n")
+        logging.error("No novels or novel series found.\n")
         return
     #シリーズIDの取得
     for ns in user_all_novel_series:
@@ -742,10 +745,10 @@ def dl_user(user_id, folder_path, key_data, update):
         for nid in cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles", pixiv_cookie, pixiv_header).json().get('body'):
             in_novel_series.append(nid.get('id'))
     user_novels = [n for n in user_novels if n not in in_novel_series]
-    print(f'User Novels: {len(user_novels)}')
-    print(f'User Novel Series: {len(user_novel_series)}')
+    logging.info(f'User Novels: {len(user_novels)}')
+    logging.info(f'User Novel Series: {len(user_novel_series)}')
 
-    print("\nSeries Download Start\n")
+    logging.info("\nSeries Download Start\n")
     for series_id in user_novel_series:
         if update:
             raw_path = os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')
@@ -755,7 +758,7 @@ def dl_user(user_id, folder_path, key_data, update):
                     old_series_json = json.load(f)
                 series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
                 if series_update_date == series_old_update_date:
-                    print(f"{old_series_json['title']} に更新はありません。\n")
+                    logging.info(f"{old_series_json['title']} に更新はありません。\n")
                     if g_count == 10:
                         time.sleep(random.uniform(10,30))
                         g_count = 1
@@ -773,7 +776,7 @@ def dl_user(user_id, folder_path, key_data, update):
                 g_count += 1
             dl_series(series_id, folder_path, key_data, False)
 
-    print("\nNovel Download Start\n")
+    logging.info("\nNovel Download Start\n")
     for novel_id in user_novels:
         if update:
             raw_path = os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json')
@@ -783,7 +786,7 @@ def dl_user(user_id, folder_path, key_data, update):
                     old_novel_json = json.load(f)
                 novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
                 if novel_update_date == novel_old_update_date:
-                    print(f"{old_novel_json['title']} に更新はありません。\n")
+                    logging.info(f"{old_novel_json['title']} に更新はありません。\n")
                     if g_count == 10:
                         time.sleep(random.uniform(10,30))
                         g_count = 1
@@ -833,10 +836,10 @@ def download(url, folder_path, key_data, data_path, host_name):
     response = cm.get_with_cookie(url, pixiv_cookie, pixiv_header)
 
     if response.status_code == 404:
-        print("404 Not Found")
-        print("Incorrect URL, Deleted, Private, or My Pics Only.")
+        logging.error("404 Not Found")
+        logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
         return
-    print(f'Response Status Code: {response.status_code}')
+    logging.info(f'Response Status Code: {response.status_code}')
     if "https://www.pixiv.net/novel/show.php?id=" in url:
         # JSONとして解析
         novel_id = re.search(r"id=(\d+)", url).group(1)
@@ -854,13 +857,13 @@ def download(url, folder_path, key_data, data_path, host_name):
         user_id = re.search(r"users/(\d+)", url).group(1)
         dl_user(user_id, folder_path, key_data, False)
     else:
-        print(f'Error: "{url}" is not a valid URL')
+        logging.error(f'Error: "{url}" is not a valid URL')
         return
     
     #仕上げ処理(indexファイルの更新)
     gen_pixiv_index(folder_path, key_data)
 
-    print("\nDownload Complete\n")
+    logging.info("\nDownload Complete\n")
 
 #更新処理
 def update(folder_path, key_data, data_path, host_name):
@@ -884,8 +887,8 @@ def update(folder_path, key_data, data_path, host_name):
         for user_id, status in user_json.items():
             if status == 'enable':
                 if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
-                    print("404 Not Found")
-                    print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                    logging.error("404 Not Found")
+                    logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
                 dl_user(user_id, folder_path, key_data, True)
                 time.sleep(interval_sec)
@@ -898,8 +901,8 @@ def update(folder_path, key_data, data_path, host_name):
         if index_data.get("type") == "短編":
             novel_id = folder_name.replace('n', '')
             if cm.get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}', pixiv_cookie, pixiv_header).status_code == 404:
-                print("404 Not Found")
-                print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                logging.error("404 Not Found")
+                logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
             json_data = return_content_json(novel_id)
             with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as onf:
@@ -907,13 +910,13 @@ def update(folder_path, key_data, data_path, host_name):
             if datetime.fromisoformat(json_data.get('body').get('uploadDate')) != datetime.fromisoformat(old_novel_json.get('updateDate')):
                 dl_novel(json_data, novel_id, folder_path, key_data)
             else:
-                print(f'{index_data.get("title")} に更新はありません。\n')
+                logging.info(f'{index_data.get("title")} に更新はありません。\n')
 
         elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
             series_id = folder_name.replace('s', '')
             if cm.get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}', pixiv_cookie, pixiv_header).status_code == 404:
-                print("404 Not Found")
-                print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                logging.error("404 Not Found")
+                logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
             s_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}", pixiv_cookie, pixiv_header).text), "body")
             with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as osf:
@@ -922,7 +925,7 @@ def update(folder_path, key_data, data_path, host_name):
             if datetime.fromisoformat(s_detail.get('updateDate')) != datetime.fromisoformat(old_series_json.get('updateDate')):
                 dl_series(series_id, folder_path, key_data, True)
             else:
-                print(f'{index_data.get("title")} に更新はありません。\n')
+                logging.info(f'{index_data.get("title")} に更新はありません。\n')
         if g_count == 10:
             time.sleep(random.uniform(10,30))
             g_count = 1
@@ -953,8 +956,8 @@ def re_download(folder_path, key_data, data_path, host_name):
         for user_id, status in user_json.items():
             if status == 'enable':
                 if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
-                    print("404 Not Found")
-                    print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                    logging.error("404 Not Found")
+                    logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
                 dl_user(user_id, folder_path, key_data, False)
                 time.sleep(interval_sec)
@@ -967,8 +970,8 @@ def re_download(folder_path, key_data, data_path, host_name):
         if index_data.get("type") == "短編":
             novel_id = folder_name.replace('n', '')
             if cm.get_with_cookie(f'https://www.pixiv.net/novel/show.php?id={novel_id}', pixiv_cookie, pixiv_header).status_code == 404:
-                print("404 Not Found")
-                print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                logging.error("404 Not Found")
+                logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
 
             json_data = return_content_json(novel_id)
@@ -978,8 +981,8 @@ def re_download(folder_path, key_data, data_path, host_name):
         elif index_data.get("type") == "連載中" or index_data.get("type") == "完結":
             series_id = folder_name.replace('s', '')
             if cm.get_with_cookie(f'https://www.pixiv.net/novel/series/{series_id}', pixiv_cookie, pixiv_header).status_code == 404:
-                print("404 Not Found")
-                print("Incorrect URL, Deleted, Private, or My Pics Only.")
+                logging.error("404 Not Found")
+                logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
 
             dl_series(series_id, folder_path, key_data, False)
