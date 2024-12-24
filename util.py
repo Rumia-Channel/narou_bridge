@@ -4,6 +4,9 @@ import importlib
 import configparser
 from datetime import datetime
 
+#ログを保存
+import logging
+
 #utilで使うモジュールのインポート
 def init_import(site_dic):
     globals().update(import_modules(site_dic))
@@ -238,7 +241,7 @@ def load_config():
         os.makedirs(log_path)
 
     print("Initialize successfully!")
-    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
+    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
 
 # clawler　フォルダ内のモジュールをインポート
 def import_modules(site_dic):
@@ -265,7 +268,7 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
         else:
             return 400
         
-        print(f'Update: {site}\n')
+        logging.info(f'Update: {site}')
         globals()[site].init(cookie_path[site], is_login, interval)
         globals()[site].update(folder_path[site], key_data, data_path, host_name)
 
@@ -278,7 +281,7 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
             else:
                 return 400
             
-            print(f'Update: {site}\n')
+            logging.info(f'Update: {site}')
             globals()[site].init(cookie_path[site], is_login, interval)
             globals()[site].update(folder_path[site], key_data, data_path, host_name)
 
@@ -302,7 +305,7 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
         else:
             return 400
 
-        print(f'Re Download: {site}\n')
+        logging.info(f'Re Download: {site}')
         globals()[site].init(cookie_path[site], is_login, interval)
         globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
 
@@ -315,7 +318,7 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
             else:
                 return 400
             
-            print(f'Re Download: {site}\n')
+            logging.info(f'Re Download: {site}')
             globals()[site].init(cookie_path[site], is_login, interval)
             globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
 
@@ -336,7 +339,7 @@ def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_p
         else:
             return 400
 
-        print(f'Convert: {site}\n')
+        logging.info(f'Convert: {site}')
         globals()[site].init(cookie_path[site], is_login, interval)
         globals()[site].convert(folder_path[site], key_data, data_path, host_name)
 
@@ -349,7 +352,7 @@ def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_p
             else:
                 return 400
 
-            print(f'Convert: {site}\n')
+            logging.info(f'Convert: {site}')
             globals()[site].init(cookie_path[site], is_login, interval)
             globals()[site].convert(folder_path[site], key_data, data_path, host_name)
 
@@ -370,8 +373,8 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
         else:
             return 400
 
-    print(f'Web site: {site}')
-    print(f'URL: {add_param}')
+    logging.info(f'Web site: {site}')
+    logging.info(f'URL: {add_param}')
     globals()[site].init(cookie_path[site], is_login, interval)
     globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
 
