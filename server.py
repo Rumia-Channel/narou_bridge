@@ -74,7 +74,7 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl):
             logging.info("Sending auto-update request with update_param=all")
             try:
                 # SSL対応のURLを設定
-                url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:{port}/api/"
+                url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:443/api/"
                 # POSTリクエストのデータ
                 payload = {
                     "update": "all",
@@ -169,7 +169,7 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
         key_data = ''
 
         # ホスト名の確定
-        host_name = f"https://{domain}:{port}" if use_ssl else f"http://{domain}:{port}"
+        host_name = f"https://{domain}:{port}" if use_ssl else f"http://{domain}:443"
 
         try:
             # 更新処理
@@ -305,7 +305,7 @@ def http_run(config, reload_time, auto_update, interval, auto_update_interval, s
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
     if use_ssl:
         app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, 443, domain)
-        server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': 443, 'ssl_context': (ssl_crt, ssl_key)})
+        server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port, 'ssl_context': (ssl_crt, ssl_key)})
     else:
         app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
