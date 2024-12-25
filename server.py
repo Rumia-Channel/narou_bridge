@@ -132,7 +132,8 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
             logging.error(f"File not found: {index_path}")
             return jsonify({"status": "error", "message": "File not found"}), 404
 
-    @app.route('/<path:folder>', methods=["GET"])
+    # フォルダ内の index.html を提供
+    @app.route('/<path:folder>/', methods=["GET"])
     def serve_folder(folder):
         """指定されたフォルダ内の index.html を返す"""
         folder_path = os.path.join(app.config['DATA_FOLDER'], folder)
@@ -145,6 +146,21 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
         else:
             logging.warning(f"Folder or index.html not found for {folder}: {index_path}")
             return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
+
+
+    # ファイルを提供
+    @app.route('/<path:filepath>', methods=["GET"])
+    def serve_file(filepath):
+        """静的ファイルを返す"""
+        file_path = os.path.join(app.config['DATA_FOLDER'], filepath)
+
+        # ファイルが存在するか確認
+        if os.path.isfile(file_path):
+            logging.info(f"Serving file from: {file_path}")
+            return send_from_directory(app.config['DATA_FOLDER'], filepath)
+        else:
+            logging.error(f"File not found: {file_path}")
+            return jsonify({"status": "error", "message": "File not found"}), 404
 
     # auto_updateスレッドを開始する部分
     if auto_update:
