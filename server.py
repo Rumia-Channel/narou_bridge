@@ -63,7 +63,7 @@ def generate_request_id():
     return ''.join(replace_char(c) for c in request_id_template)
 
 # サーバー起動後に自動的に更新する処理
-def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, use_proxy, proxy_port):
+def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, use_proxy, proxy_port, proxy_ssl):
 
     #サーバーが起動しきるまで待機
     time.sleep(30)
@@ -75,7 +75,7 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, u
             try:
                 if use_proxy:
                      # SSL対応のURLを設定
-                    url = f"https://{domain}:{proxy_port}/api/" if use_ssl else f"http://{domain}:{proxy_port}/api/"
+                    url = f"https://{domain}:{proxy_port}/api/" if proxy_ssl else f"http://{domain}:{proxy_port}/api/"
                 else:
                     # SSL対応のURLを設定
                     url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:{port}/api/"
@@ -102,7 +102,7 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, u
         # 指定されたインターバルでスリープ
         time.sleep(auto_update_interval)
 
-def create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port):
+def create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl):
     setup_logging(log_path)
     logging.debug(f"サーバー起動")
 
@@ -164,7 +164,7 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
 
     # auto_updateスレッドを開始する部分
     if auto_update:
-        update_thread = threading.Thread(target=auto_update_task, args=(domain, port, auto_update, auto_update_interval, use_ssl, use_proxy, proxy_port))
+        update_thread = threading.Thread(target=auto_update_task, args=(domain, port, auto_update, auto_update_interval, use_ssl, use_proxy, proxy_port, proxy_ssl))
         update_thread.daemon = True
         update_thread.start()
 
@@ -192,7 +192,7 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
 
         # ホスト名の確定
         if use_proxy:
-            host_name = f"https://{domain}:{proxy_port}" if use_ssl else f"http://{domain}:{proxy_port}"
+            host_name = f"https://{domain}:{proxy_port}" if proxy_ssl else f"http://{domain}:{proxy_port}"
         else:
             host_name = f"https://{domain}:{port}" if use_ssl else f"http://{domain}:{port}"
 
@@ -325,14 +325,14 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
     return app
 
 # エクスポートされる関数
-def http_run(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port):
+def http_run(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl):
 
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
     if use_ssl:
-        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port)
+        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port, 'ssl_context': (ssl_crt, ssl_key)})
     else:
-        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port)
+        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
     
     server_thread.daemon = True
