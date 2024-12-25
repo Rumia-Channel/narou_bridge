@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import importlib
 import configparser
 from datetime import datetime
@@ -200,9 +201,14 @@ def load_config():
     folder_path = {}
     cookie_path = {}
 
+    if not os.path.isdir('setting'):
+        os.makedirs('setting')
+        # config.ini を config フォルダ内にコピー
+        shutil.copy('setting.ini', 'setting/setting.ini')
+
     # 設定の読み込み
     config = configparser.ConfigParser()
-    config.read('setting.ini')
+    config.read('setting/setting.ini')
 
     # Get the path from the data key
     data_path = config['setting']['data']
