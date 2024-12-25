@@ -110,7 +110,7 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
     app.config['DATA_FOLDER'] = data_path
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # キャッシュ無効化（開発用）
     app.config['TEMPLATES_AUTO_RELOAD'] = True
-    app.url_map.strict_slashes = False  # スラッシュの有無に関わらず対応
+    app.url_map.strict_slashes = True  # スラッシュの有無に関わらず対応
 
     # セキュリティ: ファイルパスを正規化し、安全性を確保
     def secure_path(requested_path):
