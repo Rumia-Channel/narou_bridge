@@ -74,7 +74,7 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl):
             logging.info("Sending auto-update request with update_param=all")
             try:
                 # SSL対応のURLを設定
-                url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:443/api/"
+                url = f"https://{domain}:443/api/" if use_ssl else f"http://{domain}:{port}/api/"
                 # POSTリクエストのデータ
                 payload = {
                     "update": "all",
@@ -169,7 +169,7 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
         key_data = ''
 
         # ホスト名の確定
-        host_name = f"https://{domain}:{port}" if use_ssl else f"http://{domain}:443"
+        host_name = f"https://{domain}:443" if use_ssl else f"http://{domain}:{port}"
 
         try:
             # 更新処理
