@@ -10,7 +10,7 @@ import requests
 import threading
 import queue
 
-from flask import Flask, request, jsonify, abort, send_from_directory, Response
+from flask import Flask, request, jsonify, abort, send_from_directory, Response, redirect
 
 #ログを保存
 import logging
@@ -107,6 +107,7 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
     logging.debug(f"サーバー起動")
 
     app = Flask(__name__, static_folder=data_path)  # data_path を静的ファイルのルートとして設定
+    app.url_map.strict_slashes = False
 
     # 静的ファイルのルートを設定（data_path をルートとして）
     app.config['DATA_FOLDER'] = data_path
@@ -132,35 +133,54 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
             logging.error(f"File not found: {index_path}")
             return jsonify({"status": "error", "message": "File not found"}), 404
 
-    # フォルダ内の index.html を提供
-    @app.route('/<path:folder>/', methods=["GET"])
-    def serve_folder(folder):
-        """指定されたフォルダ内の index.html を返す"""
-        folder_path = os.path.join(app.config['DATA_FOLDER'], folder)
-        index_path = os.path.join(folder_path, "index.html")
+    # フォルダへのアクセスがデータフォルダを越えないようにするための関数
+    def secure_path(file_path):
+        # リクエストされたパスが DATA_FOLDER を越えていないか確認
+        abs_data_folder = os.path.abspath(app.config['DATA_FOLDER'])
+        abs_requested_path = os.path.abspath(file_path)
+        
+        # os.path.commonpath() で両者の共通パスを取得
+        if not abs_requested_path.startswith(abs_data_folder):
+            raise ValueError("Access to this path is outside of the allowed directory")
+        return abs_requested_path
 
-        # フォルダ内に index.html があるか確認
-        if os.path.isdir(folder_path) and os.path.exists(index_path):
-            logging.info(f"Serving index.html from: {index_path}")
-            return send_from_directory(folder_path, "index.html")
-        else:
-            logging.warning(f"Folder or index.html not found for {folder}: {index_path}")
-            return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
+    # フォルダまたはファイルを提供する
+    @app.route('/<path:path>', methods=["GET"])
+    def handle_request(path):
+        """指定されたパスがフォルダの場合はその index.html を、ファイルの場合はファイルを返す"""
+        file_path = os.path.join(app.config['DATA_FOLDER'], path)
+        folder_path = os.path.join(app.config['DATA_FOLDER'], path)
 
+        try:
+            # リクエストされたパスが DATA_FOLDER より上の階層に行かないかをチェック
+            secure_path(file_path)
+        except ValueError as e:
+            logging.error(f"Unauthorized access attempt: {e}")
+            return jsonify({"status": "error", "message": "Access denied"}), 403
 
-    # ファイルを提供
-    @app.route('/<path:filepath>', methods=["GET"])
-    def serve_file(filepath):
-        """静的ファイルを返す"""
-        file_path = os.path.join(app.config['DATA_FOLDER'], filepath)
+        # フォルダの場合（末尾に / がない場合リダイレクト）
+        if os.path.isdir(folder_path):
+            if not path.endswith('/'):
+                # フォルダの場合、末尾に / を追加してリダイレクト
+                return redirect(f'/{path}/')
 
-        # ファイルが存在するか確認
-        if os.path.isfile(file_path):
+            index_file = os.path.join(folder_path, "index.html")
+            if os.path.exists(index_file):
+                logging.info(f"Serving index.html from folder: {index_file}")
+                return send_from_directory(folder_path, "index.html")
+            else:
+                logging.warning(f"Folder or index.html not found for {path}: {index_file}")
+                return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
+        
+        # ファイルの場合
+        elif os.path.isfile(file_path):
             logging.info(f"Serving file from: {file_path}")
-            return send_from_directory(app.config['DATA_FOLDER'], filepath)
+            return send_from_directory(app.config['DATA_FOLDER'], path)
+        
+        # ファイルやフォルダが見つからない場合
         else:
-            logging.error(f"File not found: {file_path}")
-            return jsonify({"status": "error", "message": "File not found"}), 404
+            logging.error(f"Not found: {file_path}")
+            return jsonify({"status": "error", "message": "Not found"}), 404
 
     # auto_updateスレッドを開始する部分
     if auto_update:
