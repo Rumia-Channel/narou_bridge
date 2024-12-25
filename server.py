@@ -158,8 +158,13 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
             logging.error(f"Unauthorized access attempt: {e}")
             return jsonify({"status": "error", "message": "Access denied"}), 403
 
+        # ファイルの場合
+        if os.path.isfile(file_path):
+            logging.info(f"Serving file from: {file_path}")
+            return send_from_directory(app.config['DATA_FOLDER'], path)
+
         # フォルダの場合（末尾に / がない場合リダイレクト）
-        if os.path.isdir(folder_path):
+        elif os.path.isdir(folder_path):
             if not path.endswith('/'):
                 # フォルダの場合、末尾に / を追加してリダイレクト
                 return redirect(f'/{path}/')
@@ -171,11 +176,6 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
             else:
                 logging.warning(f"Folder or index.html not found for {path}: {index_file}")
                 return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
-        
-        # ファイルの場合
-        elif os.path.isfile(file_path):
-            logging.info(f"Serving file from: {file_path}")
-            return send_from_directory(app.config['DATA_FOLDER'], path)
         
         # ファイルやフォルダが見つからない場合
         else:
