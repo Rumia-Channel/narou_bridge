@@ -251,7 +251,7 @@ def load_config():
         os.makedirs(log_path)
 
     print("Initialize successfully!")
-    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']),int(config['server']['proxy_port'])
+    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
 
 # clawler　フォルダ内のモジュールをインポート
 def import_modules(site_dic):
