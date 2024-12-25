@@ -64,6 +64,10 @@ def generate_request_id():
 
 # サーバー起動後に自動的に更新する処理
 def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl):
+
+    #サーバーが起動しきるまで待機
+    time.sleep(30)
+
     """auto_updateが有効な場合、指定された間隔で定期的にupdate_param=allをPOSTする"""
     while True:
         if auto_update:
@@ -296,11 +300,16 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
     return app
 
 # エクスポートされる関数
-def http_run(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain):
-    app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain)
+def http_run(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, ssl_crt, ssl_key, port, domain):
 
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
-    server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
+    if use_ssl:
+        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, 443, domain)
+        server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': 443, 'ssl_context': (ssl_crt, ssl_key)})
+    else:
+        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain)
+        server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
+    
     server_thread.daemon = True
     server_thread.start()
 
