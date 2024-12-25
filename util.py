@@ -185,6 +185,10 @@ def create_index(data_path, config, post_path=''):
         
         f.write('<br><br><br>\n')
 
+        # config['crawler']内のキーを使った動的リンクの生成（オプション）
+        for key in config['crawler']:
+            f.write(f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>\n')
+
         f.write('</body>\n')
         f.write('</html>\n')
 
