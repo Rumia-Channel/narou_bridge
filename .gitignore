@@ -12,6 +12,7 @@ wheels/
 data
 cookie
 log
+setting
 *.json
 *.html
 *.js

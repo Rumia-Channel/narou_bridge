@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import importlib
 import configparser
 from datetime import datetime
@@ -185,6 +186,10 @@ def create_index(data_path, config, post_path=''):
         
         f.write('<br><br><br>\n')
 
+        # config['crawler']内のキーを使った動的リンクの生成（オプション）
+        for key in config['crawler']:
+            f.write(f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>\n')
+
         f.write('</body>\n')
         f.write('</html>\n')
 
@@ -196,9 +201,14 @@ def load_config():
     folder_path = {}
     cookie_path = {}
 
+    if not os.path.isdir('setting'):
+        os.makedirs('setting')
+        # config.ini を config フォルダ内にコピー
+        shutil.copy('setting.ini', 'setting/setting.ini')
+
     # 設定の読み込み
     config = configparser.ConfigParser()
-    config.read('setting.ini')
+    config.read('setting/setting.ini')
 
     # Get the path from the data key
     data_path = config['setting']['data']
@@ -241,7 +251,7 @@ def load_config():
         os.makedirs(log_path)
 
     print("Initialize successfully!")
-    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, int(config['server']['key']), int(config['server']['ssl']), int(config['server']['port']), config['server']['domain']
+    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
 
 # clawler　フォルダ内のモジュールをインポート
 def import_modules(site_dic):
