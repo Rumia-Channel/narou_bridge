@@ -637,6 +637,8 @@ def dl_series(series_id, folder_path, key_data, update):
 
     cn.narou_gen(novel, os.path.join(series_path), key_data, data_folder, host)
     print("")
+    #仕上げ処理(indexファイルの更新)
+    gen_pixiv_index(folder_path, key_data)
 
 #短編のダウンロードに関する処理
 def dl_novel(json_data, novel_id, folder_path, key_data):
@@ -717,6 +719,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 
     cn.narou_gen(novel, novel_path, key_data, data_folder, host)
     print("")
+    #仕上げ処理(indexファイルの更新)
+    gen_pixiv_index(folder_path, key_data)
 
 #ユーザーページからのダウンロード
 def dl_user(user_id, folder_path, key_data, update):
@@ -860,9 +864,6 @@ def download(url, folder_path, key_data, data_path, host_name):
     else:
         logging.error(f'Error: "{url}" is not a valid URL')
         return
-    
-    #仕上げ処理(indexファイルの更新)
-    gen_pixiv_index(folder_path, key_data)
 
     logging.info("Download Complete")
 
