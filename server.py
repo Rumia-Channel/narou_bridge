@@ -10,7 +10,7 @@ import requests
 import threading
 import queue
 
-from flask import Flask, request, jsonify, abort, send_from_directory, Response, redirect
+from flask import Flask, request, jsonify, abort, send_from_directory, Response, redirect, url_for
 
 #ログを保存
 import logging
