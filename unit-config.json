@@ -1,0 +1,16 @@
+{
+    "listeners": {
+        "*:8000": {
+            "pass": "applications/narou_bridge"
+        }
+    },
+    "applications": {
+        "narou_bridge": {
+            "type": "python",
+            "path": "/path/to/your/rye/project",
+            "home": "/path/to/your/rye/project/.venv",
+            "module": "with_nginx",
+            "callable": "app"
+        }
+    }
+}
