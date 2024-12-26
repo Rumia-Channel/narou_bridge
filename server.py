@@ -10,7 +10,7 @@ import requests
 import threading
 import queue
 
-from flask import Flask, request, jsonify, abort, send_from_directory, Response
+from flask import Flask, request, jsonify, abort, send_from_directory, Response, redirect, url_for
 
 #ログを保存
 import logging
@@ -63,14 +63,24 @@ def generate_request_id():
     return ''.join(replace_char(c) for c in request_id_template)
 
 # サーバー起動後に自動的に更新する処理
-def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl):
+def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, use_proxy, proxy_port, proxy_ssl):
+
+    #サーバーが起動しきるまで待機
+    time.sleep(30)
+
     """auto_updateが有効な場合、指定された間隔で定期的にupdate_param=allをPOSTする"""
     while True:
         if auto_update:
             logging.info("Sending auto-update request with update_param=all")
             try:
-                # SSL対応のURLを設定
-                url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:{port}/api/"
+                if use_proxy:
+                     # SSL対応のURLを設定
+                    url = f"https://{domain}:{proxy_port}/api/" if proxy_ssl else f"http://{domain}:{proxy_port}/api/"
+                else:
+                    # SSL対応のURLを設定
+                    url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:{port}/api/"
+
+               
                 # POSTリクエストのデータ
                 payload = {
                     "update": "all",
@@ -92,28 +102,34 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl):
         # 指定されたインターバルでスリープ
         time.sleep(auto_update_interval)
 
-def create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain):
+def create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl):
     setup_logging(log_path)
     logging.debug(f"サーバー起動")
 
-    app = Flask(__name__, static_folder=data_path)  # data_path を静的ファイルのルートとして設定
-
-    # 静的ファイルのルートを設定（data_path をルートとして）
+    app = Flask(__name__)
     app.config['DATA_FOLDER'] = data_path
-
-    # 静的ファイルのデバッグを有効にする
-    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # 開発時にキャッシュを無効化
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # キャッシュ無効化（開発用）
     app.config['TEMPLATES_AUTO_RELOAD'] = True
+    app.url_map.strict_slashes = True  # スラッシュの有無に関わらず対応
+
+    # セキュリティ: ファイルパスを正規化し、安全性を確保
+    def secure_path(requested_path):
+        abs_data_folder = os.path.abspath(app.config['DATA_FOLDER'])
+        abs_requested_path = os.path.abspath(requested_path)
+
+        if not abs_requested_path.startswith(abs_data_folder):
+            raise ValueError(f"Access to this path is outside of the allowed directory: {requested_path}")
+        return abs_requested_path
 
     @app.before_request
     def log_request():
-        """リクエストの前にパスをログに出力"""
+        """リクエストのログ出力"""
         logging.info(f"Request URL: {request.url}")
         logging.info(f"Request Path: {request.path}")
 
     @app.route('/', methods=["GET"])
     def serve_root():
-        """ルート / にアクセスされた場合、data_path 内の index.html を返す"""
+        """ルート (/) にアクセスされた場合、index.html を返す"""
         index_path = os.path.join(app.config['DATA_FOLDER'], "index.html")
         if os.path.exists(index_path):
             logging.info(f"Serving root index.html from: {index_path}")
@@ -122,23 +138,43 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
             logging.error(f"File not found: {index_path}")
             return jsonify({"status": "error", "message": "File not found"}), 404
 
-    @app.route('/<path:folder>', methods=["GET"])
-    def serve_folder(folder):
-        """指定されたフォルダ内の index.html を返す"""
-        folder_path = os.path.join(app.config['DATA_FOLDER'], folder)
-        index_path = os.path.join(folder_path, "index.html")
+    @app.route('/<path:path>', methods=["GET"])
+    def handle_request(path):
+        """指定されたパスがフォルダかファイルかを確認し、適切に処理"""
+        file_path = os.path.join(app.config['DATA_FOLDER'], path)
+        folder_path = os.path.join(app.config['DATA_FOLDER'], path)
 
-        # フォルダ内に index.html があるか確認
-        if os.path.isdir(folder_path) and os.path.exists(index_path):
-            logging.info(f"Serving index.html from: {index_path}")
-            return send_from_directory(folder_path, "index.html")
+        try:
+            # セキュアなパスか確認
+            secure_path(file_path)
+        except ValueError as e:
+            logging.error(f"Unauthorized access attempt: {e}")
+            return jsonify({"status": "error", "message": "Access denied"}), 403
+
+        if os.path.isfile(file_path):
+            logging.info(f"Serving file from: {file_path}")
+            return send_from_directory(app.config['DATA_FOLDER'], path)
+
+        elif os.path.isdir(folder_path):
+            if not path.endswith('/'):
+                # フォルダの場合、末尾に / を追加してリダイレクト
+                return redirect(url_for('handle_request', path=f'{path}/'))
+
+            index_file = os.path.join(folder_path, "index.html")
+            if os.path.exists(index_file):
+                logging.info(f"Serving index.html from folder: {index_file}")
+                return send_from_directory(folder_path, "index.html")
+            else:
+                logging.warning(f"Folder or index.html not found: {folder_path}")
+                return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
+
         else:
-            logging.warning(f"Folder or index.html not found for {folder}: {index_path}")
-            return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
+            logging.error(f"Not found: {file_path}")
+            return jsonify({"status": "error", "message": "Not found"}), 404
 
     # auto_updateスレッドを開始する部分
     if auto_update:
-        update_thread = threading.Thread(target=auto_update_task, args=(domain, port, auto_update, auto_update_interval, use_ssl))
+        update_thread = threading.Thread(target=auto_update_task, args=(domain, port, auto_update, auto_update_interval, use_ssl, use_proxy, proxy_port, proxy_ssl))
         update_thread.daemon = True
         update_thread.start()
 
@@ -165,7 +201,10 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
         key_data = ''
 
         # ホスト名の確定
-        host_name = f"https://{domain}:{port}" if use_ssl else f"http://{domain}:{port}"
+        if use_proxy:
+            host_name = f"https://{domain}:{proxy_port}" if proxy_ssl else f"http://{domain}:{proxy_port}"
+        else:
+            host_name = f"https://{domain}:{port}" if use_ssl else f"http://{domain}:{port}"
 
         try:
             # 更新処理
@@ -296,11 +335,16 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
     return app
 
 # エクスポートされる関数
-def http_run(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain):
-    app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain)
+def http_run(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl):
 
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
-    server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
+    if use_ssl:
+        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
+        server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port, 'ssl_context': (ssl_crt, ssl_key)})
+    else:
+        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
+        server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
+    
     server_thread.daemon = True
     server_thread.start()
 
