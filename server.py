@@ -78,12 +78,8 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, u
         if auto_update:
             logging.info("Sending auto-update request with update_param=all")
             try:
-                if use_proxy:
-                     # SSL対応のURLを設定
-                    url = f"https://{domain}:{proxy_port}/api/" if proxy_ssl else f"http://{domain}:{proxy_port}/api/"
-                else:
-                    # SSL対応のURLを設定
-                    url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:{port}/api/"
+                # SSL対応のURLを設定
+                url = f"https://127.0.0.1:{port}/api/" if use_ssl else f"http://127.0.0.1:{port}/api/"
 
                
                 # POSTリクエストのデータ
