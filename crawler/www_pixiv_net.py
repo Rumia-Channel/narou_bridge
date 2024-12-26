@@ -734,6 +734,27 @@ def dl_user(user_id, folder_path, key_data, update):
     if not user_all_novels and not user_all_novel_series:
         logging.error("No novels or novel series found.")
         return
+     
+    user_json = os.path.join(folder_path, 'user.json')
+
+    # user.jsonファイルが存在するかどうか確認
+    if os.path.exists(user_json):
+        # 既存のデータを読み込む
+        with open(user_json, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    else:
+        # ファイルがない場合、空のデータを初期化
+        data = {}
+
+    # user_id が JSON のキーとして存在するか確認
+    if user_id not in data:
+        # user_id が存在しなければ "enable" を値として追加
+        data[user_id] = 'enable'
+
+    # 更新されたデータを再び user.json に書き込む
+    with open(user_json, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
     #シリーズIDの取得
     for ns in user_all_novel_series:
         user_novel_series.append(ns.get('id'))
@@ -802,26 +823,6 @@ def dl_user(user_id, folder_path, key_data, update):
                 time.sleep(interval_sec)
                 g_count += 1
         dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
-
-    user_json = os.path.join(folder_path, 'user.json')
-
-    # user.jsonファイルが存在するかどうか確認
-    if os.path.exists(user_json):
-        # 既存のデータを読み込む
-        with open(user_json, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    else:
-        # ファイルがない場合、空のデータを初期化
-        data = {}
-
-    # user_id が JSON のキーとして存在するか確認
-    if user_id not in data:
-        # user_id が存在しなければ "enable" を値として追加
-        data[user_id] = 'enable'
-
-    # 更新されたデータを再び user.json に書き込む
-    with open(user_json, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
 
 #ダウンロード処理
 def download(url, folder_path, key_data, data_path, host_name):
