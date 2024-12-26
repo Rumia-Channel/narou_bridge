@@ -25,7 +25,7 @@ class NoNewlineFormatter(logging.Formatter):
         # 改行をスペースに置き換える
         return message.replace("\n", " ").replace("\r", " ")
 
-def setup_logging(log_path):
+def setup_logging(log_path, save_log):
     """ログ設定を初期化"""
     # 共通フォーマット
     common_format = '%(asctime)s - %(levelname)s - %(message)s'
@@ -34,14 +34,19 @@ def setup_logging(log_path):
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(logging.Formatter(common_format))
     
-    # ファイルログ（改行を除去）
-    file_handler = logging.FileHandler(os.path.join(log_path, 'server.log'), encoding='utf-8')
-    file_handler.setFormatter(NoNewlineFormatter(common_format))
-
+    # 初期化するハンドラのリスト
+    handlers = [console_handler]
+    
+    if save_log:
+        # ファイルログ（改行を除去）
+        file_handler = logging.FileHandler(os.path.join(log_path, 'server.log'), encoding='utf-8')
+        file_handler.setFormatter(NoNewlineFormatter(common_format))
+        handlers.append(file_handler)
+    
     # ログ設定
     logging.basicConfig(
         level=logging.DEBUG,  # DEBUGレベル以上を記録
-        handlers=[console_handler, file_handler]
+        handlers=handlers
     )
 
 def generate_request_id():
@@ -102,8 +107,8 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, u
         # 指定されたインターバルでスリープ
         time.sleep(auto_update_interval)
 
-def create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl):
-    setup_logging(log_path)
+def create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl):
+    setup_logging(log_path, save_log)
     logging.debug(f"サーバー起動")
 
     app = Flask(__name__)
@@ -335,14 +340,14 @@ def create_app(config, reload_time, auto_update, interval, auto_update_interval,
     return app
 
 # エクスポートされる関数
-def http_run(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl):
+def http_run(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl):
 
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
     if use_ssl:
-        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
+        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port, 'ssl_context': (ssl_crt, ssl_key)})
     else:
-        app = create_app(config, reload_time, auto_update, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
+        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
     
     server_thread.daemon = True
