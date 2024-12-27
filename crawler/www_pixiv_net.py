@@ -80,7 +80,7 @@ def gen_pixiv_index(folder_path ,key_data):
         for folder, info in pairs.items():
             f.write(f'''<tr><td>{info["type"]}</td>
                         <td class="text"><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
-                        <td class="text"><a href="https://www.pixiv.net/users/{info["author_id"]}">{info["author"]}</a></td>
+                        <td class="text"><a href="https://www.pixiv.net/users/{info["author_id"]}" target="_blank">{info["author"]}</a></td>
                         <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
                         <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
         
@@ -615,6 +615,7 @@ def dl_series(series_id, folder_path, key_data, update):
         'id': series_id,
         'url': f"https://www.pixiv.net/novel/series/{series_id}",
         'author': series_author,
+        'author_id': series_author_id,
         'author_url': f"https://www.pixiv.net/users/{series_author_id}",
         'caption': series_caption,
         'total_episodes': len(episode),
@@ -698,6 +699,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         'id': novel_id,
         'url': f"https://www.pixiv.net/novel/show.php?id={novel_id}",
         'author': novel_author,
+        'author_id': novel_author_id,
         'author_url': f"https://www.pixiv.net/users/{novel_author_id}",
         'caption': novel_caption,
         'total_episodes': 1,
