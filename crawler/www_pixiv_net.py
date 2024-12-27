@@ -87,8 +87,8 @@ def gen_pixiv_index(folder_path ,key_data):
             <button id="restoreUserButton">戻す</button>
         </div>\n''')
 
-        # 非表示ユーザーリスト（折りたたみメニュー）
-        f.write('''<div style="text-align: right; margin-top: 20px;">
+        # 非表示ユーザーリスト（IDと著者名、戻すボタンを含む）
+        f.write('''<div style="margin-top: 20px;">
             <button id="toggleHiddenUsers">非表示ユーザーを表示</button>
             <ul id="hiddenUsersList" style="display: none;"></ul>
         </div>\n''')
@@ -137,7 +137,8 @@ def gen_pixiv_index(folder_path ,key_data):
 
                     // 非表示ユーザーリストに表示
                     var listItem = document.createElement('li');
-                    listItem.textContent = userId;
+                    var userName = rows[0].cells[2].querySelector('a').textContent;  // 著者名を取得
+                    listItem.innerHTML = `${userId} - ${userName} <button class="restoreButton" data-author-id="${userId}">戻す</button>`;
                     hiddenUsersList.appendChild(listItem);
                 });
 
@@ -177,6 +178,27 @@ def gen_pixiv_index(folder_path ,key_data):
                 }
             });
 
+            // 戻すボタンのイベントリスナー
+            hiddenUsersList.addEventListener('click', function(event) {
+                if (event.target.classList.contains('restoreButton')) {
+                    const userId = event.target.getAttribute('data-author-id');
+                    let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
+
+                    // 非表示ユーザーリストから該当ユーザーIDを削除
+                    hiddenUsers = hiddenUsers.filter(id => id !== userId);
+                    localStorage.setItem('hiddenUsers', JSON.stringify(hiddenUsers));
+
+                    // 非表示リストから該当リストアイテムを削除
+                    event.target.parentElement.remove();
+
+                    // 非表示にしていたユーザーの行を再表示
+                    var rows = document.querySelectorAll('.author-' + userId);
+                    rows.forEach(function(row) {
+                        row.style.display = '';
+                    });
+                }
+            });
+
             // 保存ボタンのイベント
             document.getElementById('saveButton').addEventListener('click', () => {
                 const inputValue = document.getElementById('maxLengthInput').value;
@@ -203,8 +225,9 @@ def gen_pixiv_index(folder_path ,key_data):
 
                         // 非表示ユーザーリストに追加
                         var hiddenUsersList = document.getElementById('hiddenUsersList');
+                        var userName = rows[0].cells[2].querySelector('a').textContent;  // 著者名を取得
                         var listItem = document.createElement('li');
-                        listItem.textContent = userId;
+                        listItem.innerHTML = `${userId} - ${userName} <button class="restoreButton" data-author-id="${userId}">戻す</button>`;
                         hiddenUsersList.appendChild(listItem);
 
                         // フォームリセット
@@ -218,12 +241,16 @@ def gen_pixiv_index(folder_path ,key_data):
                 var userId = document.getElementById('restoreUserId').value;
                 if (userId) {
                     let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
-                    let index = hiddenUsers.indexOf(userId);
-                    if (index > -1) {
-                        hiddenUsers.splice(index, 1);
+                    if (hiddenUsers.includes(userId)) {
+                        hiddenUsers = hiddenUsers.filter(id => id !== userId);
                         localStorage.setItem('hiddenUsers', JSON.stringify(hiddenUsers));
 
-                        // 該当のユーザー行を表示
+                        // 非表示ユーザーリストから削除
+                        var hiddenUsersList = document.getElementById('hiddenUsersList');
+                        const listItem = hiddenUsersList.querySelector(`li button[data-author-id="${userId}"]`).parentNode;
+                        hiddenUsersList.removeChild(listItem);
+
+                        // 非表示にしていた行を再表示
                         var rows = document.querySelectorAll('.author-' + userId);
                         rows.forEach(function(row) {
                             row.style.display = '';
@@ -245,9 +272,9 @@ def gen_pixiv_index(folder_path ,key_data):
                 }
             });
 
-            // 非表示ユーザーリストを表示/非表示
+            // 非表示ユーザーを表示/非表示切り替え
             document.getElementById('toggleHiddenUsers').addEventListener('click', function() {
-                var hiddenUsersList = document.getElementById('hiddenUsersList');
+                const hiddenUsersList = document.getElementById('hiddenUsersList');
                 if (hiddenUsersList.style.display === 'none') {
                     hiddenUsersList.style.display = 'block';
                     this.textContent = '非表示ユーザーを隠す';
@@ -256,7 +283,7 @@ def gen_pixiv_index(folder_path ,key_data):
                     this.textContent = '非表示ユーザーを表示';
                 }
             });
-
+                
             // コピー機能
             document.querySelectorAll('.copyButton').forEach(function(button) {
                 button.addEventListener('click', function() {
