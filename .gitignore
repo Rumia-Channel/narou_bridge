@@ -13,6 +13,7 @@ data
 cookie
 log
 setting
+queue
 *.json
 *.html
 *.js

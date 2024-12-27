@@ -221,14 +221,20 @@ def load_config():
     cookie_folder = config['setting']['cookie']
 
     # 指定されないならカレントディレクトリ
-    if not cookie_folder:
+    if not cookie_folder or os.path.exists(cookie_folder):
         cookie_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookie')
 
     log_path = config['setting']['log']
 
     # 指定されないならカレントディレクトリ
-    if not log_path:
+    if not log_path or os.path.exists(log_path):
         log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
+
+    queue_path = config['setting']['queue']
+
+    # 指定されないならカレントディレクトリ
+    if not queue_path or os.path.exists(queue_path):
+        queue_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'queue')
 
     # ないなら作れdataフォルダ
     if not os.path.exists(data_path):
@@ -250,8 +256,12 @@ def load_config():
     if not os.path.exists(log_path):
         os.makedirs(log_path)
 
+    # キューフォルダがないなら作成
+    if not os.path.exists(queue_path):
+        os.makedirs(queue_path)
+
     print("Initialize successfully!")
-    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['save_log']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
+    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['save_log']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
 
 # clawler　フォルダ内のモジュールをインポート
 def import_modules(site_dic):
