@@ -33,11 +33,12 @@ def gen_pixiv_index(folder_path ,key_data):
                 data = json.load(f)
                 title = data.get('title', 'No title found')
                 author = data.get('author', 'No author found')
-                author_id = data.get('author_url', 'No author_id found').replace('https://www.pixiv.net/users/', '')
+                author_id = data.get('author_id', 'No author_id found')
+                author_url = data.get('author_url', 'No author_url found')
                 create_date = data.get('createDate', 'No create date found')
                 update_date = data.get('updateDate', 'No update date found')
                 type = data.get('type', 'No type found')
-                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id,'type': type, 'create_date': create_date, 'update_date': update_date}
+                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'type': type, 'create_date': create_date, 'update_date': update_date}
         else:
             #print(f"raw.json not found in {folder}")
             #return
@@ -62,7 +63,7 @@ def gen_pixiv_index(folder_path ,key_data):
         f.write('</style>\n')
         f.write('</head>\n')
         f.write('<body>\n')
-        
+
         # 戻るリンク
         f.write(f'<a href="../{key_data}">戻る</a>\n')
 
@@ -72,25 +73,45 @@ def gen_pixiv_index(folder_path ,key_data):
             <button id="saveButton">保存</button>
         </div>\n''')
 
+        # 非表示にするユーザーID入力欄とボタン
+        f.write('''<div style="text-align: right; margin-top: 20px;">
+            <label for="hideUserId">非表示にするユーザーID:</label>
+            <input type="text" id="hideUserId" placeholder="ユーザーIDを入力" style="width: 200px;" />
+            <button id="hideUserButton">非表示にする</button>
+        </div>\n''')
+
+        # 非表示から戻すユーザーID入力欄とボタン
+        f.write('''<div style="text-align: right; margin-top: 20px;">
+            <label for="restoreUserId">戻すユーザーID:</label>
+            <input type="text" id="restoreUserId" placeholder="ユーザーIDを入力" style="width: 200px;" />
+            <button id="restoreUserButton">戻す</button>
+        </div>\n''')
+
+        # 非表示ユーザーリスト（折りたたみメニュー）
+        f.write('''<div style="text-align: right; margin-top: 20px;">
+            <button id="toggleHiddenUsers">非表示ユーザーを表示</button>
+            <ul id="hiddenUsersList" style="display: none;"></ul>
+        </div>\n''')
+
         f.write('<h1>Pixiv 小説一覧</h1>\n')
         f.write('<table>\n')
         f.write('<tr><th>掲載タイプ</th><th>タイトル</th><th>作者名</th><th>掲載日時</th><th>更新日時</th></tr>\n')
-        
-        # 各行のデータ出力
+
+        # 各行のデータ出力（author_idをclassとして扱う）
         for folder, info in pairs.items():
-            f.write(f'''<tr><td>{info["type"]}</td>
+            author_id = info["author_id"]
+            f.write(f'''<tr class="author-{author_id}"><td>{info["type"]}</td>
                         <td class="text"><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
-                        <td class="text"><a href="https://www.pixiv.net/users/{info["author_id"]}" target="_blank">{info["author"]}</a></td>
+                        <td class="text"><a href="{info["author_url"]}" target="_blank">{info["author"]}</a>　<button class="copyButton" data-author-id="{author_id}">IDのコピー</button></td>
                         <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
                         <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
-        
+
         f.write('</table>\n')
-        
-        # JavaScriptによる折り返し処理
+
+        # JavaScriptによる処理
         f.write("""<script>
             // テキスト折り返し関数
             const wrapTextByLength = (text, maxLength) => {
-                // 指定した長さでテキストを分割し、<br>タグで改行を追加
                 return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
             };
 
@@ -100,9 +121,34 @@ def gen_pixiv_index(folder_path ,key_data):
             // 数値入力欄にローカルストレージの値を表示
             document.getElementById('maxLengthInput').value = maxLength;
 
+            // ページロード時に非表示ユーザーを確認して非表示にする
+            document.addEventListener('DOMContentLoaded', function() {
+                // localStorage から非表示ユーザーを取得
+                let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
+
+                // 非表示ユーザーをリストに追加
+                let hiddenUsersList = document.getElementById('hiddenUsersList');
+                hiddenUsers.forEach(function(userId) {
+                    // 非表示にするユーザーIDがあれば、行を非表示にする
+                    var rows = document.querySelectorAll('.author-' + userId);
+                    rows.forEach(function(row) {
+                        row.style.display = 'none';
+                    });
+
+                    // 非表示ユーザーリストに表示
+                    var listItem = document.createElement('li');
+                    listItem.textContent = userId;
+                    hiddenUsersList.appendChild(listItem);
+                });
+
+                // 非表示ユーザーリストが空でない場合、ボタンを更新
+                if (hiddenUsers.length > 0) {
+                    document.getElementById('toggleHiddenUsers').style.display = 'block';
+                }
+            });
+
             // テーブル内の特定の列を対象に折り返し処理を適用
             document.querySelectorAll('table tr').forEach(row => {
-                // タイトル列（2列目）と作者名列（3列目）を取得
                 const titleCell = row.cells[1];
                 const authorCell = row.cells[2];
 
@@ -135,15 +181,98 @@ def gen_pixiv_index(folder_path ,key_data):
             document.getElementById('saveButton').addEventListener('click', () => {
                 const inputValue = document.getElementById('maxLengthInput').value;
                 if (inputValue && inputValue > 0) {
-                    // 新しい文字数をローカルストレージに保存
                     localStorage.setItem('maxLength', inputValue);
-
-                    // 保存後、ページをリロードして変更を適用
                     location.reload();
                 }
             });
-        </script>""")
-        
+
+            // 非表示にするユーザーIDを追加
+            document.getElementById('hideUserButton').addEventListener('click', function() {
+                var userId = document.getElementById('hideUserId').value;
+                if (userId) {
+                    let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
+                    if (!hiddenUsers.includes(userId)) {
+                        hiddenUsers.push(userId);
+                        localStorage.setItem('hiddenUsers', JSON.stringify(hiddenUsers));
+
+                        // 該当のユーザー行を非表示
+                        var rows = document.querySelectorAll('.author-' + userId);
+                        rows.forEach(function(row) {
+                            row.style.display = 'none';
+                        });
+
+                        // 非表示ユーザーリストに追加
+                        var hiddenUsersList = document.getElementById('hiddenUsersList');
+                        var listItem = document.createElement('li');
+                        listItem.textContent = userId;
+                        hiddenUsersList.appendChild(listItem);
+
+                        // フォームリセット
+                        document.getElementById('hideUserId').value = '';
+                    }
+                }
+            });
+
+            // 非表示から戻すユーザーIDを追加
+            document.getElementById('restoreUserButton').addEventListener('click', function() {
+                var userId = document.getElementById('restoreUserId').value;
+                if (userId) {
+                    let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
+                    let index = hiddenUsers.indexOf(userId);
+                    if (index > -1) {
+                        hiddenUsers.splice(index, 1);
+                        localStorage.setItem('hiddenUsers', JSON.stringify(hiddenUsers));
+
+                        // 該当のユーザー行を表示
+                        var rows = document.querySelectorAll('.author-' + userId);
+                        rows.forEach(function(row) {
+                            row.style.display = '';
+                        });
+
+                        // 非表示ユーザーリストから削除
+                        var hiddenUsersList = document.getElementById('hiddenUsersList');
+                        var listItems = hiddenUsersList.getElementsByTagName('li');
+                        for (let item of listItems) {
+                            if (item.textContent.includes(userId)) {
+                                hiddenUsersList.removeChild(item);
+                                break;
+                            }
+                        }
+
+                        // フォームリセット
+                        document.getElementById('restoreUserId').value = '';
+                    }
+                }
+            });
+
+            // 非表示ユーザーリストを表示/非表示
+            document.getElementById('toggleHiddenUsers').addEventListener('click', function() {
+                var hiddenUsersList = document.getElementById('hiddenUsersList');
+                if (hiddenUsersList.style.display === 'none') {
+                    hiddenUsersList.style.display = 'block';
+                    this.textContent = '非表示ユーザーを隠す';
+                } else {
+                    hiddenUsersList.style.display = 'none';
+                    this.textContent = '非表示ユーザーを表示';
+                }
+            });
+
+            // コピー機能
+            document.querySelectorAll('.copyButton').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    var authorId = button.getAttribute('data-author-id'); // ユーザーIDを取得
+                    if (authorId) {
+                        // クリップボードにコピー
+                        navigator.clipboard.writeText(authorId).then(function() {
+                            alert('ユーザーIDをコピーしました: ' + authorId);
+                        }).catch(function(err) {
+                            console.error('コピー失敗:', err);
+                        });
+                    }
+                });
+            });
+        </script>\n""")
+
         f.write('</body>\n')
         f.write('</html>\n')
 
