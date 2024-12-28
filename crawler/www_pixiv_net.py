@@ -1,6 +1,5 @@
 import re
 import os
-import shutil
 import requests
 from urllib.parse import unquote
 import json
@@ -20,141 +19,6 @@ from tqdm import tqdm
 #共通の処理
 import crawler.common as cm
 import crawler.convert_narou as cn
-
-def gen_pixiv_index(folder_path ,key_data):
-    subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
-    pairs = {}
-    no_raw = []
-    # 各サブフォルダの raw/raw.json を読み込む
-    for folder in subfolders:
-        json_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
-        if os.path.exists(json_path):
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                title = data.get('title', 'No title found')
-                author = data.get('author', 'No author found')
-                author_id = data.get('author_url', 'No author_id found').replace('https://www.pixiv.net/users/', '')
-                create_date = data.get('createDate', 'No create date found')
-                update_date = data.get('updateDate', 'No update date found')
-                type = data.get('type', 'No type found')
-                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id,'type': type, 'create_date': create_date, 'update_date': update_date}
-        else:
-            #print(f"raw.json not found in {folder}")
-            #return
-            shutil.rmtree(os.path.join(folder_path, folder))
-            no_raw.append(folder)
-            continue
-    
-    pairs = dict(sorted(pairs.items(), key=lambda item: item[1]['author']))
-
-    # index.html の生成
-    with open(os.path.join(folder_path, 'index.html'), 'w', encoding='utf-8') as f:
-        f.write('<!DOCTYPE html>\n')
-        f.write('<html lang="ja">\n')
-        f.write('<head>\n')
-        f.write('<meta charset="UTF-8">\n')
-        f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write('<title>Pixiv Index</title>\n')
-        # CSS追加
-        f.write('<style>\n')
-        f.write('table { width: 100%; border-collapse: collapse; }\n')
-        f.write('th, td { border: 1px solid #ccc; padding: 8px; text-align: left; overflow-wrap: break-word; word-wrap: break-word; }\n')
-        f.write('</style>\n')
-        f.write('</head>\n')
-        f.write('<body>\n')
-        
-        # 戻るリンク
-        f.write(f'<a href="../{key_data}">戻る</a>\n')
-
-        # 右寄せで数値入力欄とボタン
-        f.write('''<div style="text-align: right; margin-top: 10px;">
-            折り返し文字数 <input type="number" id="maxLengthInput" value="10" min="1" style="width: 60px;" />
-            <button id="saveButton">保存</button>
-        </div>\n''')
-
-        f.write('<h1>Pixiv 小説一覧</h1>\n')
-        f.write('<table>\n')
-        f.write('<tr><th>掲載タイプ</th><th>タイトル</th><th>作者名</th><th>掲載日時</th><th>更新日時</th></tr>\n')
-        
-        # 各行のデータ出力
-        for folder, info in pairs.items():
-            f.write(f'''<tr><td>{info["type"]}</td>
-                        <td class="text"><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
-                        <td class="text"><a href="https://www.pixiv.net/users/{info["author_id"]}">{info["author"]}</a></td>
-                        <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
-                        <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
-        
-        f.write('</table>\n')
-        
-        # JavaScriptによる折り返し処理
-        f.write("""<script>
-            // テキスト折り返し関数
-            const wrapTextByLength = (text, maxLength) => {
-                // 指定した長さでテキストを分割し、<br>タグで改行を追加
-                return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
-            };
-
-            // localStorageから折り返し文字数を取得し、なければデフォルト（10文字）を使用
-            let maxLength = localStorage.getItem('maxLength') || 10;
-
-            // 数値入力欄にローカルストレージの値を表示
-            document.getElementById('maxLengthInput').value = maxLength;
-
-            // テーブル内の特定の列を対象に折り返し処理を適用
-            document.querySelectorAll('table tr').forEach(row => {
-                // タイトル列（2列目）と作者名列（3列目）を取得
-                const titleCell = row.cells[1];
-                const authorCell = row.cells[2];
-
-                if (titleCell) {
-                    // タイトルセル内のリンク部分を保持しつつ、テキストを折り返し
-                    const titleLink = titleCell.querySelector('a');
-                    const titleText = titleLink ? titleLink.textContent : titleCell.textContent;
-
-                    if (titleLink) {
-                        titleLink.innerHTML = wrapTextByLength(titleText, maxLength);
-                    } else {
-                        titleCell.innerHTML = wrapTextByLength(titleText, maxLength);
-                    }
-                }
-
-                if (authorCell) {
-                    // 作者名セル内のリンク部分を保持しつつ、テキストを折り返し
-                    const authorLink = authorCell.querySelector('a');
-                    const authorText = authorLink ? authorLink.textContent : authorCell.textContent;
-                    
-                    if (authorLink) {
-                        authorLink.innerHTML = wrapTextByLength(authorText, maxLength);
-                    } else {
-                        authorCell.innerHTML = wrapTextByLength(authorText, maxLength);
-                    }
-                }
-            });
-
-            // 保存ボタンのイベント
-            document.getElementById('saveButton').addEventListener('click', () => {
-                const inputValue = document.getElementById('maxLengthInput').value;
-                if (inputValue && inputValue > 0) {
-                    // 新しい文字数をローカルストレージに保存
-                    localStorage.setItem('maxLength', inputValue);
-
-                    // 保存後、ページをリロードして変更を適用
-                    location.reload();
-                }
-            });
-        </script>""")
-        
-        f.write('</body>\n')
-        f.write('</html>\n')
-
-    
-    with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
-        json.dump(pairs, f, ensure_ascii=False, indent=4)
-
-    if no_raw:
-        logging.warning(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.")
-
-    logging.info('目次の生成が完了しました')
 
 #初期化処理
 def init(cookie_path, is_login, interval):
@@ -439,8 +303,17 @@ def get_cover(raw_small_url, folder_path):
             #print(f"Save compleat!: {ep_cover}")
             return  # 成功したら終了
 
-    # 全てのURLが404だった場合
-    logging.error("Failed to download cover image.")
+    # 全てのURLが404だった場合小さいサイズの表紙を保存
+    response = cm.get_with_cookie(original_url, pixiv_cookie, pixiv_header)
+    if response is not None and response.status_code == 200:
+        file_extension = os.path.splitext(original_url)[1]
+        with open(os.path.join(folder_path, f'cover{file_extension}'), 'wb') as f:
+            f.write(response.content)
+        #print(f"Save compleat!: {original_url}")
+        return
+    
+    # どのURLもダウンロードに失敗した場合
+    logging.error(f"Failed to download cover image from: {original_url}")
 
 #チャプタータグの除去
 def remove_chapter_tag(data):
@@ -615,6 +488,7 @@ def dl_series(series_id, folder_path, key_data, update):
         'id': series_id,
         'url': f"https://www.pixiv.net/novel/series/{series_id}",
         'author': series_author,
+        'author_id': series_author_id,
         'author_url': f"https://www.pixiv.net/users/{series_author_id}",
         'caption': series_caption,
         'total_episodes': len(episode),
@@ -637,6 +511,8 @@ def dl_series(series_id, folder_path, key_data, update):
 
     cn.narou_gen(novel, os.path.join(series_path), key_data, data_folder, host)
     print("")
+    #仕上げ処理(indexファイルの更新)
+    cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
 #短編のダウンロードに関する処理
 def dl_novel(json_data, novel_id, folder_path, key_data):
@@ -696,6 +572,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         'id': novel_id,
         'url': f"https://www.pixiv.net/novel/show.php?id={novel_id}",
         'author': novel_author,
+        'author_id': novel_author_id,
         'author_url': f"https://www.pixiv.net/users/{novel_author_id}",
         'caption': novel_caption,
         'total_episodes': 1,
@@ -717,6 +594,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 
     cn.narou_gen(novel, novel_path, key_data, data_folder, host)
     print("")
+    #仕上げ処理(indexファイルの更新)
+    cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
 #ユーザーページからのダウンロード
 def dl_user(user_id, folder_path, key_data, update):
@@ -734,6 +613,27 @@ def dl_user(user_id, folder_path, key_data, update):
     if not user_all_novels and not user_all_novel_series:
         logging.error("No novels or novel series found.")
         return
+     
+    user_json = os.path.join(folder_path, 'user.json')
+
+    # user.jsonファイルが存在するかどうか確認
+    if os.path.exists(user_json):
+        # 既存のデータを読み込む
+        with open(user_json, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    else:
+        # ファイルがない場合、空のデータを初期化
+        data = {}
+
+    # user_id が JSON のキーとして存在するか確認
+    if user_id not in data:
+        # user_id が存在しなければ "enable" を値として追加
+        data[user_id] = 'enable'
+
+    # 更新されたデータを再び user.json に書き込む
+    with open(user_json, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
     #シリーズIDの取得
     for ns in user_all_novel_series:
         user_novel_series.append(ns.get('id'))
@@ -803,26 +703,6 @@ def dl_user(user_id, folder_path, key_data, update):
                 g_count += 1
         dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
 
-    user_json = os.path.join(folder_path, 'user.json')
-
-    # user.jsonファイルが存在するかどうか確認
-    if os.path.exists(user_json):
-        # 既存のデータを読み込む
-        with open(user_json, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    else:
-        # ファイルがない場合、空のデータを初期化
-        data = {}
-
-    # user_id が JSON のキーとして存在するか確認
-    if user_id not in data:
-        # user_id が存在しなければ "enable" を値として追加
-        data[user_id] = 'enable'
-
-    # 更新されたデータを再び user.json に書き込む
-    with open(user_json, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
 #ダウンロード処理
 def download(url, folder_path, key_data, data_path, host_name):
 
@@ -859,9 +739,6 @@ def download(url, folder_path, key_data, data_path, host_name):
     else:
         logging.error(f'Error: "{url}" is not a valid URL')
         return
-    
-    #仕上げ処理(indexファイルの更新)
-    gen_pixiv_index(folder_path, key_data)
 
     logging.info("Download Complete")
 
@@ -933,7 +810,7 @@ def update(folder_path, key_data, data_path, host_name):
             time.sleep(interval_sec)
             g_count += 1
     
-    gen_pixiv_index(folder_path, key_data)
+    cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
 #再ダウンロード処理
 def re_download(folder_path, key_data, data_path, host_name):
@@ -994,7 +871,7 @@ def re_download(folder_path, key_data, data_path, host_name):
             time.sleep(interval_sec)
             g_count += 1
     
-    gen_pixiv_index(folder_path, key_data)
+    cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
 #変換処理
 def convert(folder_path, key_data, data_path, host_name):
@@ -1011,4 +888,4 @@ def convert(folder_path, key_data, data_path, host_name):
                 raw_json_data = json.load(f)
             cn.narou_gen(raw_json_data, os.path.join(folder_path, i), key_data, data_folder, host)
 
-    gen_pixiv_index(folder_path, key_data)
+    cm.gen_site_index(folder_path, key_data, 'Pixiv')

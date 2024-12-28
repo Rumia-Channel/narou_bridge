@@ -223,7 +223,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('</head>\n')
         f.write('<body>\n')
         f.write(f'<a href="../{key_data}">戻る</a>\n')
-        f.write(f'<h1><a href="{data.get("url")}">{data.get("title")}</a></h1>\n')
+        f.write(f'<h1><a href="{data.get("url")}" target="_blank">{data.get("title")}</a></h1>\n')
         if data.get("type") == "短編":
             f.write(f'<div><span id="noveltype">短編</span></div>\n')
         else:
@@ -232,7 +232,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write(f'<tr><th class="ex">あらすじ</th><td class="ex">{data.get("caption")}</td></tr>\n')
         f.write('<tr>\n')
         f.write('<th>作者名</th>\n')
-        f.write(f'<td><a href="{data.get("author_url")}">{data.get("author")}</a></td>\n')
+        f.write(f'<td><a href="{data.get("author_url")}" target="_blank">{data.get("author")}</a></td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>掲載日</th>\n')

@@ -9,6 +9,7 @@ import requests
 
 import threading
 import queue
+import pickle
 
 from flask import Flask, request, jsonify, abort, send_from_directory, Response, redirect, url_for
 
@@ -78,12 +79,8 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, u
         if auto_update:
             logging.info("Sending auto-update request with update_param=all")
             try:
-                if use_proxy:
-                     # SSL対応のURLを設定
-                    url = f"https://{domain}:{proxy_port}/api/" if proxy_ssl else f"http://{domain}:{proxy_port}/api/"
-                else:
-                    # SSL対応のURLを設定
-                    url = f"https://{domain}:{port}/api/" if use_ssl else f"http://{domain}:{port}/api/"
+                # SSL対応のURLを設定
+                url = f"https://127.0.0.1:{port}/api/" if use_ssl else f"http://127.0.0.1:{port}/api/"
 
                
                 # POSTリクエストのデータ
@@ -107,7 +104,7 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, u
         # 指定されたインターバルでスリープ
         time.sleep(auto_update_interval)
 
-def create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl):
+def create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl):
     setup_logging(log_path, save_log)
     logging.debug(f"サーバー起動")
 
@@ -116,6 +113,9 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # キャッシュ無効化（開発用）
     app.config['TEMPLATES_AUTO_RELOAD'] = True
     app.url_map.strict_slashes = True  # スラッシュの有無に関わらず対応
+
+    # キューの保存先ファイルパス
+    JOB_FILE_PATH = os.path.join(queue_path, "queue.pkl")
 
     # セキュリティ: ファイルパスを正規化し、安全性を確保
     def secure_path(requested_path):
@@ -196,6 +196,29 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
     util.init_import(site_dic)
     util.create_index(data_path, config, 'api')
 
+    def save_queue_to_file(queue, lock):
+        """キューをファイルに保存する"""
+        with lock:  # ロックを取得してスレッドセーフに
+            with open(JOB_FILE_PATH, "wb") as f:
+                pickle.dump(list(queue.queue), f)  # キューの内容をリストとして保存
+            logging.info(f"Queue saved to {JOB_FILE_PATH}")
+
+    def load_queue_from_file(queue, lock):
+        """ファイルからキューを復元する"""
+        if not os.path.exists(JOB_FILE_PATH):
+            logging.info(f"No job file found at {JOB_FILE_PATH}. Starting with an empty queue.")
+            return
+        
+        with lock:  # ロックを取得してスレッドセーフに
+            with open(JOB_FILE_PATH, "rb") as f:
+                try:
+                    jobs = pickle.load(f)  # ファイルからリストを読み込む
+                    for job in jobs:
+                        queue.put(job)  # キューに復元
+                    logging.info(f"Queue restored from {JOB_FILE_PATH} with {len(jobs)} items.")
+                except Exception as e:
+                    logging.error(f"Failed to load queue from file: {e}")
+
     def process_request(req_data):
         """リクエストデータを順番に処理する関数"""
         add_param = req_data.get("add")
@@ -272,8 +295,17 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
             req_data = request_queue.get()  # キューからリクエストを取り出す
             if req_data is None:  # None が入った場合はスレッドを終了
                 break
+
+            # リクエストを処理
             process_request(req_data)
+
+            # 処理後にキューを保存
+            save_queue_to_file(request_queue, lock)
+
             request_queue.task_done()  # 処理が終わったら task_done を呼ぶ
+
+    # アプリ起動時にキューを復元
+    load_queue_from_file(request_queue, lock)
 
     # キュー処理用のスレッドを開始
     queue_thread = threading.Thread(target=process_queue)
@@ -333,6 +365,9 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
 
             request_queue.put(req_data)  # リクエストをキューに追加
 
+            # キューを保存
+            save_queue_to_file(request_queue, lock)
+
             return jsonify({"status": "queued", "request_id": request_id})
         else:
             return jsonify({"status": "stopped", "request_id": request_id})
@@ -340,14 +375,14 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
     return app
 
 # エクスポートされる関数
-def http_run(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl):
+def http_run(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl):
 
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
     if use_ssl:
-        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
+        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port, 'ssl_context': (ssl_crt, ssl_key)})
     else:
-        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
+        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
     
     server_thread.daemon = True
