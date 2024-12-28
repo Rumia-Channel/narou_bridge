@@ -1,9 +1,11 @@
 import os
+import shutil
 import json
 from jsondiff import diff
 import requests
 from requests.exceptions import RequestException, ConnectionError, Timeout
 import time
+from datetime import datetime
 
 #ログを保存
 import logging
@@ -103,3 +105,294 @@ def make_dir(id, folder_path):
         os.makedirs(f'{full_path}/raw')
     if not os.path.exists(f'{full_path}/info'):
         os.makedirs(f'{full_path}/info')
+
+def gen_site_index(folder_path ,key_data, site_name):
+    subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
+    pairs = {}
+    no_raw = []
+    # 各サブフォルダの raw/raw.json を読み込む
+    for folder in subfolders:
+        json_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
+        if os.path.exists(json_path):
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                title = data.get('title', 'No title found')
+                author = data.get('author', 'No author found')
+                author_id = data.get('author_id', 'No author_id found')
+                author_url = data.get('author_url', 'No author_url found')
+                create_date = data.get('createDate', 'No create date found')
+                update_date = data.get('updateDate', 'No update date found')
+                type = data.get('type', 'No type found')
+                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'type': type, 'create_date': create_date, 'update_date': update_date}
+        else:
+            #print(f"raw.json not found in {folder}")
+            #return
+            shutil.rmtree(os.path.join(folder_path, folder))
+            no_raw.append(folder)
+            continue
+    
+    pairs = dict(sorted(pairs.items(), key=lambda item: item[1]['author']))
+
+    # index.html の生成
+    with open(os.path.join(folder_path, 'index.html'), 'w', encoding='utf-8') as f:
+        f.write('<!DOCTYPE html>\n')
+        f.write('<html lang="ja">\n')
+        f.write('<head>\n')
+        f.write('<meta charset="UTF-8">\n')
+        f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
+        f.write(f'<title>{site_name} Index</title>\n')
+        # CSS追加
+        f.write('<style>\n')
+        f.write('table { width: 100%; border-collapse: collapse; }\n')
+        f.write('th, td { border: 1px solid #ccc; padding: 8px; text-align: left; overflow-wrap: break-word; word-wrap: break-word; }\n')
+        f.write('</style>\n')
+        f.write('</head>\n')
+        f.write('<body>\n')
+
+        # 戻るリンク
+        f.write(f'<a href="../{key_data}">戻る</a>\n')
+
+        # 右寄せで数値入力欄とボタン
+        f.write('''<div style="text-align: right; margin-top: 10px;">
+            折り返し文字数 <input type="number" id="maxLengthInput" value="10" min="1" style="width: 60px;" />
+            <button id="saveButton">保存</button>
+        </div>\n''')
+
+        # 非表示にするユーザーID入力欄とボタン
+        f.write('''<div style="text-align: right; margin-top: 20px;">
+            <label for="hideUserId">非表示にするユーザーID:</label>
+            <input type="text" id="hideUserId" placeholder="ユーザーIDを入力" style="width: 200px;" />
+            <button id="hideUserButton">非表示にする</button>
+        </div>\n''')
+
+        # 非表示から戻すユーザーID入力欄とボタン
+        f.write('''<div style="text-align: right; margin-top: 20px;">
+            <label for="restoreUserId">戻すユーザーID:</label>
+            <input type="text" id="restoreUserId" placeholder="ユーザーIDを入力" style="width: 200px;" />
+            <button id="restoreUserButton">戻す</button>
+        </div>\n''')
+
+        # 非表示ユーザーリスト（IDと著者名、戻すボタンを含む）
+        f.write('''<div style="margin-top: 20px;">
+            <button id="toggleHiddenUsers">非表示ユーザーを表示</button>
+            <ul id="hiddenUsersList" style="display: none;"></ul>
+        </div>\n''')
+
+        f.write(f'<h1>{site_name} 小説一覧</h1>\n')
+        f.write('<table>\n')
+        f.write('<tr><th>掲載タイプ</th><th>タイトル</th><th>作者名</th><th>掲載日時</th><th>更新日時</th></tr>\n')
+
+        # 各行のデータ出力（author_idをclassとして扱う）
+        for folder, info in pairs.items():
+            author_id = info["author_id"]
+            f.write(f'''<tr class="author-{author_id}"><td>{info["type"]}</td>
+                        <td class="text"><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
+                        <td class="text"><a href="{info["author_url"]}" target="_blank">{info["author"]}</a>　<button class="copyButton" data-author-id="{author_id}">IDのコピー</button></td>
+                        <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
+                        <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
+
+        f.write('</table>\n')
+
+        # JavaScriptによる処理
+        f.write("""<script>
+            // テキスト折り返し関数
+            const wrapTextByLength = (text, maxLength) => {
+                return text.match(new RegExp(`.{1,${maxLength}}`, 'g')).join('<br>');
+            };
+
+            // localStorageから折り返し文字数を取得し、なければデフォルト（10文字）を使用
+            let maxLength = localStorage.getItem('maxLength') || 10;
+
+            // 数値入力欄にローカルストレージの値を表示
+            document.getElementById('maxLengthInput').value = maxLength;
+
+            // ページロード時に非表示ユーザーを確認して非表示にする
+            document.addEventListener('DOMContentLoaded', function() {
+                // localStorage から非表示ユーザーを取得
+                let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
+
+                // 非表示ユーザーをリストに追加
+                let hiddenUsersList = document.getElementById('hiddenUsersList');
+                hiddenUsers.forEach(function(userId) {
+                    // 非表示にするユーザーIDがあれば、行を非表示にする
+                    var rows = document.querySelectorAll('.author-' + userId);
+                    rows.forEach(function(row) {
+                        row.style.display = 'none';
+                    });
+
+                    // 非表示ユーザーリストに表示
+                    var listItem = document.createElement('li');
+                    var userName = rows[0].cells[2].querySelector('a').textContent;  // 著者名を取得
+                    listItem.innerHTML = `${userId} - ${userName} <button class="restoreButton" data-author-id="${userId}">戻す</button>`;
+                    hiddenUsersList.appendChild(listItem);
+                });
+
+                // 非表示ユーザーリストが空でない場合、ボタンを更新
+                if (hiddenUsers.length > 0) {
+                    document.getElementById('toggleHiddenUsers').style.display = 'block';
+                }
+            });
+
+            // テーブル内の特定の列を対象に折り返し処理を適用
+            document.querySelectorAll('table tr').forEach(row => {
+                const titleCell = row.cells[1];
+                const authorCell = row.cells[2];
+
+                if (titleCell) {
+                    // タイトルセル内のリンク部分を保持しつつ、テキストを折り返し
+                    const titleLink = titleCell.querySelector('a');
+                    const titleText = titleLink ? titleLink.textContent : titleCell.textContent;
+
+                    if (titleLink) {
+                        titleLink.innerHTML = wrapTextByLength(titleText, maxLength);
+                    } else {
+                        titleCell.innerHTML = wrapTextByLength(titleText, maxLength);
+                    }
+                }
+
+                if (authorCell) {
+                    // 作者名セル内のリンク部分を保持しつつ、テキストを折り返し
+                    const authorLink = authorCell.querySelector('a');
+                    const authorText = authorLink ? authorLink.textContent : authorCell.textContent;
+                    
+                    if (authorLink) {
+                        authorLink.innerHTML = wrapTextByLength(authorText, maxLength);
+                    } else {
+                        authorCell.innerHTML = wrapTextByLength(authorText, maxLength);
+                    }
+                }
+            });
+
+            // 戻すボタンのイベントリスナー
+            hiddenUsersList.addEventListener('click', function(event) {
+                if (event.target.classList.contains('restoreButton')) {
+                    const userId = event.target.getAttribute('data-author-id');
+                    let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
+
+                    // 非表示ユーザーリストから該当ユーザーIDを削除
+                    hiddenUsers = hiddenUsers.filter(id => id !== userId);
+                    localStorage.setItem('hiddenUsers', JSON.stringify(hiddenUsers));
+
+                    // 非表示リストから該当リストアイテムを削除
+                    event.target.parentElement.remove();
+
+                    // 非表示にしていたユーザーの行を再表示
+                    var rows = document.querySelectorAll('.author-' + userId);
+                    rows.forEach(function(row) {
+                        row.style.display = '';
+                    });
+                }
+            });
+
+            // 保存ボタンのイベント
+            document.getElementById('saveButton').addEventListener('click', () => {
+                const inputValue = document.getElementById('maxLengthInput').value;
+                if (inputValue && inputValue > 0) {
+                    localStorage.setItem('maxLength', inputValue);
+                    location.reload();
+                }
+            });
+
+            // 非表示にするユーザーIDを追加
+            document.getElementById('hideUserButton').addEventListener('click', function() {
+                var userId = document.getElementById('hideUserId').value;
+                if (userId) {
+                    let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
+                    if (!hiddenUsers.includes(userId)) {
+                        hiddenUsers.push(userId);
+                        localStorage.setItem('hiddenUsers', JSON.stringify(hiddenUsers));
+
+                        // 該当のユーザー行を非表示
+                        var rows = document.querySelectorAll('.author-' + userId);
+                        rows.forEach(function(row) {
+                            row.style.display = 'none';
+                        });
+
+                        // 非表示ユーザーリストに追加
+                        var hiddenUsersList = document.getElementById('hiddenUsersList');
+                        var userName = rows[0].cells[2].querySelector('a').textContent;  // 著者名を取得
+                        var listItem = document.createElement('li');
+                        listItem.innerHTML = `${userId} - ${userName} <button class="restoreButton" data-author-id="${userId}">戻す</button>`;
+                        hiddenUsersList.appendChild(listItem);
+
+                        // フォームリセット
+                        document.getElementById('hideUserId').value = '';
+                    }
+                }
+            });
+
+            // 非表示から戻すユーザーIDを追加
+            document.getElementById('restoreUserButton').addEventListener('click', function() {
+                var userId = document.getElementById('restoreUserId').value;
+                if (userId) {
+                    let hiddenUsers = JSON.parse(localStorage.getItem('hiddenUsers')) || [];
+                    if (hiddenUsers.includes(userId)) {
+                        hiddenUsers = hiddenUsers.filter(id => id !== userId);
+                        localStorage.setItem('hiddenUsers', JSON.stringify(hiddenUsers));
+
+                        // 非表示ユーザーリストから削除
+                        var hiddenUsersList = document.getElementById('hiddenUsersList');
+                        const listItem = hiddenUsersList.querySelector(`li button[data-author-id="${userId}"]`).parentNode;
+                        hiddenUsersList.removeChild(listItem);
+
+                        // 非表示にしていた行を再表示
+                        var rows = document.querySelectorAll('.author-' + userId);
+                        rows.forEach(function(row) {
+                            row.style.display = '';
+                        });
+
+                        // 非表示ユーザーリストから削除
+                        var hiddenUsersList = document.getElementById('hiddenUsersList');
+                        var listItems = hiddenUsersList.getElementsByTagName('li');
+                        for (let item of listItems) {
+                            if (item.textContent.includes(userId)) {
+                                hiddenUsersList.removeChild(item);
+                                break;
+                            }
+                        }
+
+                        // フォームリセット
+                        document.getElementById('restoreUserId').value = '';
+                    }
+                }
+            });
+
+            // 非表示ユーザーを表示/非表示切り替え
+            document.getElementById('toggleHiddenUsers').addEventListener('click', function() {
+                const hiddenUsersList = document.getElementById('hiddenUsersList');
+                if (hiddenUsersList.style.display === 'none') {
+                    hiddenUsersList.style.display = 'block';
+                    this.textContent = '非表示ユーザーを隠す';
+                } else {
+                    hiddenUsersList.style.display = 'none';
+                    this.textContent = '非表示ユーザーを表示';
+                }
+            });
+                
+            // コピー機能
+            document.querySelectorAll('.copyButton').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    var authorId = button.getAttribute('data-author-id'); // ユーザーIDを取得
+                    if (authorId) {
+                        // クリップボードにコピー
+                        navigator.clipboard.writeText(authorId).then(function() {
+                            alert('ユーザーIDをコピーしました: ' + authorId);
+                        }).catch(function(err) {
+                            console.error('コピー失敗:', err);
+                        });
+                    }
+                });
+            });
+        </script>\n""")
+
+        f.write('</body>\n')
+        f.write('</html>\n')
+
+    
+    with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
+        json.dump(pairs, f, ensure_ascii=False, indent=4)
+
+    if no_raw:
+        logging.warning(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.")
+
+    logging.info('目次の生成が完了しました')
