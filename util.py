@@ -165,6 +165,49 @@ def create_index(data_path, config, post_path=''):
         f.write('  xhr.send("redownload=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
         f.write('}\n')
 
+        # submitPdfData関数
+        f.write('function submitPdfData() {\n')
+        f.write('  var pdfFile = document.getElementById("pdfFile").files[0];\n')
+        f.write('  var authorId = document.getElementById("authorId").value;\n')
+        f.write('  var authorUrl = document.getElementById("authorUrl").value;\n')
+        f.write('  var novelType = document.getElementById("novelType").value;\n')
+
+        # 入力チェック
+        f.write('  if (!pdfFile) {\n')
+        f.write('    alert("PDFファイルを選択してください。");\n')
+        f.write('    return;\n')
+        f.write('  }\n')
+        f.write('  if (!authorId || !authorUrl) {\n')
+        f.write('    alert("author_idとauthor_urlを入力してください。");\n')
+        f.write('    return;\n')
+        f.write('  }\n')
+
+        # POST処理
+        f.write('  var formData = new FormData();\n')
+        f.write('  formData.append("pdf", pdfFile);\n')
+        f.write('  formData.append("author_id", authorId);\n')
+        f.write('  formData.append("author_url", authorUrl);\n')
+        f.write('  formData.append("novel_type", novelType);\n')
+        f.write('  formData.append("request_id", generateRequestId());\n')
+
+        f.write('  var xhr = new XMLHttpRequest();\n')
+        f.write(f'  xhr.open("POST", "{post_url}", true);\n')
+        f.write('  xhr.onreadystatechange = function() {\n')
+        f.write('    if (xhr.readyState === 4) {\n')
+        f.write('      if (xhr.status === 200) {\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var successMsg = response.message || "リクエストは正常に送信されました";\n')
+        f.write('        showMessage("green", successMsg);\n')
+        f.write('      } else {\n')
+        f.write('        var response = JSON.parse(xhr.responseText);\n')
+        f.write('        var errorMsg = response.message || "エラーが発生しました";\n')
+        f.write('        showMessage("red", errorMsg);\n')
+        f.write('      }\n')
+        f.write('    }\n')
+        f.write('  };\n')
+        f.write('  xhr.send(formData);\n')
+        f.write('}\n')
+
         f.write('</script>\n')
         f.write('<title>Index</title>\n')
         f.write('</head>\n')
@@ -184,6 +227,26 @@ def create_index(data_path, config, post_path=''):
             f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n')
             f.write(f'<button onclick="submitReDownload(\'{key}\')">{key} 再ダウンロード</button>\n<br>')
         
+        # PDF選択ボタンとauthor_id, author_url入力テキストボックス、およびリストボックス
+        f.write('<br><br>\n')
+        f.write('<label for="pdfFile">PDFファイル選択:</label>\n')
+        f.write('<input type="file" id="pdfFile" accept="application/pdf">\n')
+        f.write('<br>\n')
+        f.write('<label for="authorId">author_id:</label>\n')
+        f.write('<input type="text" id="authorId" placeholder="author_id">\n')
+        f.write('<br>\n')
+        f.write('<label for="authorUrl">author_url:</label>\n')
+        f.write('<input type="text" id="authorUrl" placeholder="author_url">\n')
+        f.write('<br>\n')
+        f.write('<label for="novelType">作品タイプ:</label>\n')
+        f.write('<select id="novelType">\n')
+        f.write('<option value="1">完結</option>\n')
+        f.write('<option value="0">連載中</option>\n')
+        f.write('<option value="2">短編</option>\n')
+        f.write('</select>\n')
+        f.write('<br>\n')
+        f.write('<button onclick="submitPdfData()">送信</button>\n')
+
         f.write('<br><br><br>\n')
 
         # config['crawler']内のキーを使った動的リンクの生成（オプション）
@@ -236,6 +299,13 @@ def load_config():
     if not queue_path or os.path.exists(queue_path):
         queue_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'queue')
 
+    pdf_path = config['setting']['pdf']
+
+    # 指定されないならカレントディレクトリ
+    if not os.path.exists(pdf_path):
+        pdf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pdf')
+
+
     # ないなら作れdataフォルダ
     if not os.path.exists(data_path):
         os.makedirs(data_path)
@@ -260,8 +330,12 @@ def load_config():
     if not os.path.exists(queue_path):
         os.makedirs(queue_path)
 
+    # PDFフォルダがないなら作成
+    if not os.path.exists(pdf_path):
+        os.makedirs(pdf_path)
+
     print("Initialize successfully!")
-    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['save_log']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
+    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['save_log']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
 
 # clawler　フォルダ内のモジュールをインポート
 def import_modules(site_dic):
@@ -397,6 +471,13 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
     logging.info(f'URL: {add_param}')
     globals()[site].init(cookie_path[site], is_login, interval)
     globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
+
+#PDFファイルからテキストファイルへの変換
+def pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path, data_path, key_data, host_name):
+    # PDFファイルの読み込み
+    site = 'narou'
+    logging.info(f'Genelate HTML from PDF: {site}')
+    globals()[site].gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path[site], key_data, data_path, host_name)
 
 #リクエストIDの削除
 def cleanup_expired_requests(requests_dict, expiration_time):
