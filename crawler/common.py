@@ -10,6 +10,18 @@ from datetime import datetime
 #ログを保存
 import logging
 
+# 半角文字を全角文字に変換する関数
+def full_to_half(text):
+    # 全角文字を半角文字に変換する変換テーブル
+    fullwidth = '０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ！”＃＄％＆’（）＊＋，－．／：；＜＝＞？＠［＼］＾＿｀｛｜｝～'
+    halfwidth = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'
+    
+    # 全角から半角への変換テーブルを作成
+    translate_table = str.maketrans(fullwidth, halfwidth)
+    
+    # 変換を実行
+    return text.translate(translate_table)
+
 # Cookie とユーザーエージェントを返す
 def load_cookies_and_ua(input_file):
     

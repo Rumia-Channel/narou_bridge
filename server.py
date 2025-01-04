@@ -104,7 +104,7 @@ def auto_update_task(domain, port, auto_update, auto_update_interval, use_ssl, u
         # 指定されたインターバルでスリープ
         time.sleep(auto_update_interval)
 
-def create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl):
+def create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl):
     setup_logging(log_path, save_log)
     logging.debug(f"サーバー起動")
 
@@ -226,6 +226,11 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         convert_param = req_data.get("convert")
         re_download_param = req_data.get("re_download")
         request_id = req_data.get("request_id")
+        pdf_path = req_data.get("pdf_path")
+        pdf_name = req_data.get("pdf_name")
+        author_id = req_data.get("author_id")
+        author_url = req_data.get("author_url")
+        novel_type = req_data.get("novel_type")
         key_data = ''
 
         # ホスト名の確定
@@ -262,6 +267,13 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
             # ダウンロード処理
             elif add_param:
                 add_return = util.download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name)
+                if add_return == 400:
+                    return create_error_response(400, "Invalid add_param value")
+                else:
+                    return create_success_response("Download Complete")
+                
+            elif pdf_name:
+                add_return = util.pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path, data_path, key_data, host_name)
                 if add_return == 400:
                     return create_error_response(400, "Invalid add_param value")
                 else:
@@ -323,10 +335,23 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         update_param = request.form.get("update")
         convert_param = request.form.get("convert")
         re_download_param = request.form.get("re_download")
+        pdf_file = request.files.get('pdf')
+        author_id = request.form.get('author_id')
+        author_url = request.form.get('author_url')
+        novel_type = request.form.get("novel_type")
         request_id = request.form.get("request_id")
 
         if not request_id:
             return create_error_response(400, "Missing request_id")
+        
+        if pdf_file:
+            if not author_id or not author_url:
+                return create_error_response(400 ,"PDFファイル、author_id、または author_url が不足しています")
+            # PDFの保存例
+            pdf_file_name = str(request_id) + '.pdf'
+            pdf_file.save(os.path.join(pdf_path, pdf_file_name))
+        else:
+            pdf_file_name = None
 
         with lock:
 
@@ -345,6 +370,11 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                     "update": update_param,
                     "convert": convert_param,
                     "re_download": re_download_param,
+                    "pdf_path": pdf_path,
+                    "pdf_name": pdf_file_name,
+                    "author_id": author_id,
+                    "author_url": author_url,
+                    "novel_type": novel_type,
                 }
             }
 
@@ -360,6 +390,11 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                 "update": update_param,
                 "convert": convert_param,
                 "re_download": re_download_param,
+                "pdf_path": pdf_path,
+                "pdf_name": pdf_file_name,
+                "author_id": author_id,
+                "author_url": author_url,
+                "novel_type": novel_type,
                 "request_id": request_id,
             }
 
@@ -375,14 +410,14 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
     return app
 
 # エクスポートされる関数
-def http_run(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl):
+def http_run(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl):
 
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
     if use_ssl:
-        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
+        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port, 'ssl_context': (ssl_crt, ssl_key)})
     else:
-        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
+        app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
         server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
     
     server_thread.daemon = True
