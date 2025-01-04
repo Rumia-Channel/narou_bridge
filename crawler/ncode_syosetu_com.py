@@ -137,7 +137,7 @@ def save_text_details_to_json(pdf_path):
     # 最終ページ右半分から下から2番目にy座標が大きい文字列を抽出
     second_highest_line_text = extract_second_highest_group_line(last_details)
 
-    logging.info("PDF発行日:", second_highest_line_text)
+    logging.info(f"PDF発行日: {second_highest_line_text}")
 
     # JSON形式で保存
     return sorted_details, second_highest_line_text
@@ -340,7 +340,7 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type)
     
     novel_title, n_code, author, introduction = extract_details_from_introduction(full_texts[0])
 
-    ncode = cm.full_to_half(n_code)
+    ncode = cm.full_to_half(n_code).lower()
 
     # 現在の日付をUTC+9の形式で取得
     update_date = str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z'))
@@ -426,12 +426,26 @@ def gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, folder_p
 
     cm.make_dir(ncode, folder_path)
 
-    raw_path = os.path.join(folder_path, ncode, 'raw')
+    raw_path = os.path.join(folder_path, ncode, 'raw', 'raw.json')
+
+    i = 1
+
+    for key, value in results['episodes'].items():
+        os.makedirs(os.path.join(folder_path, ncode, str(i)), exist_ok=True)
+        i += 1
 
     cm.save_raw_diff(raw_path, os.path.join(folder_path, ncode), results)
+
+    with open(raw_path, 'w', encoding='utf-8') as file:
+        json.dump(results, file, ensure_ascii=False, indent=4)
+
     cn.narou_gen(results, os.path.join(folder_path, ncode), key_data, data_path, host_name)
+
+    cm.gen_site_index(folder_path, key_data, '小説家になろう')
+
+    os.remove(pdf_file)
     
-    logging.debug(f"Generated {ncode} from PDF file")
+    logging.info(f"Generated {ncode} from PDF file")
 
 ## 使用例
 #if __name__ == "__main__":
