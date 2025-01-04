@@ -236,6 +236,13 @@ def load_config():
     if not queue_path or os.path.exists(queue_path):
         queue_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'queue')
 
+    pdf_path = config['setting']['pdf']
+
+    # 指定されないならカレントディレクトリ
+    if not os.path.exists(pdf_path):
+        pdf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pdf')
+
+
     # ないなら作れdataフォルダ
     if not os.path.exists(data_path):
         os.makedirs(data_path)
@@ -260,8 +267,12 @@ def load_config():
     if not os.path.exists(queue_path):
         os.makedirs(queue_path)
 
+    # PDFフォルダがないなら作成
+    if not os.path.exists(pdf_path):
+        os.makedirs(pdf_path)
+
     print("Initialize successfully!")
-    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['save_log']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
+    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['save_log']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, int(config['server']['key']), int(config['server']['ssl']), str(config['server']['ssl_crt']), str(config['server']['ssl_key']), int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
 
 # clawler　フォルダ内のモジュールをインポート
 def import_modules(site_dic):
@@ -397,6 +408,13 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
     logging.info(f'URL: {add_param}')
     globals()[site].init(cookie_path[site], is_login, interval)
     globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
+
+#PDFファイルからテキストファイルへの変換
+def pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path, data_path, key_data, host_name):
+    # PDFファイルの読み込み
+    site = 'narou'
+    logging.info(f'Genelate HTML from PDF: {site}')
+    globals()[site].gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path[site], key_data, data_path, host_name)
 
 #リクエストIDの削除
 def cleanup_expired_requests(requests_dict, expiration_time):
