@@ -225,9 +225,14 @@ def create_index(data_path, config, post_path=''):
 
         # config['crawler']のキーを使ったボタン生成
         for key in config['crawler']:
-            f.write(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>\n')
-            f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n')
-            f.write(f'<button onclick="submitReDownload(\'{key}\')">{key} 再ダウンロード</button>\n<br>')
+            if key == 'narou':
+                f.write(f'<button disabled>{key} 更新</button>\n')
+                f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n')
+                f.write(f'<button disabled>{key} 再ダウンロード</button>\n<br>')
+            else:
+                f.write(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>\n')
+                f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n')
+                f.write(f'<button onclick="submitReDownload(\'{key}\')">{key} 再ダウンロード</button>\n<br>')
         
         # PDF選択ボタンとauthor_id, author_url入力テキストボックス、およびリストボックス
         f.write('<br><br>\n')
@@ -358,8 +363,10 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
         for site_key, value in site_dic.items():
             if update_param == site_key:
                 site = site_key
-                if int(login_dic[site])==0|1:
+                if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                     is_login = int(login_dic[site])
+                elif site == 'narou':
+                    return 400
                 else:
                     return 400
                 
@@ -375,8 +382,10 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
         # 全更新処理
         for site_key, value in site_dic.items():
             site = site_key
-            if int(login_dic[site])==0|1:
+            if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                 is_login = int(login_dic[site])
+            elif site == 'narou':
+                continue
             else:
                 return 400
             
@@ -393,8 +402,10 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
             if value.replace('_', '.').replace('.py', '') in re_download_param:
                 if re_download_param == site_key:
                     site = site_key
-                    if int(login_dic[site])==0|1:
+                    if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                         is_login = int(login_dic[site])
+                    elif site == 'narou':
+                        return 400
                     else:
                         return 400
                     
@@ -412,8 +423,10 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
         # 全更新処理
         for site_key, value in site_dic.items():
             site = site_key
-            if int(login_dic[site])==0|1:
+            if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                 is_login = int(login_dic[site])
+            elif site == 'narou':
+                continue
             else:
                 return 400
             
@@ -429,7 +442,7 @@ def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_p
         for site_key, value in site_dic.items():
             if convert_param == site_key:
                 site = site_key
-                if int(login_dic[site])==0|1:
+                if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                     is_login = int(login_dic[site])
                 else:
                     return 400
@@ -446,7 +459,7 @@ def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_p
         # 全変換処理
         for site_key, value in site_dic.items():
             site = site_key
-            if int(login_dic[site])==0|1:
+            if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                 is_login = int(login_dic[site])
             else:
                 return 400
@@ -461,14 +474,18 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
     for site_key, value in site_dic.items():
         if value.replace('_', '.').replace('.py', '') in add_param:
             site = site_key
-            if int(login_dic[site])==0|1:
+            if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                 is_login = int(login_dic[site])
+            elif site == 'narou':
+                return 400
             else:
                 return 400
             break
     else:
-        if int(login_dic[site])==0|1:
+        if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
             is_login = int(login_dic[site])
+        elif site == 'narou':
+            return 400
         else:
             return 400
 
