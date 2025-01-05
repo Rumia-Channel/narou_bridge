@@ -171,6 +171,7 @@ def create_index(data_path, config, post_path=''):
         f.write('  var authorId = document.getElementById("authorId").value;\n')
         f.write('  var authorUrl = document.getElementById("authorUrl").value;\n')
         f.write('  var novelType = document.getElementById("novelType").value;\n')
+        f.write('  var chapter = document.getElementById("chapter").value;\n')
 
         # 入力チェック
         f.write('  if (!pdfFile) {\n')
@@ -188,6 +189,7 @@ def create_index(data_path, config, post_path=''):
         f.write('  formData.append("author_id", authorId);\n')
         f.write('  formData.append("author_url", authorUrl);\n')
         f.write('  formData.append("novel_type", novelType);\n')
+        f.write('  formData.append("chapter", chapter);\n')
         f.write('  formData.append("request_id", generateRequestId());\n')
 
         f.write('  var xhr = new XMLHttpRequest();\n')
@@ -238,9 +240,12 @@ def create_index(data_path, config, post_path=''):
         f.write('<label for="authorUrl">author_url:</label>\n')
         f.write('<input type="text" id="authorUrl" placeholder="author_url">\n')
         f.write('<br>\n')
+        f.write('<label for="chapter">chapter:</label>\n')
+        f.write('<input type="text" id="chapter" placeholder="exa:1-3:ああ,4-5:いい">\n')
+        f.write('<br>\n')
         f.write('<label for="novelType">作品タイプ:</label>\n')
         f.write('<select id="novelType">\n')
-        f.write('<option value="1">完結</option>\n')
+        f.write('<option value="1">完結済</option>\n')
         f.write('<option value="0">連載中</option>\n')
         f.write('<option value="2">短編</option>\n')
         f.write('</select>\n')
@@ -473,11 +478,11 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
     globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
 
 #PDFファイルからテキストファイルへの変換
-def pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path, data_path, key_data, host_name):
+def pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, folder_path, data_path, key_data, host_name):
     # PDFファイルの読み込み
     site = 'narou'
     logging.info(f'Genelate HTML from PDF: {site}')
-    globals()[site].gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path[site], key_data, data_path, host_name)
+    globals()[site].gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, folder_path[site], key_data, data_path, host_name)
 
 #リクエストIDの削除
 def cleanup_expired_requests(requests_dict, expiration_time):

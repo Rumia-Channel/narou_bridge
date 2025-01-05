@@ -205,11 +205,19 @@ def remove_unwanted_spaces_recursive(text):
                 text = new_text
     return text
 
-def process_text_details(file_path, gen_date, author_id, author_url, novel_type):
+def process_text_details(file_path, gen_date, author_id, author_url, novel_type, chapter):
     """
     指定されたJSONファイルからデータを処理し、ページ2の最大x座標を基準に各ページごとに条件に基づいて結果を返します。
     """
     tit = 1
+
+    # チャプターを処理して範囲と値を取り出す
+    ranges = []
+    if chapter:
+        for part in chapter.split(","):
+            range_part, value = part.split(":")
+            start, end = map(int, range_part.split("-"))
+            ranges.append((start, end, value))
     
     # JSONデータの読み込み
     data = file_path
@@ -359,9 +367,9 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type)
     results['total_characters'] = ""
     results['all_characters'] = ""
     if novel_type == 0:
-        results['type'] = "連載"
+        results['type'] = "連載中"
     elif novel_type == 1:
-        results['type'] = "完結"
+        results['type'] = "完結済"
     elif novel_type == 2:
         results['type'] = "短編"
     results['createDate'] = gen_date
@@ -381,7 +389,17 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type)
             results['episodes'][_key] = {}
 
         results['episodes'][_key]['id'] = _key
-        results['episodes'][_key]['chapter'] = ""
+        
+        found = False  # この番号が範囲内かどうかを記録するフラグ
+        if ranges:
+            for start, end, value_ch in ranges:
+                if start <= _key <= end:
+                    results['episodes'][_key]['chapter'] = value_ch
+                    found = True
+                    break
+        if not found:
+            results['episodes'][_key]['chapter'] = ""
+
         results['episodes'][_key]['title'] = ""
         results['episodes'][_key]['textCount'] = ""
         if key in introductions:
@@ -416,23 +434,25 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type)
     return results, ncode
 
 
-def gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path, key_data, data_path, host_name):
+def gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, folder_path, key_data, data_path, host_name):
 
     pdf_file = os.path.join(pdf_path, pdf_name)
 
     json_data, last_details = save_text_details_to_json(pdf_file)
 
-    results, ncode = process_text_details(json_data, last_details, author_id, author_url, int(novel_type))
+    results, ncode = process_text_details(json_data, last_details, author_id, author_url, int(novel_type), chapter)
 
     cm.make_dir(ncode, folder_path)
 
     raw_path = os.path.join(folder_path, ncode, 'raw', 'raw.json')
 
-    i = 1
+    # フォルダの作成
+    if not int(novel_type) == 2:
+        i = 1
 
-    for key, value in results['episodes'].items():
-        os.makedirs(os.path.join(folder_path, ncode, str(i)), exist_ok=True)
-        i += 1
+        for key, value in results['episodes'].items():
+            os.makedirs(os.path.join(folder_path, ncode, str(i)), exist_ok=True)
+            i += 1
 
     cm.save_raw_diff(raw_path, os.path.join(folder_path, ncode), results)
 
