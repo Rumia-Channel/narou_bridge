@@ -467,6 +467,25 @@ def gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, chapter,
     
     logging.info(f"Generated {ncode} from PDF file")
 
+def init(cookie_path, is_login, interval):
+    pass
+
+def convert(folder_path, key_data, data_path, host_name):
+
+    #引き渡し用変数
+    data_folder = data_path
+    host = host_name
+
+    folder_names = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
+
+    for i in folder_names:
+        if os.path.exists(os.path.join(folder_path, i, 'raw', 'raw.json')) and os.path.exists(os.path.join(folder_path, i, 'info', 'index.html')):
+            with open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+                raw_json_data = json.load(f)
+            cn.narou_gen(raw_json_data, os.path.join(folder_path, i), key_data, data_folder, host)
+
+    cm.gen_site_index(folder_path, key_data, '小説家になろう')
+
 ## 使用例
 #if __name__ == "__main__":
 #
