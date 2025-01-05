@@ -37,6 +37,9 @@ link_e	</a>
 data=
 cookie=
 log=
+queue=
+pdf=
+save_log=1
 interval=2
 reload=900
 auto_update=1
@@ -44,9 +47,11 @@ auto_update_interval=43200
 
 [crawler]
 pixiv=www_pixiv_net.py
+narou=ncode_syosetu_com
 
 [login]
 pixiv=1
+narou=0
 
 [server]
 domain=example.tail0exam.ts.net
@@ -68,6 +73,9 @@ proxy_ssl=1
 data=小説の保存先(強制的にそのフォルダ内にdataフォルダが作成される, 空だとスクリプトが存在するフォルダ)
 cookie=クッキーの保存先(強制的にそのフォルダ内にcookieフォルダが作成される, 空だとスクリプトが存在するフォルダ)
 log=クッキーの保存先(強制的にそのフォルダ内にcookieフォルダが作成される, 空だとスクリプトが存在するフォルダ)
+queue=タスクリストの保存先(強制的にそのフォルダ内にqueueフォルダが作成される, 空だとスクリプトが存在するフォルダ)
+pdf=PDFファイルの処理終了までの一時保存先(強制的にそのフォルダ内にpdfフォルダが作成される, 空だとスクリプトが存在するフォルダ)
+save_log=サーバーのログを保存するか否か(0で無効, 1で有効)
 interval=小説やファイルを取得する間隔の秒数(2秒以上が負荷が少なくていいかも, int 型なので整数指定)
 reload=現状無意味(デフォルトでOK)
 auto_update=サーバー起動時に小説の自動アップデートをするか(0で無効, 1で有効)
