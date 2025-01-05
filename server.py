@@ -231,6 +231,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         author_id = req_data.get("author_id")
         author_url = req_data.get("author_url")
         novel_type = req_data.get("novel_type")
+        chapter = req_data.get("chapter")
         key_data = ''
 
         # ホスト名の確定
@@ -273,7 +274,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                     return create_success_response("Download Complete")
                 
             elif pdf_name:
-                add_return = util.pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, folder_path, data_path, key_data, host_name)
+                add_return = util.pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, folder_path, data_path, key_data, host_name)
                 if add_return == 400:
                     return create_error_response(400, "Invalid add_param value")
                 else:
@@ -339,6 +340,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         author_id = request.form.get('author_id')
         author_url = request.form.get('author_url')
         novel_type = request.form.get("novel_type")
+        chapter = request.form.get("chapter")
         request_id = request.form.get("request_id")
 
         if not request_id:
@@ -375,6 +377,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                     "author_id": author_id,
                     "author_url": author_url,
                     "novel_type": novel_type,
+                    "chapter": chapter,
                 }
             }
 
@@ -395,6 +398,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                 "author_id": author_id,
                 "author_url": author_url,
                 "novel_type": novel_type,
+                "chapter": chapter,
                 "request_id": request_id,
             }
 
