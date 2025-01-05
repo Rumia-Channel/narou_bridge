@@ -483,7 +483,7 @@ def dl_series(series_id, folder_path, key_data, update):
     #episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
     
     novel = {
-        'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
+        'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9)))),
         'title': series_title,
         'id': series_id,
         'url': f"https://www.pixiv.net/novel/series/{series_id}",
