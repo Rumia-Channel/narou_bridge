@@ -200,8 +200,8 @@ def gen_site_index(folder_path ,key_data, site_name):
             f.write(f'''<tr class="author-{author_id}"><td>{info["type"]}</td>
                         <td class="text"><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
                         <td class="text"><a href="{info["author_url"]}" target="_blank">{info["author"]}</a>　<button class="copyButton" data-author-id="{author_id}">IDのコピー</button></td>
-                        <td>{datetime.strptime(info["create_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td>
-                        <td>{datetime.strptime(info["update_date"], "%Y-%m-%d %H:%M:%S%z").strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
+                        <td>{datetime.fromisoformat(info["create_date"]).strftime("%Y/%m/%d %H:%M")}</td>
+                        <td>{datetime.fromisoformat(info["update_date"]).strftime("%Y/%m/%d %H:%M")}</td></tr>\n''')
 
         f.write('</table>\n')
 
