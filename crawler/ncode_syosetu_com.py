@@ -351,7 +351,7 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type,
     ncode = cm.full_to_half(n_code).lower()
 
     # 現在の日付をUTC+9の形式で取得
-    update_date = str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z'))
+    update_date = str(datetime.now().astimezone(timezone(timedelta(hours=9))))
     gen_date = str(datetime.strptime(gen_date, "%Y年%m月%d日%H時%M分発行").replace(tzinfo=timezone(timedelta(hours=9))))
 
     results['get_date'] = update_date
