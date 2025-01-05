@@ -18,7 +18,7 @@ toc_url: \\k<top_url>/pixiv/\\k<ncode>/
 subtitles: |-
   (?:<div class="p-eplist__chapter-title">(?<chapter>.+?)</div>\s*
   )?<div class="p-eplist__sublist">\s*
-  <a href="(?<href>\/narou/\\k<ncode>/(?<index>\d+)\/)" class="p-eplist__subtitle">\s*
+  <a href="(?<href>\/pixiv\/s\d+\/(?<index>\d+)\/)" class="p-eplist__subtitle">
   (?<subtitle>.+?)\s*
   </a>\s*
   <div class="p-eplist__update">\s*
