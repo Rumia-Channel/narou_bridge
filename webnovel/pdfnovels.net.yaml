@@ -1,6 +1,6 @@
 # ------------------------------------------------------------
 # 小説サイト定義
-name: &name 小説家になろう
+name: &name タテ書き小説ネット
 sitename: *name
 domain: ncode.syosetu.com
 top_url: http://localhost:8080
@@ -16,14 +16,12 @@ version: 2.0
 # 目次取得設定
 toc_url: \\k<top_url>/narou/\\k<ncode>/
 subtitles: |-
-  (?:<div class="p-eplist__chapter-title">(?<chapter>.+?)</div>
-  
-  )?<div class="p-eplist__sublist">
-  <a href="(?<href>\/narou/\\k<ncode>/(?<index>\d+)\/)" class="p-eplist__subtitle">
-  (?<subtitle>.+?)
-  </a>
-  
-  <div class="p-eplist__update">
+  (?:<div class="p-eplist__chapter-title">(?<chapter>.+?)</div>\s*
+  )?<div class="p-eplist__sublist">\s*
+  <a href="(?<href>\/narou/\\k<ncode>/(?<index>\d+)\/)" class="p-eplist__subtitle">\s*
+  (?<subtitle>.+?)\s*
+  </a>\s*
+  <div class="p-eplist__update">\s*
   (?:<span class="p-eplist__favep">.+?</span></span>)?(?<subdate>.+?)
   (?:<span title="(?<subupdate>.+?) 改稿">（<u>改</u>）</span>
   )?</div>
