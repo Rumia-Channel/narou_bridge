@@ -19,7 +19,7 @@ def write_index(f, data, key_data):
         create_date = datetime.fromisoformat(ep['createDate']).strftime("%Y/%m/%d %H:%M")
         update_date = datetime.fromisoformat(ep['updateDate']).strftime("%Y/%m/%d %H:%M")
         if not ep['chapter'] == chapter:
-            if chapter:
+            if ep['chapter']:
                 chapter = ep['chapter']
                 f.write(f'<div class="p-eplist__chapter-title">{chapter}</div>\n')
         f.write(f'<div class="p-eplist__sublist">\n')
