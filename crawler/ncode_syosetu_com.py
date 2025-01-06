@@ -379,7 +379,7 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type,
     all_str = 0
     all_episodes = 0
     results['episodes'] = {}
-    for key, value in tqdm.tqdm(titles.items()):
+    for key, value in tqdm.tqdm(titles.items(), leave=False, desc="Processing", unit="episodes"):
         _key = int(key) -1
         if int(key) == 1:
             continue
