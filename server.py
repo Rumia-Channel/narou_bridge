@@ -200,8 +200,19 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         # MIME タイプが判別できない場合、デフォルトで application/octet-stream を使用
         if not mime_type:
             mime_type = 'application/octet-stream'
-        
-        return Response(generate(), content_type=mime_type)
+
+        # ファイルサイズを取得し Content-Length ヘッダーに設定
+        try:
+            file_size = os.path.getsize(file_path)
+        except Exception as e:
+            logging.error(f"Could not determine file size for {file_path}: {e}")
+            file_size = None  # サイズが取得できない場合
+
+        headers = {}
+        if file_size is not None:
+            headers['Content-Length'] = str(file_size)
+
+        return Response(generate(), content_type=mime_type, headers=headers)
 
     def stream_folder_contents(folder_path):
         """フォルダ内のコンテンツをストリームで送信"""
