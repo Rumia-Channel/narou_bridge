@@ -11,7 +11,9 @@ import threading
 import queue
 import pickle
 
-from flask import Flask, request, jsonify, abort, send_from_directory, Response, redirect, url_for
+from flask import Flask, request, jsonify, Response, redirect, url_for, send_file
+
+import mimetypes
 
 #ログを保存
 import logging
@@ -136,12 +138,17 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
     def serve_root():
         """ルート (/) にアクセスされた場合、index.html を返す"""
         index_path = os.path.join(app.config['DATA_FOLDER'], "index.html")
-        if os.path.exists(index_path):
-            logging.info(f"Serving root index.html from: {index_path}")
-            return send_from_directory(app.config['DATA_FOLDER'], "index.html")
-        else:
-            logging.error(f"File not found: {index_path}")
-            return jsonify({"status": "error", "message": "File not found"}), 404
+        try:
+            secure_path(index_path)
+            if os.path.exists(index_path):
+                logging.info(f"Serving root index.html from: {index_path}")
+                return stream_file(index_path)  # HTMLファイルも通常のファイルと同じ方法で返す
+            else:
+                logging.error(f"File not found: {index_path}")
+                return jsonify({"status": "error", "message": "File not found"}), 404
+        except ValueError as e:
+            logging.error(f"Unauthorized access attempt: {e}")
+            return jsonify({"status": "error", "message": "Access denied"}), 403
 
     @app.route('/<path:path>', methods=["GET"])
     def handle_request(path):
@@ -158,7 +165,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
 
         if os.path.isfile(file_path):
             logging.info(f"Serving file from: {file_path}")
-            return send_from_directory(app.config['DATA_FOLDER'], path)
+            return stream_file(file_path)  # ファイルはすべて stream_file で返す
 
         elif os.path.isdir(folder_path):
             if not path.endswith('/'):
@@ -168,14 +175,47 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
             index_file = os.path.join(folder_path, "index.html")
             if os.path.exists(index_file):
                 logging.info(f"Serving index.html from folder: {index_file}")
-                return send_from_directory(folder_path, "index.html")
+                return stream_file(index_file)  # index.htmlも通常のファイルとして扱う
             else:
                 logging.warning(f"Folder or index.html not found: {folder_path}")
-                return jsonify({"status": "error", "message": "Folder or index.html not found"}), 404
+                return stream_folder_contents(folder_path)
 
         else:
             logging.error(f"Not found: {file_path}")
             return jsonify({"status": "error", "message": "Not found"}), 404
+
+    def stream_file(file_path):
+        """ファイルをストリームで送信"""
+        def generate():
+            try:
+                with open(file_path, "rb") as f:
+                    while chunk := f.read(8192):  # 8KB チャンクで送信
+                        yield chunk
+            except Exception as e:
+                logging.error(f"Error while streaming file {file_path}: {e}")
+
+        # MIME タイプをファイル拡張子に基づいて判別
+        mime_type, _ = mimetypes.guess_type(file_path)
+        
+        # MIME タイプが判別できない場合、デフォルトで application/octet-stream を使用
+        if not mime_type:
+            mime_type = 'application/octet-stream'
+        
+        return Response(generate(), content_type=mime_type)
+
+    def stream_folder_contents(folder_path):
+        """フォルダ内のコンテンツをストリームで送信"""
+        def generate():
+            try:
+                for root, dirs, files in os.walk(folder_path):
+                    for name in sorted(files):
+                        yield f"File: {os.path.relpath(os.path.join(root, name), folder_path)}\n"
+                    for name in sorted(dirs):
+                        yield f"Directory: {os.path.relpath(os.path.join(root, name), folder_path)}\n"
+            except Exception as e:
+                logging.error(f"Error while streaming folder contents {folder_path}: {e}")
+        
+        return Response(generate(), content_type='text/plain')
 
     # auto_updateスレッドを開始する部分
     if auto_update:
