@@ -736,6 +736,10 @@ def download(url, folder_path, key_data, data_path, host_name):
     elif "https://www.pixiv.net/users/" in url:
         user_id = re.search(r"users/(\d+)", url).group(1)
         dl_user(user_id, folder_path, key_data, False)
+    elif "https://www.pixiv.net/artworks/" in url: # イラストと漫画の分岐
+        pass
+    elif re.search(r"https://www\.pixiv\.net/user/(\d+)/series/(\d+)", url): # 漫画シリーズの分岐
+        pass
     else:
         logging.error(f'Error: "{url}" is not a valid URL')
         return
