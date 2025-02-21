@@ -234,7 +234,7 @@ def format_ruby(data):
     return re.sub(pattern, lambda match: f'[ruby:<{match.group(1)}>({match.group(2)})]', data)
 
 #画像リンク形式の整形
-def format_image(id, episode, series, data, json_data, folder_path):
+def format_image(id, episode, novel, series, data, json_data, folder_path):
     global g_count
     #pixivimage: で始まるリンクの抽出
     links = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
@@ -243,12 +243,19 @@ def format_image(id, episode, series, data, json_data, folder_path):
     inner_links = re.findall(r"\[uploadedimage:(\d+)\]", data)
 
     #シリーズとその他のリンクの切り替え
-    if series:
-        episode_path = os.path.join(folder_path, f's{id}', str(episode))
-        url = f"https://www.pixiv.net/novel/series/{id}/{episode}"
+    if novel:
+        if series:
+            episode_path = os.path.join(folder_path, f's{id}', str(episode))
+            url = f"https://www.pixiv.net/novel/series/{id}/{episode}"
+        else:
+            episode_path = os.path.join(folder_path, f'n{id}')
+            url = f"https://www.pixiv.net/novel/show.php?id={id}"
     else:
-        episode_path = os.path.join(folder_path, f'n{id}')
-        url = f"https://www.pixiv.net/novel/show.php?id={id}"
+        if series:
+            episode_path = os.path.join(folder_path, f'c{id}', str(episode))
+        else:
+            episode_path = os.path.join(folder_path, f'a{id}')
+
 
     for i in links:
         art_id = i[0]
@@ -268,14 +275,15 @@ def format_image(id, episode, series, data, json_data, folder_path):
                 with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
                     f.write(img_data.content)
                 data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
-    #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
-    for inner_link in tqdm(inner_links, desc=f"Downloading inner illusts from {url}", unit="illusts", total=len(inner_links), leave=False):
-        time.sleep(interval_sec)
-        in_img_url = cm.find_key_recursively(json_data, inner_link).get('urls').get('original')
-        in_img_data = cm.get_with_cookie(in_img_url, pixiv_cookie, pixiv_header)
-        with open(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
-            f.write(in_img_data.content)
-        data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({inner_link}{os.path.splitext(in_img_url)[1]})')
+    if novel:
+        #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
+        for inner_link in tqdm(inner_links, desc=f"Downloading inner illusts from {url}", unit="illusts", total=len(inner_links), leave=False):
+            time.sleep(interval_sec)
+            in_img_url = cm.find_key_recursively(json_data, inner_link).get('urls').get('original')
+            in_img_data = cm.get_with_cookie(in_img_url, pixiv_cookie, pixiv_header)
+            with open(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
+                f.write(in_img_data.content)
+            data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({inner_link}{os.path.splitext(in_img_url)[1]})')
 
     return data
 
@@ -451,7 +459,7 @@ def dl_series(series_id, folder_path, key_data, update):
             #エピソードごとのフォルダの作成
             os.makedirs(os.path.join(series_path, entry['id']), exist_ok=True)
             #挿絵リンクへの置き換え
-            text = format_image(series_id, entry['id'], True, text, json_data, folder_path)
+            text = format_image(series_id, entry['id'], True, True, text, json_data, folder_path)
             #ルビの置き換え
             text = format_ruby(text)
             #チャプタータグの除去
@@ -546,7 +554,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     novel_path = os.path.join(folder_path, f'n{novel_id}')
     raw_path = os.path.join(novel_path, 'raw', 'raw.json')
     #挿絵リンクへの置き換え
-    text = format_image(novel_id, novel_id, False, novel_text, json_data, folder_path)
+    text = format_image(novel_id, novel_id, True, False, novel_text, json_data, folder_path)
     #表紙のダウンロード
     get_cover(novel_data.get('coverUrl'), novel_path)
     #ルビの置き換え
@@ -597,6 +605,92 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         json.dump(novel, f, ensure_ascii=False, indent=4)
 
     cn.narou_gen(novel, novel_path, key_data, data_folder, host)
+    print("")
+    #仕上げ処理(indexファイルの更新)
+    cm.gen_site_index(folder_path, key_data, 'Pixiv')
+
+#漫画のダウンロードに関する処理
+def dl_art(art_id, folder_path, key_data):
+    #漫画のデータ取得
+    logging.info(f"art ID: {art_id}")
+    a_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}", pixiv_cookie, pixiv_header).text), "body")
+    a_toc = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages", pixiv_cookie, pixiv_header)
+    art_title = a_detail.get('title')
+    art_author = a_detail.get('userName')
+    art_author_id = a_detail.get('userId')
+    art_caption_data = a_detail.get('description')
+    if art_caption_data:
+        art_caption = art_caption_data.replace('<br />', '\n').replace('jump.php?', '')
+    else:
+        art_caption = ''
+    art_postscript = cm.find_key_recursively(a_detail, 'pollData')
+    if art_postscript:
+        art_postscript = format_survey(art_postscript)
+    else:
+        art_postscript = ''
+    art_create_day = datetime.fromisoformat(a_detail.get('createDate'))
+    art_update_day = datetime.fromisoformat(a_detail.get('uploadDate'))
+    art_text = ''
+    all_art = a_toc.json().get('body')
+    for i in all_art:
+        url = i.get('urls').get('original')
+        img_num = re.search(r'_p(\d+)\.', url).group(1)
+        art_text += f'[pixivimage:{art_id}-{int(img_num) + 1}]\n'
+    logging.info(f"Art Title: {art_title}")
+    logging.info(f"Art Author: {art_author}")
+    logging.info(f"Art Author ID: {art_author_id}")
+    logging.info(f"Art Caption: {art_caption}")
+    logging.info(f"Art Create Date: {art_create_day}")
+    logging.info(f"Art Update Date: {art_update_day}")
+    cm.make_dir('a'+str(art_id), folder_path)
+    art_path = os.path.join(folder_path, f'a{art_id}')
+    raw_path = os.path.join(art_path, 'raw', 'raw.json')
+    #挿絵リンクへの置き換え
+    art_text = format_image(art_id, art_id, False, False, art_text, a_toc.json(), folder_path)
+    #表紙のダウンロード
+    get_cover(a_detail.get('urls').get('original'), art_path)
+    episode = {}
+    episode[1] = {
+        'id' : art_id,
+        'chapter': None,
+        'title': art_title,
+        'textCount': 0,
+        'introduction': unquote(art_caption),
+        'text': art_text,
+        'postscript': art_postscript,
+        'createDate': str(datetime.fromisoformat(a_detail.get('createDate')).astimezone(timezone(timedelta(hours=9)))),
+        'updateDate': str(datetime.fromisoformat(a_detail.get('uploadDate')).astimezone(timezone(timedelta(hours=9))))
+    }
+
+    novel = {
+        'version': 2,
+        'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
+        'title': art_title,
+        'id': art_id,
+        'url': f"https://www.pixiv.net/artworks/{art_id}",
+        'author': art_author,
+        'author_id': art_author_id,
+        'author_url': f"https://www.pixiv.net/users/{art_author_id}",
+        'caption': art_caption,
+        'total_episodes': 1,
+        'all_episodes': 1,
+        'total_characters': 0,
+        'all_characters': 0,
+        'type': 'comic',
+        'serialization': '短編',
+        'createDate': str(art_create_day.astimezone(timezone(timedelta(hours=9)))),
+        'updateDate': str(art_update_day.astimezone(timezone(timedelta(hours=9)))),
+        'episodes': episode
+    }
+
+    #小説データの差分を保存
+    cm.save_raw_diff(raw_path, art_path, novel)
+
+    #生データの書き出し
+    with open(raw_path, 'w', encoding='utf-8') as f:
+        json.dump(novel, f, ensure_ascii=False, indent=4)
+    
+    cn.narou_gen(novel, art_path, key_data, data_folder, host)
     print("")
     #仕上げ処理(indexファイルの更新)
     cm.gen_site_index(folder_path, key_data, 'Pixiv')
@@ -744,7 +838,8 @@ def download(url, folder_path, key_data, data_path, host_name):
         user_id = re.search(r"users/(\d+)", url).group(1)
         dl_user(user_id, folder_path, key_data, False)
     elif "https://www.pixiv.net/artworks/" in url: # イラストと漫画の分岐
-        pass
+        art_id = re.search(r"artworks/(\d+)", url).group(1)
+        dl_art(art_id, folder_path, key_data)
     elif re.search(r"https://www\.pixiv\.net/user/(\d+)/series/(\d+)", url): # 漫画シリーズの分岐
         pass
     else:
@@ -782,6 +877,8 @@ def update(folder_path, key_data, data_path, host_name):
                     return
                 dl_user(user_id, folder_path, key_data, True)
                 time.sleep(interval_sec)
+            if status["comic"] == 'enable':
+                pass
             user_ids.append(user_id)
                 
 
@@ -853,6 +950,8 @@ def re_download(folder_path, key_data, data_path, host_name):
                     return
                 dl_user(user_id, folder_path, key_data, False)
                 time.sleep(interval_sec)
+            if status["comic"] == 'enable':
+                pass
             user_ids.append(user_id)
                 
 
