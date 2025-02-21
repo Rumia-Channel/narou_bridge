@@ -134,8 +134,8 @@ def gen_site_index(folder_path ,key_data, site_name):
                 author_url = data.get('author_url', 'No author_url found')
                 create_date = data.get('createDate', 'No create date found')
                 update_date = data.get('updateDate', 'No update date found')
-                type = data.get('type', 'No type found')
-                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'type': type, 'create_date': create_date, 'update_date': update_date}
+                serialization = data.get('serialization', 'No serialization found')
+                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'serialization': serialization, 'create_date': create_date, 'update_date': update_date}
         else:
             #print(f"raw.json not found in {folder}")
             #return
@@ -197,7 +197,7 @@ def gen_site_index(folder_path ,key_data, site_name):
         # 各行のデータ出力（author_idをclassとして扱う）
         for folder, info in pairs.items():
             author_id = info["author_id"]
-            f.write(f'''<tr class="author-{author_id}"><td>{info["type"]}</td>
+            f.write(f'''<tr class="author-{author_id}"><td>{info["serialization"]}</td>
                         <td class="text"><a href="{folder}/{key_data}" class="text">{info["title"]}</a></td>
                         <td class="text"><a href="{info["author_url"]}" target="_blank">{info["author"]}</a>　<button class="copyButton" data-author-id="{author_id}">IDのコピー</button></td>
                         <td>{datetime.fromisoformat(info["create_date"]).strftime("%Y/%m/%d %H:%M")}</td>
