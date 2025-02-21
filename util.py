@@ -145,7 +145,7 @@ def create_index(data_path, config, post_path=''):
         # submitReDownload関数
         f.write('function submitReDownload(key) {\n')
         f.write('  var requestId = generateRequestId();\n')
-        f.write(f'  var url = "{post_url}?redownload=" + encodeURIComponent(key);\n')
+        f.write(f'  var url = "{post_url}?re_download=" + encodeURIComponent(key);\n')
         f.write('  var xhr = new XMLHttpRequest();\n')
         f.write('  xhr.open("POST", url, true);\n')
         f.write('  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");\n')
@@ -162,7 +162,7 @@ def create_index(data_path, config, post_path=''):
         f.write('      }\n')
         f.write('    }\n')
         f.write('  };\n')
-        f.write('  xhr.send("redownload=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
+        f.write('  xhr.send("re_download=" + encodeURIComponent(key) + "&request_id=" + requestId);\n')
         f.write('}\n')
 
         # submitPdfData関数
@@ -363,10 +363,13 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
         for site_key, value in site_dic.items():
             if update_param == site_key:
                 site = site_key
+
+                if site == 'narou':
+                    logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
+                    return 400
+
                 if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                     is_login = int(login_dic[site])
-                elif site == 'narou':
-                    return 400
                 else:
                     return 400
                 
@@ -382,10 +385,13 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
         # 全更新処理
         for site_key, value in site_dic.items():
             site = site_key
+
+            if site == 'narou':
+                logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
+                continue
+
             if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                 is_login = int(login_dic[site])
-            elif site == 'narou':
-                continue
             else:
                 return 400
             
@@ -402,10 +408,13 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
             if value.replace('_', '.').replace('.py', '') in re_download_param:
                 if re_download_param == site_key:
                     site = site_key
+
+                    if site == 'narou':
+                        logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
+                        return 400
+
                     if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                         is_login = int(login_dic[site])
-                    elif site == 'narou':
-                        return 400
                     else:
                         return 400
                     
@@ -423,10 +432,13 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
         # 全更新処理
         for site_key, value in site_dic.items():
             site = site_key
+
+            if site == 'narou':
+                logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
+                continue
+
             if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                 is_login = int(login_dic[site])
-            elif site == 'narou':
-                continue
             else:
                 return 400
             
@@ -474,18 +486,24 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
     for site_key, value in site_dic.items():
         if value.replace('_', '.').replace('.py', '') in add_param:
             site = site_key
+
+            if site == 'narou':
+                logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
+                return 400
+
             if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
                 is_login = int(login_dic[site])
-            elif site == 'narou':
-                return 400
             else:
                 return 400
             break
     else:
+
+        if site == 'narou':
+            logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
+            return 400    
+
         if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
             is_login = int(login_dic[site])
-        elif site == 'narou':
-            return 400
         else:
             return 400
 

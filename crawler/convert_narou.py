@@ -190,7 +190,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
     global a_link
 
     #目次ファイルの生成
-    if not data.get("type") == "短編":
+    if not data.get("serialization") == "短編":
         link = host_name + nove_path.replace(data_folder, '').replace('\\', '/')
         a_link = nove_path.replace(data_folder, '').replace('\\', '/')
         index_path = os.path.join(nove_path, 'index.html')
@@ -225,10 +225,10 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('<body>\n')
         f.write(f'<a href="../{key_data}">戻る</a>\n')
         f.write(f'<h1><a href="{data.get("url")}" target="_blank">{data.get("title")}</a></h1>\n')
-        if data.get("type") == "短編":
+        if data.get("serialization") == "短編":
             f.write(f'<div><span id="noveltype">短編</span></div>\n')
         else:
-            f.write(f'<div><span id="noveltype">{data.get("type")}</span> 全{data.get("total_episodes")}エピソード</div>\n')
+            f.write(f'<div><span id="noveltype">{data.get("serialization")}</span> 全{data.get("total_episodes")}エピソード</div>\n')
         f.write('<table>\n')
         f.write(f'<tr><th class="ex">あらすじ</th><td class="ex">{data.get("caption")}</td></tr>\n')
         f.write('<tr>\n')
@@ -240,11 +240,11 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write(f'<td>{datetime.fromisoformat(data.get("createDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
-        if data.get("type") == "短編":
+        if data.get("serialization") == "短編":
             f.write('<th>最終更新日</th>\n')
-        elif data.get("type") == "連載中":
+        elif data.get("serialization") == "連載中":
             f.write('<th>最新掲載日</th>\n')
-        elif data.get("type") == "完結済":
+        elif data.get("serialization") == "完結済":
             f.write('<th>最終掲載日</th>\n')
         f.write(f'<td>{datetime.fromisoformat(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
         f.write('</tr>\n')
@@ -258,7 +258,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
 
     #エピソードファイルの生成
     for ep in data['episodes'].values():
-        if data.get("type") == "短編":
+        if data.get("serialization") == "短編":
             ep_path = os.path.join(nove_path, 'index.html')
         else:
             ep_path = os.path.join(nove_path, f'{ep["id"]}', 'index.html')
@@ -274,7 +274,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('</head>\n')
             f.write('<body>\n')
             f.write(f'<a href="../{key_data}">戻る</a>\n')
-            if data.get("type") == "短編":
+            if data.get("serialization") == "短編":
                 f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
                 f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
             else:

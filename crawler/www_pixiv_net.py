@@ -483,6 +483,7 @@ def dl_series(series_id, folder_path, key_data, update):
     #episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
     
     novel = {
+        'version': 2,
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9)))),
         'title': series_title,
         'id': series_id,
@@ -495,7 +496,8 @@ def dl_series(series_id, folder_path, key_data, update):
         'all_episodes': series_episodes,
         'total_characters': total_text,
         'all_characters': series_chara,
-        'type': '連載中',
+        'type': 'novel',
+        'serialization': '連載中',
         'createDate': str(series_create_day.astimezone(timezone(timedelta(hours=9)))),
         'updateDate': str(series_update_day.astimezone(timezone(timedelta(hours=9)))),
         'episodes': episode
@@ -567,6 +569,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     }
 
     novel = {
+        'version': 2,
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
         'title': novel_title,
         'id': novel_id,
@@ -579,7 +582,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         'all_episodes': 1,
         'total_characters': novel_data.get('characterCount'),
         'all_characters': novel_data.get('characterCount'),
-        'type': '短編',
+        'type': 'novel',
+        'serialization': '短編',
         'createDate': str(novel_create_day.astimezone(timezone(timedelta(hours=9)))),
         'updateDate': str(novel_update_day.astimezone(timezone(timedelta(hours=9)))),
         'episodes': episode
@@ -628,7 +632,10 @@ def dl_user(user_id, folder_path, key_data, update):
     # user_id が JSON のキーとして存在するか確認
     if user_id not in data:
         # user_id が存在しなければ "enable" を値として追加
-        data[user_id] = 'enable'
+        data["version"] = 2
+        data[user_id] = {}
+        data[user_id]['novel'] = "enable"
+        data[user_id]['comic'] = "disable"
 
     # 更新されたデータを再び user.json に書き込む
     with open(user_json, 'w', encoding='utf-8') as f:
@@ -766,7 +773,9 @@ def update(folder_path, key_data, data_path, host_name):
         with open(os.path.join(folder_path, 'user.json'), 'r', encoding='utf-8') as uf:
             user_json = json.load(uf)
         for user_id, status in user_json.items():
-            if status == 'enable':
+            if user_id == "version":
+                continue
+            if status["novel"] == 'enable':
                 if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
                     logging.error("404 Not Found")
                     logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
@@ -835,7 +844,9 @@ def re_download(folder_path, key_data, data_path, host_name):
         with open(os.path.join(folder_path, 'user.json'), 'r', encoding='utf-8') as uf:
             user_json = json.load(uf)
         for user_id, status in user_json.items():
-            if status == 'enable':
+            if user_id == "version":
+                continue
+            if status["novel"] == 'enable':
                 if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
                     logging.error("404 Not Found")
                     logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
@@ -886,10 +897,10 @@ def convert(folder_path, key_data, data_path, host_name):
 
     folder_names = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
 
-    for i in folder_names:
-        if os.path.exists(os.path.join(folder_path, i, 'raw', 'raw.json')) and os.path.exists(os.path.join(folder_path, i, 'info', 'index.html')):
-            with open(os.path.join(folder_path, i, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+    for q in folder_names:
+        if os.path.exists(os.path.join(folder_path, q, 'raw', 'raw.json')) and os.path.exists(os.path.join(folder_path, q, 'info', 'index.html')):
+            with open(os.path.join(folder_path, q, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
                 raw_json_data = json.load(f)
-            cn.narou_gen(raw_json_data, os.path.join(folder_path, i), key_data, data_folder, host)
+            cn.narou_gen(raw_json_data, os.path.join(folder_path, q), key_data, data_folder, host)
 
     cm.gen_site_index(folder_path, key_data, 'Pixiv')
