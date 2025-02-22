@@ -134,8 +134,9 @@ def gen_site_index(folder_path ,key_data, site_name):
                 author_url = data.get('author_url', 'No author_url found')
                 create_date = data.get('createDate', 'No create date found')
                 update_date = data.get('updateDate', 'No update date found')
+                type = data.get('type', 'No type found')
                 serialization = data.get('serialization', 'No serialization found')
-                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'serialization': serialization, 'create_date': create_date, 'update_date': update_date}
+                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'type': type, 'serialization': serialization, 'create_date': create_date, 'update_date': update_date}
         else:
             #print(f"raw.json not found in {folder}")
             #return
