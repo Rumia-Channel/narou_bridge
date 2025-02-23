@@ -279,7 +279,12 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
                 if os.path.exists(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}')):
                     data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
                     continue
-                time.sleep(interval_sec)
+                if g_count == 10:
+                    time.sleep(random.uniform(interval_sec*2.5,interval_sec*5))
+                    g_count = 1
+                else:
+                    time.sleep(interval_sec)
+                    g_count += 1
                 img_data = cm.get_with_cookie(img_url, pixiv_cookie, pixiv_header)
                 with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
                     f.write(img_data.content)
@@ -291,7 +296,12 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
             if os.path.exists(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}')):
                     data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({inner_link}{os.path.splitext(in_img_url)[1]})')
                     continue
-            time.sleep(interval_sec)
+            if g_count == 10:
+                time.sleep(random.uniform(interval_sec*2.5,interval_sec*5))
+                g_count = 1
+            else:
+                time.sleep(interval_sec)
+                g_count += 1
             in_img_data = cm.get_with_cookie(in_img_url, pixiv_cookie, pixiv_header)
             with open(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
                 f.write(in_img_data.content)
@@ -464,7 +474,7 @@ def dl_series(series_id, folder_path, key_data, update):
 
             #BAN対策
             if g_count == 10:
-                time.sleep(random.uniform(10,30))
+                time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                 g_count = 1
             else:
                 time.sleep(interval_sec)
@@ -813,7 +823,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
         else:
             
             #BAN対策
-            time.sleep(random.uniform(10,30))
+            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
             g_count = 1
 
             #エピソードの処理
@@ -916,6 +926,7 @@ def dl_user(user_id, folder_path, key_data, update):
     in_manga_series = []
     user_novels = []
     user_mangas = []
+    user_arts = []
     logging.info(f'User Name: {user_name}')
     #ユーザーの小説と小説シリーズがない場合
     if not user_all_novels and not user_all_novel_series:
@@ -993,126 +1004,135 @@ def dl_user(user_id, folder_path, key_data, update):
     logging.info(f'User Mangas: {len(user_mangas)}')
     logging.info(f'User Manga Series: {len(user_manga_series)}')
 
-    logging.info("Novel Series Download Start")
-    for series_id in user_novel_series:
-        if update:
-            raw_path = os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')
-            if os.path.isfile(raw_path):
-                series_update_date = datetime.fromisoformat(cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}", pixiv_cookie, pixiv_header).json().get('body').get('updateDate'))
-                with open (raw_path, 'r', encoding='utf-8') as f:
-                    old_series_json = json.load(f)
-                series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
-                if series_update_date == series_old_update_date:
-                    logging.info(f"{old_series_json['title']} に更新はありません。")
-                    if g_count == 10:
-                        time.sleep(random.uniform(10,30))
-                        g_count = 1
-                    else:
-                        time.sleep(interval_sec)
-                        g_count += 1
-                    continue
-                dl_series(series_id, folder_path, key_data, True)
-        else:
-            if g_count == 10:
-                time.sleep(random.uniform(10,30))
-                g_count = 1
-            else:
-                time.sleep(interval_sec)
-                g_count += 1
-            dl_series(series_id, folder_path, key_data, False)
-
-    logging.info("Novel Download Start")
-    for novel_id in user_novels:
-        if update:
-            raw_path = os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json')
-            if os.path.isfile(raw_path):
-                novel_update_date = datetime.fromisoformat(return_content_json(novel_id).get('body').get('uploadDate'))
-                with open (raw_path, 'r', encoding='utf-8') as f:
-                    old_novel_json = json.load(f)
-                novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
-                if novel_update_date == novel_old_update_date:
-                    logging.info(f"{old_novel_json['title']} に更新はありません。")
-                    if g_count == 10:
-                        time.sleep(random.uniform(10,30))
-                        g_count = 1
-                    else:
-                        time.sleep(interval_sec)
-                        g_count += 1
-                    continue
-        else:
-            if g_count == 10:
-                time.sleep(random.uniform(10,30))
-                g_count = 1
-            else:
-                time.sleep(interval_sec)
-                g_count += 1
-        dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
-
-    logging.info("Comic Series Download Start")
-    for comic_id in user_manga_series:
-        if update:
-            raw_path = os.path.join(folder_path, f'c{comic_id}', 'raw', 'raw.json')
-            if os.path.isfile(raw_path):
-                comic_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/series/{comic_id}?p=1&lang=ja", pixiv_cookie, pixiv_header).text), "body")
-                for j in comic_detail['illustSeries']:
-                    if j['id'] == comic_id:
-                        comic_update_date = datetime.fromisoformat(j['updateDate'])
-                        break
-                    else:
-                        comic_update_date = str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z'))
-                with open (raw_path, 'r', encoding='utf-8') as f:
-                    old_comic_json = json.load(f)
-                comic_old_update_date = datetime.fromisoformat(old_comic_json.get('updateDate'))
-                if str(comic_update_date) == str(comic_old_update_date):
-                    logging.info(f"{old_comic_json['title']} に更新はありません。")
-                    if g_count == 10:
-                        time.sleep(random.uniform(10,30))
-                        g_count = 1
-                    else:
-                        time.sleep(interval_sec)
-                        g_count += 1
-                    continue
-                dl_comic(comic_id, folder_path, key_data, True)
-        else:
-            time.sleep(random.uniform(10,30))
-            g_count = 1
-            dl_comic(comic_id, folder_path, key_data, False)
-
-    logging.info("Comic Download Start")
-    for art_id in user_mangas:
-        if update:
-            raw_path = os.path.join(folder_path, f'a{art_id}', 'raw', 'raw.json')
-            if os.path.isfile(raw_path):
-                art_update_date = datetime.fromisoformat(return_comic_content_json(art_id).get('body').get('uploadDate'))
-                with open (raw_path, 'r', encoding='utf-8') as f:
-                    old_art_json = json.load(f)
-                art_old_update_date = datetime.fromisoformat(old_art_json.get('updateDate'))
-                if art_update_date == art_old_update_date:
-                    logging.info(f"{old_art_json['title']} に更新はありません。")
-                    if g_count == 10:
-                        time.sleep(random.uniform(10,30))
-                        g_count = 1
-                    else:
-                        time.sleep(interval_sec)
-                        g_count += 1
-                    continue
+    #小説のダウンロード
+    if data[user_id]['novel'] == "enable":
+        logging.info("Novel Series Download Start")
+        for series_id in user_novel_series:
+            if update:
+                raw_path = os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')
+                if os.path.isfile(raw_path):
+                    series_update_date = datetime.fromisoformat(cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}", pixiv_cookie, pixiv_header).json().get('body').get('updateDate'))
+                    with open (raw_path, 'r', encoding='utf-8') as f:
+                        old_series_json = json.load(f)
+                    series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
+                    if series_update_date == series_old_update_date:
+                        logging.info(f"{old_series_json['title']} に更新はありません。")
+                        if g_count == 10:
+                            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                            g_count = 1
+                        else:
+                            time.sleep(interval_sec)
+                            g_count += 1
+                        continue
+                    dl_series(series_id, folder_path, key_data, True)
             else:
                 if g_count == 10:
-                    time.sleep(random.uniform(10,30))
+                    time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                     g_count = 1
                 else:
                     time.sleep(interval_sec)
                     g_count += 1
+                dl_series(series_id, folder_path, key_data, False)
 
-        else:
-            if g_count == 10:
-                time.sleep(random.uniform(10,30))
-                g_count = 1
+        logging.info("Novel Download Start")
+        for novel_id in user_novels:
+            if update:
+                raw_path = os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json')
+                if os.path.isfile(raw_path):
+                    novel_update_date = datetime.fromisoformat(return_content_json(novel_id).get('body').get('uploadDate'))
+                    with open (raw_path, 'r', encoding='utf-8') as f:
+                        old_novel_json = json.load(f)
+                    novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
+                    if novel_update_date == novel_old_update_date:
+                        logging.info(f"{old_novel_json['title']} に更新はありません。")
+                        if g_count == 10:
+                            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                            g_count = 1
+                        else:
+                            time.sleep(interval_sec)
+                            g_count += 1
+                        continue
             else:
-                time.sleep(interval_sec)
-                g_count += 1
-        
-        dl_art(art_id, folder_path, key_data)
+                if g_count == 10:
+                    time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                    g_count = 1
+                else:
+                    time.sleep(interval_sec)
+                    g_count += 1
+            dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
+    else:
+        logging.info("Novel and Novel Series Download Skipped")
+
+    #漫画のダウンロード
+    if data[user_id]['comic'] == "enable":
+        logging.info("Comic Series Download Start")
+        for comic_id in user_manga_series:
+            if update:
+                raw_path = os.path.join(folder_path, f'c{comic_id}', 'raw', 'raw.json')
+                if os.path.isfile(raw_path):
+                    comic_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/series/{comic_id}?p=1&lang=ja", pixiv_cookie, pixiv_header).text), "body")
+                    for j in comic_detail['illustSeries']:
+                        if j['id'] == comic_id:
+                            comic_update_date = datetime.fromisoformat(j['updateDate'])
+                            break
+                        else:
+                            comic_update_date = str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z'))
+                    with open (raw_path, 'r', encoding='utf-8') as f:
+                        old_comic_json = json.load(f)
+                    comic_old_update_date = datetime.fromisoformat(old_comic_json.get('updateDate'))
+                    if str(comic_update_date) == str(comic_old_update_date):
+                        logging.info(f"{old_comic_json['title']} に更新はありません。")
+                        if g_count == 10:
+                            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                            g_count = 1
+                        else:
+                            time.sleep(interval_sec)
+                            g_count += 1
+                        continue
+                    dl_comic(comic_id, folder_path, key_data, True)
+            else:
+                time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                g_count = 1
+                dl_comic(comic_id, folder_path, key_data, False)
+
+        logging.info("Comic Download Start")
+        for art_id in user_mangas:
+            if update:
+                raw_path = os.path.join(folder_path, f'a{art_id}', 'raw', 'raw.json')
+                if os.path.isfile(raw_path):
+                    art_update_date = datetime.fromisoformat(return_comic_content_json(art_id).get('body').get('uploadDate'))
+                    with open (raw_path, 'r', encoding='utf-8') as f:
+                        old_art_json = json.load(f)
+                    art_old_update_date = datetime.fromisoformat(old_art_json.get('updateDate'))
+                    if art_update_date == art_old_update_date:
+                        logging.info(f"{old_art_json['title']} に更新はありません。")
+                        if g_count == 10:
+                            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                            g_count = 1
+                        else:
+                            time.sleep(interval_sec)
+                            g_count += 1
+                        continue
+                else:
+                    if g_count == 10:
+                        time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                        g_count = 1
+                    else:
+                        time.sleep(interval_sec)
+                        g_count += 1
+
+            else:
+                if g_count == 10:
+                    time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                    g_count = 1
+                else:
+                    time.sleep(interval_sec)
+                    g_count += 1
+            
+            dl_art(art_id, folder_path, key_data)
+    
+    else:
+        logging.info("Comic and Comic Series Download Skipped")
 
 #ダウンロード処理
 def download(url, folder_path, key_data, data_path, host_name):
@@ -1181,15 +1201,25 @@ def update(folder_path, key_data, data_path, host_name):
         for user_id, status in user_json.items():
             if user_id == "version":
                 continue
-            if status["novel"] == 'enable':
+            flag = False
+            if not flag and status['novel'] == 'enable':
                 if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
                     logging.error("404 Not Found")
                     logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
                 dl_user(user_id, folder_path, key_data, True)
                 time.sleep(interval_sec)
-            if status["comic"] == 'enable':
-                pass
+                flag = True
+            if not flag and status["comic"] == 'enable':
+                manga = cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/manga', pixiv_cookie, pixiv_header)
+                illust = cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/illustrations', pixiv_cookie, pixiv_header)
+                if manga.status_code == 404 and illust.status_code == 404:
+                    logging.error("404 Not Found")
+                    logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
+                    return
+                dl_user(user_id, folder_path, key_data, True)
+                time.sleep(interval_sec)
+                flag = True
             user_ids.append(user_id)
                 
 
@@ -1263,7 +1293,7 @@ def update(folder_path, key_data, data_path, host_name):
 
 
         if g_count == 10:
-            time.sleep(random.uniform(10,30))
+            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
             g_count = 1
         else:
             time.sleep(interval_sec)
@@ -1292,15 +1322,25 @@ def re_download(folder_path, key_data, data_path, host_name):
         for user_id, status in user_json.items():
             if user_id == "version":
                 continue
-            if status["novel"] == 'enable':
+            flag = False
+            if not flag and status['novel'] == 'enable':
                 if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
                     logging.error("404 Not Found")
                     logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                     return
                 dl_user(user_id, folder_path, key_data, False)
                 time.sleep(interval_sec)
-            if status["comic"] == 'enable':
-                pass
+                flag = True
+            if not flag and status["comic"] == 'enable':
+                manga = cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/manga', pixiv_cookie, pixiv_header)
+                illust = cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/illustrations', pixiv_cookie, pixiv_header)
+                if manga.status_code == 404 and illust.status_code == 404:
+                    logging.error("404 Not Found")
+                    logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
+                    return
+                dl_user(user_id, folder_path, key_data, False)
+                time.sleep(interval_sec)
+                flag = True
             user_ids.append(user_id)
                 
 
@@ -1346,7 +1386,7 @@ def re_download(folder_path, key_data, data_path, host_name):
             dl_comic(comic_id, folder_path, key_data, False)
 
         if g_count == 10:
-            time.sleep(random.uniform(10,30))
+            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
             g_count = 1
         else:
             time.sleep(interval_sec)
