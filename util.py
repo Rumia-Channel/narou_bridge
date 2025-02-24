@@ -294,31 +294,32 @@ def load_config():
     cookie_folder = config['setting']['cookie']
 
     # 指定されないならカレントディレクトリ
-    if not cookie_folder or os.path.exists(cookie_folder):
+    if not cookie_folder:
         cookie_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookie')
 
     log_path = config['setting']['log']
 
     # 指定されないならカレントディレクトリ
-    if not log_path or os.path.exists(log_path):
+    if not log_path:
         log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
 
     queue_path = config['setting']['queue']
 
     # 指定されないならカレントディレクトリ
-    if not queue_path or os.path.exists(queue_path):
+    if not queue_path:
         queue_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'queue')
 
     pdf_path = config['setting']['pdf']
 
     # 指定されないならカレントディレクトリ
-    if not os.path.exists(pdf_path):
+    if not pdf_path:
         pdf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pdf')
 
 
     # ないなら作れdataフォルダ
-    if not os.path.exists(data_path):
-        os.makedirs(data_path)
+    image_path = os.path.join(data_path, 'images')
+    if not os.path.exists(image_path):
+        os.makedirs(image_path)
 
     # dataフォルダcookieフォルダとサイト名のマトリョシカを作成
     for key in config['crawler']:
@@ -378,7 +379,7 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
             return 400
         
         logging.info(f'Update: {site}')
-        globals()[site].init(cookie_path[site], is_login, interval)
+        globals()[site].init(cookie_path[site], data_path, is_login, interval)
         globals()[site].update(folder_path[site], key_data, data_path, host_name)
 
     else:
@@ -396,7 +397,7 @@ def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_pat
                 return 400
             
             logging.info(f'Update: {site}')
-            globals()[site].init(cookie_path[site], is_login, interval)
+            globals()[site].init(cookie_path[site], data_path, is_login, interval)
             globals()[site].update(folder_path[site], key_data, data_path, host_name)
 
 #小説の再ダウンロード処理
@@ -425,7 +426,7 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
             return 400
 
         logging.info(f'Re Download: {site}')
-        globals()[site].init(cookie_path[site], is_login, interval)
+        globals()[site].init(cookie_path[site], data_path, is_login, interval)
         globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
 
     else:
@@ -443,7 +444,7 @@ def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, 
                 return 400
             
             logging.info(f'Re Download: {site}')
-            globals()[site].init(cookie_path[site], is_login, interval)
+            globals()[site].init(cookie_path[site], data_path, is_login, interval)
             globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
 
 #小説の変換処理
@@ -464,7 +465,7 @@ def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_p
             return 400
 
         logging.info(f'Convert: {site}')
-        globals()[site].init(cookie_path[site], is_login, interval)
+        globals()[site].init(cookie_path[site], data_path, is_login, interval)
         globals()[site].convert(folder_path[site], key_data, data_path, host_name)
 
     else:
@@ -477,7 +478,7 @@ def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_p
                 return 400
 
             logging.info(f'Convert: {site}')
-            globals()[site].init(cookie_path[site], is_login, interval)
+            globals()[site].init(cookie_path[site], data_path, is_login, interval)
             globals()[site].convert(folder_path[site], key_data, data_path, host_name)
 
 #小説のダウンロード処理
@@ -509,7 +510,7 @@ def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path
 
     logging.info(f'Web site: {site}')
     logging.info(f'URL: {add_param}')
-    globals()[site].init(cookie_path[site], is_login, interval)
+    globals()[site].init(cookie_path[site], data_path, is_login, interval)
     globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
 
 #PDFファイルからテキストファイルへの変換

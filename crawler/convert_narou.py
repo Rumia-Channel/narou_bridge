@@ -34,7 +34,7 @@ def write_index(f, data, key_data):
 #画像リンクへの置き換え
 def replace_images(text, key_data):
     pattern = r'\[image\]\((.*?)\)'
-    return re.sub(pattern, lambda match: f'<img src="{link}{match.group(1)}{key_data}" alt="{match.group(1)}">', text)
+    return re.sub(pattern, lambda match: f'<img src="{img_link}{match.group(1)}{key_data}" alt="{match.group(1)}">', text)
 
 #改ページの置き換え
 def replace_newpage(text):
@@ -48,7 +48,7 @@ def replace_ruby(text):
 
 #テキスト形式の整形
 def format_text(text, id_prefix, key_data):
-    
+
     #画像リンクの置き換え
     text = replace_images(text, key_data)
     #青空文庫形式の改ページへ置き換え
@@ -187,7 +187,10 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
        
 
     global link
+    global img_link
     global a_link
+
+    img_link = host_name + '/images/' #画像ファイルが保存されているディレクトリのリンク
 
     #目次ファイルの生成
     if not data.get("serialization") == "短編":
