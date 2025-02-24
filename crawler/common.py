@@ -6,6 +6,8 @@ import requests
 from requests.exceptions import RequestException, ConnectionError, Timeout
 import time
 from datetime import datetime
+import hashlib
+import base64
 
 #ログを保存
 import logging
@@ -38,6 +40,46 @@ def load_cookies_and_ua(input_file):
 def save_cookies_and_ua(output_file, cookies, ua):
     with open(output_file, 'w', encoding='utf-8') as f:
             json.dump({'cookies': cookies, 'user_agent': ua}, f, ensure_ascii=False, indent=4)
+
+#画像ファイルのチェック
+def check_image_file(img_path, file_name):
+    if not os.path.exists(os.path.join(img_path, 'database.json')):
+        with open(os.path.join(img_path, 'database.json'), 'w', encoding='utf-8') as f:
+            json.dump({}, f, ensure_ascii=False, indent=4)
+
+    with open(os.path.join(img_path, 'database.json'), 'r', encoding='utf-8') as f:
+        database = json.load(f)
+
+    for key, value in database.items():
+        if key == file_name:
+            return value
+
+    return None
+
+#画像ファイルのハッシュをチェック
+def check_image_hash(img_path, file_data, file_name):
+    if not os.path.exists(os.path.join(img_path, 'database.json')):
+        with open(os.path.join(img_path, 'database.json'), 'w', encoding='utf-8') as f:
+            json.dump({}, f, ensure_ascii=False, indent=4)
+
+    with open(os.path.join(img_path, 'database.json'), 'r', encoding='utf-8') as f:
+        database = json.load(f)
+
+    image_hash = base64.urlsafe_b64encode(hashlib.sha3_256(file_data).digest()).rstrip(b'=').decode('utf-8')
+    for key, value in database.items():
+        if value == image_hash:
+            database[file_name] = str(image_hash)
+
+            with open(os.path.join(img_path, 'database.json'), 'w', encoding='utf-8') as f:
+                json.dump(database, f, ensure_ascii=False, indent=4)
+
+            return value
+    
+    with open(os.path.join(img_path, 'database.json'), 'w', encoding='utf-8') as f:
+        database[file_name] = str(image_hash)
+        json.dump(database, f, ensure_ascii=False, indent=4)
+
+    return image_hash
 
 # 再帰的にキーを探す
 def find_key_recursively(data, target_key):
