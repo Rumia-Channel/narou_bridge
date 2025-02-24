@@ -21,7 +21,7 @@ import crawler.common as cm
 import crawler.convert_narou as cn
 
 #初期化処理
-def init(cookie_path, is_login, interval):
+def init(cookie_path, data_path, is_login, interval):
 
     cookie_path = os.path.join(cookie_path, 'login.json')
 
@@ -207,6 +207,10 @@ def init(cookie_path, is_login, interval):
         'Referer': 'https://www.pixiv.net/',
     }
 
+    global img_path
+    img_path = os.path.join(data_path, 'images')
+    logging.debug(f'Image Path: {img_path}')
+
 # レスポンスからjsonデータ(本文データ)を返却
 def return_content_json(novelid):
     novel_data = cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/{novelid}", pixiv_cookie, pixiv_header).text
@@ -276,36 +280,55 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
         for index, i in tqdm(enumerate(illust_datas), desc=f"Downloading illusts from https://www.pixiv.net/artworks/{art_id}", unit="illusts", total=len(illust_datas), leave=False):
             if str(index + 1) in img_nums:
                 img_url = i.get('urls').get('original')
-                if os.path.exists(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}')):
-                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
+                img_name = f'pixiv_{art_id}_p{index}{os.path.splitext(img_url)[1]}'
+                img_file_name = cm.check_image_file(img_path, img_name) #画像ファイルの名前からデータベースを探索
+                #データベースに乗っていた場合、ダウンロードせずにそのまま利用
+                if img_file_name:
+                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({img_file_name}{os.path.splitext(img_url)[1]})')
                     continue
+                
+                #BAN対策
                 if g_count == 10:
-                    time.sleep(random.uniform(interval_sec*2.5,interval_sec*5))
+                    time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                     g_count = 1
                 else:
                     time.sleep(interval_sec)
                     g_count += 1
-                img_data = cm.get_with_cookie(img_url, pixiv_cookie, pixiv_header)
-                with open(os.path.join(episode_path, f'{art_id}_p{index}{os.path.splitext(img_url)[1]}'), 'wb') as f:
+                
+                img_data = cm.get_with_cookie(img_url, pixiv_cookie, pixiv_header) #画像のダウンロード
+
+                img_file_name = cm.check_image_hash(img_path, img_data.content, img_name) #画像ファイルのハッシュ値を取得
+
+                with open(os.path.join(img_path, f'{img_file_name}{os.path.splitext(img_url)[1]}'), 'wb') as f:
                     f.write(img_data.content)
-                data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({art_id}_p{index}{os.path.splitext(img_url)[1]})')
+                data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({img_file_name}{os.path.splitext(img_url)[1]})')
     if novel:
         #小説内アップロードの画像リンクの形式を[リンク名](リンク先)に変更
         for inner_link in tqdm(inner_links, desc=f"Downloading inner illusts from {url}", unit="illusts", total=len(inner_links), leave=False):
             in_img_url = cm.find_key_recursively(json_data, inner_link).get('urls').get('original')
-            if os.path.exists(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}')):
-                    data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({inner_link}{os.path.splitext(in_img_url)[1]})')
+            in_img_name = f'pixiv_{id}_{inner_link}{os.path.splitext(in_img_url)[1]}'
+            in_img_file_name = cm.check_image_file(img_path, in_img_name) #画像ファイルの名前からデータベースを探索
+
+            if in_img_file_name:
+                    data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({in_img_file_name}{os.path.splitext(in_img_url)[1]})')
                     continue
+            
+            #BAN対策
             if g_count == 10:
-                time.sleep(random.uniform(interval_sec*2.5,interval_sec*5))
+                time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                 g_count = 1
             else:
                 time.sleep(interval_sec)
                 g_count += 1
-            in_img_data = cm.get_with_cookie(in_img_url, pixiv_cookie, pixiv_header)
-            with open(os.path.join(episode_path, f'{inner_link}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
+            
+            in_img_data = cm.get_with_cookie(in_img_url, pixiv_cookie, pixiv_header) #画像のダウンロード
+
+            in_img_file_name = cm.check_image_hash(img_path, in_img_data.content, in_img_name) #画像ファイルのハッシュ値を取得
+
+            with open(os.path.join(img_path, f'{in_img_file_name}{os.path.splitext(in_img_url)[1]}'), 'wb') as f:
                 f.write(in_img_data.content)
-            data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({inner_link}{os.path.splitext(in_img_url)[1]})')
+
+            data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({in_img_file_name}{os.path.splitext(in_img_url)[1]})')
 
     return data
 
