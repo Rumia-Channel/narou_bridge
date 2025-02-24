@@ -467,7 +467,7 @@ def gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, chapter,
     
     logging.info(f"Generated {ncode} from PDF file")
 
-def init(cookie_path, is_login, interval):
+def init(cookie_path, data_path, is_login, interval):
     pass
 
 def convert(folder_path, key_data, data_path, host_name):
