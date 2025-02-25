@@ -20,6 +20,9 @@ from tqdm import tqdm
 import crawler.common as cm
 import crawler.convert_narou as cn
 
+#ファイルのバージョン
+mv = 3
+
 #初期化処理
 def init(cookie_path, data_path, is_login, interval):
 
@@ -555,7 +558,7 @@ def dl_series(series_id, folder_path, key_data, update):
     #episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
     
     novel = {
-        'version': 2,
+        'version': mv,
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9)))),
         'title': series_title,
         'id': series_id,
@@ -641,7 +644,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     }
 
     novel = {
-        'version': 2,
+        'version': mv,
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
         'title': novel_title,
         'id': novel_id,
@@ -727,7 +730,7 @@ def dl_art(art_id, folder_path, key_data):
     }
 
     novel = {
-        'version': 2,
+        'version': mv,
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
         'title': art_title,
         'id': art_id,
@@ -900,7 +903,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
         }
 
     novel = {
-        'version': 2,
+        'version': mv,
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9)))),
         'title': c_title,
         'id': comic_id,
