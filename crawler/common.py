@@ -52,7 +52,8 @@ def check_image_file(img_path, file_name):
 
     for key, value in database.items():
         if key == file_name:
-            return value
+            if os.path.exists(os.path.join(img_path, value+f'{os.path.splitext(file_name)[1]}')):
+                return value
 
     return None
 
