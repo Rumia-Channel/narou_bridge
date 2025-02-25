@@ -970,7 +970,7 @@ def dl_user(user_id, folder_path, key_data, update):
     # user_id が JSON のキーとして存在するか確認
     if user_id not in data:
         # user_id が存在しなければ "enable" を値として追加
-        data["version"] = 2
+        data["version"] = 3
         data[user_id] = {}
         data[user_id]['novel'] = "enable"
         data[user_id]['comic'] = "disable"
