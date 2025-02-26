@@ -283,6 +283,16 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
 
         if not art_data:
             pattern = re.compile(fr"\[pixivimage:({art_id})-(\d+)\]")
+            matches = pattern.findall(data)
+            for match in matches:
+                art_id, num = match
+                index = int(num) - 1
+                img_name = f'pixiv_{art_id}_p{index}'
+                img_file_name = cm.check_image_file(img_path, img_name) #画像ファイルの名前からデータベースを探索
+                if img_file_name:
+                    data = data.replace(f'[pixivimage:{art_id}-{num}]', f'[image]({img_file_name})')
+                    continue
+
             data = pattern.sub('\n', data)
             continue
 
@@ -295,7 +305,7 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
                 img_file_name = cm.check_image_file(img_path, img_name) #画像ファイルの名前からデータベースを探索
                 #データベースに乗っていた場合、ダウンロードせずにそのまま利用
                 if img_file_name:
-                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({img_file_name}{os.path.splitext(img_url)[1]})')
+                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({img_file_name})')
                     continue
                 
                 #BAN対策
@@ -321,7 +331,7 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
             in_img_file_name = cm.check_image_file(img_path, in_img_name) #画像ファイルの名前からデータベースを探索
 
             if in_img_file_name:
-                    data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({in_img_file_name}{os.path.splitext(in_img_url)[1]})')
+                    data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({in_img_file_name})')
                     continue
             
             #BAN対策

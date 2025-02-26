@@ -51,9 +51,9 @@ def check_image_file(img_path, file_name):
         database = json.load(f)
 
     for key, value in database.items():
-        if key == file_name:
+        if key == file_name or key.split('.')[0] == file_name.split('.')[0]:
             if os.path.exists(os.path.join(img_path, value+f'{os.path.splitext(file_name)[1]}')):
-                return value
+                return value+f'{os.path.splitext(key)[1]}'
 
     return None
 
