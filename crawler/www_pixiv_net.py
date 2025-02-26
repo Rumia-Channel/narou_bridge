@@ -278,7 +278,13 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
         link_dict[art_id].append(img_num)
     #画像リンクの形式を[リンク名](リンク先)に変更
     for art_id, img_nums in link_dict.items():
-        illust_json = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages", pixiv_cookie, pixiv_header).json()
+
+        art_data = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages", pixiv_cookie, pixiv_header)
+
+        if not art_data:
+            continue
+
+        illust_json = art_data.json()
         illust_datas = cm.find_key_recursively(illust_json, 'body')
         for index, i in tqdm(enumerate(illust_datas), desc=f"Downloading illusts from https://www.pixiv.net/artworks/{art_id}", unit="illusts", total=len(illust_datas), leave=False):
             if str(index + 1) in img_nums:
