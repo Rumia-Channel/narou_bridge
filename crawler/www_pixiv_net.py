@@ -282,6 +282,8 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
         art_data = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages", pixiv_cookie, pixiv_header)
 
         if not art_data:
+            pattern = re.compile(fr"\[pixivimage:({art_id})-(\d+)\]")
+            data = pattern.sub('\n', data)
             continue
 
         illust_json = art_data.json()
