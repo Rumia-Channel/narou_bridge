@@ -994,7 +994,7 @@ def dl_user(user_id, folder_path, key_data, update):
         data["version"] = 3
         data[user_id] = {}
         data[user_id]['novel'] = "enable"
-        data[user_id]['comic'] = "disable"
+        data[user_id]['comic'] = "enable"
 
     # 更新されたデータを再び user.json に書き込む
     with open(user_json, 'w', encoding='utf-8') as f:
