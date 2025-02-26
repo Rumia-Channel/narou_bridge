@@ -107,6 +107,9 @@ def migrate_0_0_3():
             if ver_check(user_json, mv):
                 continue
 
+            if not ver_check(user_json, mv-1):
+                migrate_0_0_1()
+
             new_user_json = user_json
 
             new_user_json["version"] = mv
@@ -122,6 +125,9 @@ def migrate_0_0_3():
 
             if ver_check(raw_json, mv):
                 continue
+
+            if not ver_check(user_json, mv-1):
+                migrate_0_0_1()
 
             new_raw_json = {}
             new_raw_json = raw_json
@@ -197,6 +203,33 @@ def migrate_0_0_3():
 
     print("Migration 0.0.3 completed")
 
+def migrate_0_0_3_c():
+    import util
+    import json
+    import os
+    from tqdm import tqdm
+
+    mv = 3
+
+    config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl = util.load_config()
+
+    total_files = 0
+    for root, dirs, files in os.walk(data_path):
+        total_files += 1
+
+    for root, dirs, files in tqdm(os.walk(data_path), total=total_files):
+        
+        if "user.json" in files:
+            with open(os.path.join(root, "user.json"), "r", encoding="utf-8") as f:
+                user_json = json.load(f)
+
+            if ver_check(user_json, mv):
+                if user_json["version"] == 3:
+                    for key, value in user_json.items():
+                        user_json[key]["comic"] = "enable"
+            else:
+                migrate_0_0_3()
+
 def main():
     parser = argparse.ArgumentParser(description="Migrate with version argument")
     parser.add_argument("version", help="Specify a version number like 0.0.1")
@@ -206,6 +239,8 @@ def main():
         migrate_0_0_1()
     elif args.version == "0.0.3":
         migrate_0_0_3()
+    elif args.version == "0.0.3-c":
+        migrate_0_0_3_c()
     else:
         print(f"No migration defined for version {args.version}")
 
