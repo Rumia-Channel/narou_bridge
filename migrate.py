@@ -226,7 +226,7 @@ def migrate_0_0_3_c():
             if ver_check(user_json, mv):
                 if user_json["version"] == 3:
                     for key, value in user_json.items():
-                        user_json[key]["comic"] = "enable"
+                        user_json[str(key)]["comic"] = "enable"
                     
                     with open(os.path.join(root, "user.json"), "w", encoding="utf-8") as f:
                         json.dump(user_json, f, ensure_ascii=False, indent=4)
