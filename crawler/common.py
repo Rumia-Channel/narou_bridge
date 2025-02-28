@@ -104,7 +104,8 @@ def find_key_recursively(data, target_key):
     return None
 
 # クッキーを使ってGETリクエストを送信
-def get_with_cookie(url, cookie, header, retries=5, delay=1):
+def get_with_cookie(url, cookie, header, retries=5, delay=5):
+    response = None  # responseを初期化
     for i in range(retries):
         try:
             response = requests.get(url, cookies=cookie, headers=header, timeout=10)
@@ -114,17 +115,17 @@ def get_with_cookie(url, cookie, header, retries=5, delay=1):
             logging.error(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
         except RequestException as e:
             # 404エラーを特別扱い
-            if response.status_code == 404:
+            if response is not None and response.status_code == 404:
                 logging.error("\n404 Error: Resource not found.")
-                return None  # 404エラーの場合はリトライしない
+                return response
             else:
                 logging.error(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
         
         if i < retries - 1:
             time.sleep(delay * (2 ** i))  # 指数バックオフ
         else:
-            logging.error("\nThe retry limit has been reached. No response received.。")
-            return None  # リトライ限界に達した場合
+            logging.error("\nThe retry limit has been reached. No response received.")
+            return response
         
 # キーをすべて文字列に変換する関数
 def convert_keys_to_str(d):
