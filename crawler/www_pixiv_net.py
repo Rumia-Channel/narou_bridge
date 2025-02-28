@@ -1,5 +1,6 @@
 import re
 import os
+import shutil
 import requests
 from urllib.parse import unquote
 import json
@@ -240,10 +241,7 @@ def init(cookie_path, data_path, is_login, interval):
         # cookieの有無とログイン状態を確認
         if not os.path.isfile(cookie_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=pixiv_cookie, headers={'User-Agent': str(ua)}).history):
             with sync_playwright() as playwright:
-                login(playwright)
-        else:
-            with sync_playwright() as playwright:
-                update_cookie(playwright)
+                login(playwright)      
 
         pixiv_cookie, ua = cm.load_cookies_and_ua(cookie_path)
 
@@ -371,7 +369,7 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
                     continue
                 
                 #BAN対策
-                if g_count == 10:
+                if g_count >= 10:
                     time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                     g_count = 1
                 else:
@@ -401,7 +399,7 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
                     continue
             
             #BAN対策
-            if g_count == 10:
+            if g_count >= 10:
                 time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                 g_count = 1
             else:
@@ -587,7 +585,7 @@ def dl_series(series_id, folder_path, key_data, update):
         else:
 
             #BAN対策
-            if g_count == 10:
+            if g_count >= 10:
                 time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                 g_count = 1
             else:
@@ -629,6 +627,11 @@ def dl_series(series_id, folder_path, key_data, update):
             text_count = int(cm.find_key_recursively(json_data, 'body').get('characterCount'))
 
             total_text += text_count
+
+        #重複した小説の除去
+        if os.path.exists(os.path.join(folder_path, f'n{entry["id"]}')):
+            shutil.rmtree(os.path.join(folder_path, f'n{entry["id"]}'))
+            logging.info(f"Remove duplicate folder: n{entry['id']}")
 
         episode[i] = {
             'id' : entry['id'],
@@ -987,6 +990,11 @@ def dl_comic(comic_id, folder_path, key_data, update):
 
             total_text = 0
 
+        #重複した漫画の除去
+        if os.path.exists(os.path.join(folder_path, f'a{work_id}')):
+            shutil.rmtree(os.path.join(folder_path, f'a{work_id}'))
+            logging.info(f"Remove duplicated art folder: a{work_id}")
+
         episode[i] = {
             'id' : work_id,
             'chapter': None,
@@ -1051,11 +1059,7 @@ def dl_user(user_id, folder_path, key_data, update):
     user_mangas = []
     user_arts = []
     logging.info(f'User Name: {user_name}')
-    #ユーザーの小説と小説シリーズがない場合
-    if not user_all_novels and not user_all_novel_series:
-        logging.error("No novels or novel series found.")
-        return
-     
+
     user_json = os.path.join(folder_path, 'user.json')
 
     # user.jsonファイルが存在するかどうか確認
@@ -1104,7 +1108,17 @@ def dl_user(user_id, folder_path, key_data, update):
         time.sleep(interval_sec)
         for nid in cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles", pixiv_cookie, pixiv_header).json().get('body'):
             in_novel_series.append(nid.get('id'))
-    
+            if os.path.exists(os.path.join(folder_path, f'n{nid.get('id')}')):
+                shutil.rmtree(os.path.join(folder_path, f'n{nid.get('id')}'))
+                logging.info(f"Remove duplicated novel folder: n{nid.get('id')}")
+
+        if g_count >= 10:
+            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+            g_count = 1
+        else:
+            time.sleep(interval_sec)
+            g_count += 1
+
     #漫画シリーズとの重複を除去
     for i in user_manga_series:
         arts = {}
@@ -1115,6 +1129,16 @@ def dl_user(user_id, folder_path, key_data, update):
 
         for j, art_id in arts.items():
             in_manga_series.append(art_id)
+            if os.path.exists(os.path.join(folder_path, f'a{art_id}')):
+                shutil.rmtree(os.path.join(folder_path, f'a{art_id}'))
+                logging.info(f"Remove duplicated art folder: a{art_id}")
+        
+        if g_count >= 10:
+            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+            g_count = 1
+        else:
+            time.sleep(interval_sec)
+            g_count += 1
         
     user_mangas = user_mangas + user_arts
 
@@ -1140,16 +1164,24 @@ def dl_user(user_id, folder_path, key_data, update):
                     series_old_update_date = datetime.fromisoformat(old_series_json.get('updateDate'))
                     if series_update_date == series_old_update_date:
                         logging.info(f"{old_series_json['title']} に更新はありません。")
-                        if g_count == 10:
+                        if g_count >= 10:
                             time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                             g_count = 1
                         else:
                             time.sleep(interval_sec)
                             g_count += 1
                         continue
+
+                    if g_count >= 10:
+                        time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                        g_count = 1
+                    else:
+                        time.sleep(interval_sec)
+                        g_count += 1
+
                     dl_series(series_id, folder_path, key_data, True)
             else:
-                if g_count == 10:
+                if g_count >= 10:
                     time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                     g_count = 1
                 else:
@@ -1168,7 +1200,7 @@ def dl_user(user_id, folder_path, key_data, update):
                     novel_old_update_date = datetime.fromisoformat(old_novel_json.get('updateDate'))
                     if novel_update_date == novel_old_update_date:
                         logging.info(f"{old_novel_json['title']} に更新はありません。")
-                        if g_count == 10:
+                        if g_count >= 10:
                             time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                             g_count = 1
                         else:
@@ -1176,7 +1208,7 @@ def dl_user(user_id, folder_path, key_data, update):
                             g_count += 1
                         continue
             else:
-                if g_count == 10:
+                if g_count >= 10:
                     time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                     g_count = 1
                 else:
@@ -1205,13 +1237,21 @@ def dl_user(user_id, folder_path, key_data, update):
                     comic_old_update_date = datetime.fromisoformat(old_comic_json.get('updateDate'))
                     if str(comic_update_date) == str(comic_old_update_date):
                         logging.info(f"{old_comic_json['title']} に更新はありません。")
-                        if g_count == 10:
+                        if g_count >= 10:
                             time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                             g_count = 1
                         else:
                             time.sleep(interval_sec)
                             g_count += 1
                         continue
+
+                    if g_count >= 10:
+                        time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                        g_count = 1
+                    else:
+                        time.sleep(interval_sec)
+                        g_count += 1
+
                     dl_comic(comic_id, folder_path, key_data, True)
             else:
                 time.sleep(random.uniform(interval_sec*5,interval_sec*10))
@@ -1233,7 +1273,7 @@ def dl_user(user_id, folder_path, key_data, update):
                     art_old_update_date = datetime.fromisoformat(old_art_json.get('updateDate'))
                     if art_update_date == art_old_update_date:
                         logging.info(f"{old_art_json['title']} に更新はありません。")
-                        if g_count == 10:
+                        if g_count >= 10:
                             time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                             g_count = 1
                         else:
@@ -1241,7 +1281,7 @@ def dl_user(user_id, folder_path, key_data, update):
                             g_count += 1
                         continue
                 else:
-                    if g_count == 10:
+                    if g_count >= 10:
                         time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                         g_count = 1
                     else:
@@ -1249,7 +1289,7 @@ def dl_user(user_id, folder_path, key_data, update):
                         g_count += 1
 
             else:
-                if g_count == 10:
+                if g_count >= 10:
                     time.sleep(random.uniform(interval_sec*5,interval_sec*10))
                     g_count = 1
                 else:
@@ -1328,6 +1368,14 @@ def update(folder_path, key_data, data_path, host_name):
         for user_id, status in user_json.items():
             if user_id == "version":
                 continue
+
+            if g_count >= 10:
+                time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+                g_count = 1
+            else:
+                time.sleep(interval_sec)
+                g_count += 1
+
             flag = False
             if not flag and status['novel'] == 'enable':
                 if cm.get_with_cookie(f'https://www.pixiv.net/users/{user_id}/novels', pixiv_cookie, pixiv_header).status_code == 404:
@@ -1422,7 +1470,7 @@ def update(folder_path, key_data, data_path, host_name):
                 logging.info(f'{index_data.get("title")} に更新はありません。')
 
 
-        if g_count == 10:
+        if g_count >= 10:
             time.sleep(random.uniform(interval_sec*5,interval_sec*10))
             g_count = 1
         else:
@@ -1515,7 +1563,7 @@ def re_download(folder_path, key_data, data_path, host_name):
 
             dl_comic(comic_id, folder_path, key_data, False)
 
-        if g_count == 10:
+        if g_count >= 10:
             time.sleep(random.uniform(interval_sec*5,interval_sec*10))
             g_count = 1
         else:
