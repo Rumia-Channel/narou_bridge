@@ -35,6 +35,63 @@ def init(cookie_path, data_path, is_login, interval):
 
     logging.info(f'Login : {is_login}')
 
+    def update_cookie(playwright: Playwright) -> None:
+
+        pixiv_cookie, ua = cm.load_cookies_and_ua(cookie_path)
+        
+        #ヘッドレスモードで起動
+        browser = playwright.firefox.launch(
+            headless=True,
+            args=[
+                "-headless",  # ヘッドレスモード
+                "--disable-blink-features=AutomationControlled"  # 自動化検出の回避
+            ])
+        context = browser.new_context(locale='en-US', viewport={"width": 1920, "height": 1080}, screen={"width": 1920, "height": 1080}, user_agent=ua)
+        page = context.new_page()
+        #page.set_viewport_size({'width': 1280, 'height': 1280})
+
+        # ヘッドレスモードを隠すためのスクリプト
+        page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+        });
+        """)
+
+        # フィンガープリントを偽装するスクリプトを挿入
+        page.add_init_script("""
+        Object.defineProperty(window, 'chrome', {
+        get: () => ({ runtime: {} }),
+        });
+
+        Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3],  // プラグイン情報を設定
+        });
+
+        Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en']
+        });
+        """)
+
+        # Pixivのログインページにアクセス
+        logging.info("Navigating to Pixiv...")
+        cookie_list = [
+                        {"name": k, "value": v, "domain": ".pixiv.net", "path": "/", "secure": True, "httpOnly": True}
+                        for k, v in pixiv_cookie.items() if v  # 空でない Cookie だけ追加
+                    ]
+        context.add_cookies(cookie_list)
+        page.goto("https://www.pixiv.net/")
+        time.sleep(random.uniform(1, 5))
+        page.goto("https://www.pixiv.net/novel")
+
+        cookies = context.cookies()
+        
+        cm.save_cookies_and_ua(cookie_path, cookies, ua)
+
+        # ---------------------
+        context.close()
+        browser.close()
+
+
     def login(playwright: Playwright) -> None:
         # ブラウザ設定
 
@@ -180,11 +237,13 @@ def init(cookie_path, data_path, is_login, interval):
 
     if is_login:
 
-
         # cookieの有無とログイン状態を確認
         if not os.path.isfile(cookie_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=pixiv_cookie, headers={'User-Agent': str(ua)}).history):
             with sync_playwright() as playwright:
-                login(playwright)      
+                login(playwright)
+        else:
+            with sync_playwright() as playwright:
+                update_cookie(playwright)
 
         pixiv_cookie, ua = cm.load_cookies_and_ua(cookie_path)
 
