@@ -222,9 +222,11 @@ def return_content_json(novelid):
 
 # レスポンスからcomicのjsonデータを返却
 def return_comic_content_json(comic_id):
-    comic_data = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{comic_id}", pixiv_cookie, pixiv_header).text
-    json_data = json.loads(unescape(comic_data))
-    return json_data
+    response = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{comic_id}", pixiv_cookie, pixiv_header)
+    if response.status_code == 200:
+        return json.loads(unescape(response.text))
+    else:
+        return None
 
 #アンケートの整形
 def format_survey(survey):
@@ -306,6 +308,7 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
                 #データベースに乗っていた場合、ダウンロードせずにそのまま利用
                 if img_file_name:
                     data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', f'[image]({img_file_name})')
+                    logging.info(f"Image {img_file_name} already exists.")
                     continue
                 
                 #BAN対策
@@ -316,7 +319,10 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
                     time.sleep(interval_sec)
                     g_count += 1
                 
-                img_data = cm.get_with_cookie(img_url, pixiv_cookie, pixiv_header) #画像のダウンロード
+                img_data = cm.get_with_cookie(img_url, pixiv_cookie, pixiv_header) #画像のダウンロード]
+
+                if not img_data.status_code == 200:
+                    data = data.replace(f'[pixivimage:{art_id}-{index + 1}]', '\n') #画像のダウンロードに失敗した場合リンクを削除
 
                 img_file_name = cm.check_image_hash(img_path, img_data.content, img_name) #画像ファイルのハッシュ値を取得
 
@@ -332,6 +338,7 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
 
             if in_img_file_name:
                     data = data.replace(f'[uploadedimage:{inner_link}]', f'[image]({in_img_file_name})')
+                    logging.info(f"Image {in_img_file_name} already exists.")
                     continue
             
             #BAN対策
@@ -343,6 +350,10 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
                 g_count += 1
             
             in_img_data = cm.get_with_cookie(in_img_url, pixiv_cookie, pixiv_header) #画像のダウンロード
+
+            if not in_img_data.status_code == 200:
+                data = data.replace(f'[uploadedimage:{inner_link}]', '\n') #画像のダウンロードに失敗した場合リンクを削除
+                continue
 
             in_img_file_name = cm.check_image_hash(img_path, in_img_data.content, in_img_name) #画像ファイルのハッシュ値を取得
 
@@ -698,7 +709,12 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
 def dl_art(art_id, folder_path, key_data):
     #漫画のデータ取得
     logging.info(f"art ID: {art_id}")
-    a_detail = return_comic_content_json(art_id).get('body')
+    #消えてる可能性を考慮
+    a_data = return_comic_content_json(art_id)
+    if not a_data:
+        logging.error(f"Art ID: {art_id} is not available.")
+        return
+    a_detail = a_data.get('body')
     a_toc = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/pages", pixiv_cookie, pixiv_header)
     art_title = a_detail.get('title')
     art_author = a_detail.get('userName')
@@ -871,7 +887,11 @@ def dl_comic(comic_id, folder_path, key_data, update):
             g_count = 1
 
             #エピソードの処理
-            json_data = return_comic_content_json(work_id).get('body')
+            episode_data = return_comic_content_json(work_id)
+            if not episode_data:
+                logging.error(f"Failed to download episode {work_id}")
+                continue
+            json_data = episode_data.get('body')
             ep_toc = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{work_id}/pages", pixiv_cookie, pixiv_header)
 
             ep_text = ''
@@ -1144,7 +1164,11 @@ def dl_user(user_id, folder_path, key_data, update):
             if update:
                 raw_path = os.path.join(folder_path, f'a{art_id}', 'raw', 'raw.json')
                 if os.path.isfile(raw_path):
-                    art_update_date = datetime.fromisoformat(return_comic_content_json(art_id).get('body').get('uploadDate'))
+                    art_detail = return_comic_content_json(art_id)
+                    if not art_detail:
+                        logging.error(f"Failed to download episode {art_id}")
+                        continue
+                    art_update_date = datetime.fromisoformat(art_detail.get('body').get('uploadDate'))
                     with open (raw_path, 'r', encoding='utf-8') as f:
                         old_art_json = json.load(f)
                     art_old_update_date = datetime.fromisoformat(old_art_json.get('updateDate'))
@@ -1306,6 +1330,9 @@ def update(folder_path, key_data, data_path, host_name):
                 logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
             json_data = return_comic_content_json(art_id)
+            if not json_data:
+                logging.error(f"Failed to download episode {art_id}")
+                continue
             with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as onf:
                 old_novel_json = json.load(onf)
             if datetime.fromisoformat(json_data.get('body').get('uploadDate')) != datetime.fromisoformat(old_novel_json.get('updateDate')):
@@ -1422,7 +1449,7 @@ def re_download(folder_path, key_data, data_path, host_name):
 
         elif index_data.get("serialization") in ["連載中", "完結"] and index_data.get("type") == "comic":
             comic_id = folder_name.replace('c', '')
-            if cm.get_with_cookie(f'https://www.pixiv.net/user/{index_data.get("author_id")}/series/{comic_id}') == 404:
+            if cm.get_with_cookie(f'https://www.pixiv.net/user/{index_data.get("author_id")}/series/{comic_id}', pixiv_cookie, pixiv_header) == 404:
                 logging.error("404 Not Found")
                 logging.error("Incorrect URL, Deleted, Private, or My Pics Only.")
                 continue
