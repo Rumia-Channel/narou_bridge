@@ -237,6 +237,64 @@ def migrate_0_0_3_c():
             else:
                 migrate_0_0_3()
 
+#0.0.4からの移行
+def migrate_0_0_4():
+    import os
+    import json
+    import util
+    from tqdm import tqdm
+    
+    config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl = util.load_config()
+
+    mv = 4
+
+    total_files = 0
+    for root, dirs, files in os.walk(data_path):
+        total_files += 1
+
+    for root, dirs, files in tqdm(os.walk(data_path), total=total_files):
+
+        #user.json
+
+        if "user.json" in files:
+            with open(os.path.join(root, "user.json"), "r", encoding="utf-8") as f:
+                user_json = json.load(f)
+
+            if ver_check(user_json, mv):
+                continue
+
+            new_user_json = user_json
+
+            new_user_json["version"] = mv
+
+            with open(os.path.join(root, "user.json"), "w", encoding="utf-8") as f:
+                json.dump(new_user_json, f, ensure_ascii=False, indent=4)
+
+        #raw.json
+
+        if "raw.json" in files:
+            with open(os.path.join(root, "raw.json"), "r", encoding="utf-8") as f:
+                raw_json = json.load(f)
+
+            if ver_check(raw_json, mv):
+                continue
+
+            new_raw_json = raw_json
+
+            new_raw_json["version"] = mv
+
+            new_raw_json["tags"] = []
+            new_raw_json["all_tags"] = []
+
+            for key, value in new_raw_json["episodes"].items():
+                new_raw_json["episodes"][key]["tags"] = []
+
+            with open(os.path.join(root, "raw.json"), "w", encoding="utf-8") as f:
+                json.dump(new_raw_json, f, ensure_ascii=False, indent=4)
+
+    print("Migration 0.0.4 completed")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Migrate with version argument")
     parser.add_argument("version", help="Specify a version number like 0.0.1")
@@ -248,6 +306,8 @@ def main():
         migrate_0_0_3()
     elif args.version == "0.0.3-c":
         migrate_0_0_3_c()
+    elif args.version == "0.0.4":
+        migrate_0_0_4()
     else:
         print(f"No migration defined for version {args.version}")
 
