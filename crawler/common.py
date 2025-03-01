@@ -4,6 +4,7 @@ import json
 from jsondiff import diff
 import requests
 from requests.exceptions import RequestException, ConnectionError, Timeout
+from urllib.parse import unquote
 import time
 from datetime import datetime
 import hashlib
@@ -176,11 +177,23 @@ def gen_site_index(folder_path ,key_data, site_name):
                 author = data.get('author', 'No author found')
                 author_id = data.get('author_id', 'No author_id found')
                 author_url = data.get('author_url', 'No author_url found')
+                tags = data.get('tags', 'No tags found')
+                all_tags = data.get('all_tags', 'No all_tags found')
+                caption = unquote(data.get('caption', 'No caption found'))
                 create_date = data.get('createDate', 'No create date found')
                 update_date = data.get('updateDate', 'No update date found')
                 type = data.get('type', 'No type found')
                 serialization = data.get('serialization', 'No serialization found')
-                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'type': type, 'serialization': serialization, 'create_date': create_date, 'update_date': update_date}
+                episodes_data = {}
+                for key, value in data.get('episodes').items():
+                    episodes_data[key] = {}
+                    episodes_data[key]['title'] = value.get('title', 'No title found')
+                    episodes_data[key]['id'] = value.get('id', 'No id found')
+                    episodes_data[key]['caption'] = unquote(value.get('caption', 'No caption found'))
+                    episodes_data[key]['tags'] = value.get('tags', 'No tags found')
+
+
+                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'type': type, 'serialization': serialization, 'tags': tags, 'all_tags': all_tags, 'caption': caption, 'episodes_data': episodes_data, 'create_date': create_date, 'update_date': update_date}
         else:
             #print(f"raw.json not found in {folder}")
             #return
