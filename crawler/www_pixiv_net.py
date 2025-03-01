@@ -22,7 +22,7 @@ import crawler.common as cm
 import crawler.convert_narou as cn
 
 #ファイルのバージョン
-mv = 3
+mv = 4
 
 #初期化処理
 def init(cookie_path, data_path, is_login, interval):
@@ -161,7 +161,7 @@ def init(cookie_path, data_path, is_login, interval):
         # リキャプチャの確認を1度だけ行う
         time.sleep(random.uniform(2, 5))
         logging.info(f"Current URL after login attempt: {page.url}")
-        if "accounts.pixiv.net" in page.url:  # Pixivのログインページに留まっている場合
+        if "accounts.pixiv.net" in page.url and "two-factor-authentication" in page.url:  # Pixivのログインページに留まっている場合
             logging.info("reCAPTCHA detected. Solving...")
             try:
                 with recaptchav2.SyncSolver(page) as solver:
@@ -509,6 +509,7 @@ def dl_series(series_id, folder_path, key_data, update):
     series_author_id = s_detail.get('userId')
     series_episodes = s_detail.get('total')
     series_chara = s_detail.get('publishedTotalCharacterCount')
+    series_tags = list(s_detail.get('tags'))
     series_caption_data = cm.find_key_recursively(s_detail, 'caption')
     series_create_day = datetime.fromisoformat(s_detail.get('createDate'))
     series_update_day = datetime.fromisoformat(s_detail.get('updateDate'))
@@ -520,6 +521,7 @@ def dl_series(series_id, folder_path, key_data, update):
     logging.info(f"Series Author: {series_author}")
     logging.info(f"Series Author ID: {series_author_id}")
     logging.info(f"Series Caption: {series_caption}")
+    logging.info(f"Series Tags: {series_tags}")
     logging.info(f"Series Total Episodes: {series_episodes}")
     logging.info(f"Series Total Characters: {series_chara}")
     logging.info(f"Series Create Date: {series_create_day}")
@@ -530,6 +532,7 @@ def dl_series(series_id, folder_path, key_data, update):
     novel_toc = toc_json_data.get('body')
     novel_toc_u = toc_u_json_data.get('body').get('thumbnails')
     episode = {}
+    all_tags = series_tags
     total_text = 0
     series_path = os.path.join(folder_path, f's{series_id}')
     raw_path = os.path.join(series_path, 'raw', 'raw.json')
@@ -551,6 +554,8 @@ def dl_series(series_id, folder_path, key_data, update):
     for i, entry in tqdm(enumerate(novel_toc, 1), desc=f"Downloading episodes", unit="episodes", total=len(novel_toc), leave=False):
         if not entry['available']:
             continue
+
+        tags = []
 
         ep_update = update
 
@@ -580,6 +585,8 @@ def dl_series(series_id, folder_path, key_data, update):
             text = ep_json.get('text')
             createdate = ep_json.get('createDate')
             updatedate = ep_json.get('updateDate')
+            tags = list(ep_json.get('tags', []))
+            all_tags = list(dict.fromkeys(all_tags + ep_json.get('tags')))
             text_count = int(ep_json.get('textCount'))
             total_text += int(ep_json.get('textCount'))
         else:
@@ -598,6 +605,9 @@ def dl_series(series_id, folder_path, key_data, update):
             #表紙のダウンロード
             get_cover(json_data.get('body').get('coverUrl'), os.path.join(series_path, entry['id']))
 
+            tags = [tag.get('tag', '') for tag in json_data.get('body').get('tags', {}).get('tags', [])]
+
+            all_tags = list(dict.fromkeys(all_tags + tags))
 
             introduction = cm.find_key_recursively(json_data, 'body').get('description').replace('<br />', '\n').replace('jump.php?', '')
             postscript = cm.find_key_recursively(json_data, 'body').get('pollData')
@@ -638,6 +648,7 @@ def dl_series(series_id, folder_path, key_data, update):
             'chapter': None,
             'title': entry['title'],
             'textCount': text_count,
+            'tags': tags,
             'introduction': unquote(introduction),
             'text': text,
             'postscript': postscript,
@@ -664,6 +675,8 @@ def dl_series(series_id, folder_path, key_data, update):
         'all_characters': series_chara,
         'type': 'novel',
         'serialization': '連載中',
+        'tags': series_tags,
+        'all_tags': all_tags,
         'createDate': str(series_create_day.astimezone(timezone(timedelta(hours=9)))),
         'updateDate': str(series_update_day.astimezone(timezone(timedelta(hours=9)))),
         'episodes': episode
@@ -699,6 +712,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         novel_postscript = format_survey(novel_postscript)
     else:
         novel_postscript = ''
+    novel_tags = [tag.get('tag', '') for tag in novel_data.get('tags', {}).get('tags', [])]
     novel_create_day = datetime.fromisoformat(novel_data.get('createDate'))
     novel_update_day = datetime.fromisoformat(novel_data.get('uploadDate'))
     logging.info(f"Novel ID: {novel_id}")
@@ -727,6 +741,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         'chapter': None,
         'title': novel_title,
         'textCount': novel_data.get('characterCount'),
+        'tags': novel_tags,
         'introduction': unquote(novel_caption),
         'text': text,
         'postscript': novel_postscript,
@@ -750,6 +765,8 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         'all_characters': novel_data.get('characterCount'),
         'type': 'novel',
         'serialization': '短編',
+        'tags': novel_tags,
+        'all_tags': novel_tags,
         'createDate': str(novel_create_day.astimezone(timezone(timedelta(hours=9)))),
         'updateDate': str(novel_update_day.astimezone(timezone(timedelta(hours=9)))),
         'episodes': episode
@@ -799,6 +816,7 @@ def dl_art(art_id, folder_path, key_data):
         url = i.get('urls').get('original')
         img_num = re.search(r'_p(\d+)\.', url).group(1)
         art_text += f'[pixivimage:{art_id}-{int(img_num) + 1}]\n'
+    art_tags = [tag.get('tag', '') for tag in a_detail.get('tags', {}).get('tags', [])]
     logging.info(f"Art Title: {art_title}")
     logging.info(f"Art Author: {art_author}")
     logging.info(f"Art Author ID: {art_author_id}")
@@ -818,6 +836,7 @@ def dl_art(art_id, folder_path, key_data):
         'chapter': None,
         'title': art_title,
         'textCount': 0,
+        'tags': art_tags,
         'introduction': unquote(art_caption),
         'text': art_text,
         'postscript': art_postscript,
@@ -841,6 +860,8 @@ def dl_art(art_id, folder_path, key_data):
         'all_characters': 0,
         'type': 'comic',
         'serialization': '短編',
+        'tags': art_tags,
+        'all_tags': art_tags,
         'createDate': str(art_create_day.astimezone(timezone(timedelta(hours=9)))),
         'updateDate': str(art_update_day.astimezone(timezone(timedelta(hours=9)))),
         'episodes': episode
@@ -878,6 +899,9 @@ def dl_comic(comic_id, folder_path, key_data, update):
         c_caption = c_caption_data.replace('<br />', '\n').replace('jump.php?', '')
     else:
         c_caption = ''
+
+    comic_tag = list(c_detail.get('tagTranslation', {}).keys())
+    all_tags = comic_tag
 
     for j in c_detail['illustSeries']:
         if j['id'] == comic_id:
@@ -940,6 +964,8 @@ def dl_comic(comic_id, folder_path, key_data, update):
             text = ep_json.get('text')
             createdate = ep_json.get('createDate')
             updatedate = ep_json.get('updateDate')
+            tags = list(ep_json.get('tags', []))
+            all_tags = list(dict.fromkeys(all_tags + ep_json.get('tags')))
             text_count = 0
             total_text = 0
         else:
@@ -965,6 +991,10 @@ def dl_comic(comic_id, folder_path, key_data, update):
 
             #表紙のダウンロード
             get_cover(json_data.get('urls').get('original'), os.path.join(comic_path, work_id))
+
+            ep_tags = [tag.get('tag', '') for tag in json_data.get('tags', {}).get('tags', [])]
+
+            all_tags = list(dict.fromkeys(all_tags + ep_tags))
 
             ep_caption_data = json_data.get('description')
             if ep_caption_data:
@@ -1000,6 +1030,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
             'chapter': None,
             'title': json_data.get('title'),
             'textCount': text_count,
+            'tags': ep_tags,
             'introduction': unquote(ep_caption),
             'text': ep_text,
             'postscript': ep_postscript,
@@ -1023,6 +1054,8 @@ def dl_comic(comic_id, folder_path, key_data, update):
         'all_characters': 0,
         'type': 'comic',
         'serialization': '連載中',
+        'tags': comic_tag,
+        'all_tags': all_tags,
         'createDate': str(c_create_day.astimezone(timezone(timedelta(hours=9)))),
         'updateDate': str(c_update_day.astimezone(timezone(timedelta(hours=9)))),
         'episodes': episode
