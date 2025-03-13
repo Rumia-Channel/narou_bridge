@@ -19,6 +19,8 @@ dependencies = [
     "playwright-recaptcha>=0.5.1",
     "pyopenssl>=24.3.0",
     "pymupdf>=1.25.1",
+    "apng>=0.3.4",
+    "pillow>=11.1.0",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
