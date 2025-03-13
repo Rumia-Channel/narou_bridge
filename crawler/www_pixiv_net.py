@@ -608,7 +608,10 @@ def dl_series(series_id, folder_path, key_data, update):
             json_data = return_content_json(entry['id'])
 
             #表紙のダウンロード
-            get_cover(json_data.get('body').get('coverUrl'), os.path.join(series_path, entry['id']))
+            if not os.path.isfile(os.path.join(series_path, f'cover{os.path.splitext(json_data.get("body").get("coverUrl"))[1]}')):
+                get_cover(json_data.get('body').get('coverUrl'), os.path.join(series_path, entry['id']))
+            else:
+                logging.info(f"Cover image already exists: {json_data.get('body').get('coverUrl')}")
 
             tags = [tag.get('tag', '') for tag in json_data.get('body').get('tags', {}).get('tags', [])]
 
@@ -734,7 +737,10 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     #挿絵リンクへの置き換え
     text = format_image(novel_id, novel_id, True, False, novel_text, json_data, folder_path)
     #表紙のダウンロード
-    get_cover(novel_data.get('coverUrl'), novel_path)
+    if not os.path.isfile(os.path.join(novel_path, f'cover{os.path.splitext(novel_data.get("coverUrl"))[1]}')):
+        get_cover(novel_data.get('coverUrl'), novel_path)
+    else:
+        logging.info(f"Cover image already exists: {novel_data.get('coverUrl')}")
     #ルビの置き換え
     text = format_ruby(text)
     #チャプタータグの除去
@@ -883,7 +889,10 @@ def dl_art(art_id, folder_path, key_data):
     #挿絵リンクへの置き換え
     art_text = format_image(art_id, art_id, False, False, art_text, a_toc.json(), folder_path)
     #表紙のダウンロード
-    get_cover(a_detail.get('urls').get('original'), art_path)
+    if not os.path.isfile(os.path.join(art_path, f'cover{os.path.splitext(a_detail.get('urls').get('original'))[1]}')):
+        get_cover(a_detail.get('urls').get('original'), art_path)
+    else:
+        logging.info(f"Cover image already exists: {a_detail.get('urls').get('original')}")
     episode = {}
     episode[1] = {
         'id' : art_id,
@@ -1045,7 +1054,10 @@ def dl_comic(comic_id, folder_path, key_data, update):
                 ep_text += f'[pixivimage:{work_id}-{int(img_num) + 1}]\n'
 
             #表紙のダウンロード
-            get_cover(json_data.get('urls').get('original'), os.path.join(comic_path, work_id))
+            if not os.path.isfile(os.path.join(comic_path, work_id, f'cover{os.path.splitext(json_data.get("urls").get("original"))[1]}')):
+                get_cover(json_data.get('urls').get('original'), os.path.join(comic_path, work_id))
+            else:
+                logging.info(f"Cover image already exists: {json_data.get('urls').get('original')}")
 
             ep_tags = [tag.get('tag', '') for tag in json_data.get('tags', {}).get('tags', [])]
 
