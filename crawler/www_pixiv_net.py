@@ -8,6 +8,11 @@ from playwright.sync_api import Playwright, sync_playwright, expect
 from playwright_recaptcha import recaptchav2
 from html import unescape
 from datetime import datetime, timezone, timedelta
+import zipfile
+
+#アニメーションPNG用
+from PIL import Image
+import apng
 
 #ログを保存
 import logging
@@ -720,6 +725,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
     logging.info(f"Novel Author: {novel_author}")
     logging.info(f"Novel Author ID: {novel_author_id}")
     logging.info(f"Novel Caption: {novel_caption}")
+    logging.info(f"Novel Tags: {novel_tags}")
     logging.info(f"Novel Create Date: {novel_create_day}")
     logging.info(f"Novel Update Date: {novel_update_day}")
     cm.make_dir('n'+str(novel_id), folder_path)
@@ -813,14 +819,62 @@ def dl_art(art_id, folder_path, key_data):
     art_text = ''
     all_art = a_toc.json().get('body')
     for i in all_art:
-        url = i.get('urls').get('original')
-        img_num = re.search(r'_p(\d+)\.', url).group(1)
-        art_text += f'[pixivimage:{art_id}-{int(img_num) + 1}]\n'
+        url = i.get('urls', {}).get('original')  # 安全にキーを取得
+        match = re.search(r'_p(\d+)\.', url)  # _p数字. のパターンを探す
+        
+        if match:
+            img_num = match.group(1)
+            art_text += f'[pixivimage:{art_id}-{int(img_num) + 1}]\n'
+        else:
+            if '_ugoira' in url:
+
+                anim_img_name = f'pixiv_{art_id}_ugoira.apng'
+                anim_img_file_name = cm.check_image_file(img_path, anim_img_name) #画像ファイルの名前からデータベースを探索
+
+                if anim_img_file_name:
+                    art_text += f'[image]({anim_img_file_name})\n'
+                    logging.info(f"Image {anim_img_file_name} already exists.")
+                    continue
+
+                cm.make_dir('a'+str(art_id), folder_path)
+                time.sleep(interval_sec)
+                ugoira_index = cm.get_with_cookie(f"https://www.pixiv.net/ajax/illust/{art_id}/ugoira_meta?lang=ja", pixiv_cookie, pixiv_header).json().get('body')
+                time.sleep(interval_sec)
+                src = cm.get_with_cookie(ugoira_index.get('originalSrc'), pixiv_cookie, pixiv_header)
+                with open(os.path.join(folder_path, f'a{art_id}', f'{art_id}.zip'), 'wb') as f:
+                    f.write(src.content)
+                
+                temp_path = os.path.join(folder_path, f'a{art_id}', 'temp')
+                os.makedirs(temp_path, exist_ok=True)
+                with zipfile.ZipFile(os.path.join(folder_path, f'a{art_id}', f'{art_id}.zip')) as zf:
+                    zf.extractall(temp_path)
+
+                os.remove(os.path.join(folder_path, f'a{art_id}', f'{art_id}.zip'))
+
+                anim_files = [frame.get("file") for frame in ugoira_index.get('frames')]
+                delays = [frame.get('delay') for frame in ugoira_index.get('frames')]  # delay（ミリ秒）を取得
+                # PillowでAPNGを作成
+                frames = [Image.open(os.path.join(temp_path, str(img))) for img in anim_files]
+                frames[0].save(os.path.join(temp_path, "temp.apng"), save_all=True, append_images=frames[1:], loop=0, duration=delays)
+
+                with open(os.path.join(temp_path, "temp.apng"), 'rb') as f:
+                    anim_img_data = f.read()
+
+                anim_img_file_name = cm.check_image_hash(img_path, anim_img_data, anim_img_name) #画像ファイルのハッシュ値を取得
+
+                with open(os.path.join(img_path, f'{anim_img_file_name}.apng'), 'wb') as f:
+                    f.write(anim_img_data)
+
+                art_text += f'[image]({anim_img_file_name}.apng)\n'
+
+                shutil.rmtree(temp_path)
+        
     art_tags = [tag.get('tag', '') for tag in a_detail.get('tags', {}).get('tags', [])]
     logging.info(f"Art Title: {art_title}")
     logging.info(f"Art Author: {art_author}")
     logging.info(f"Art Author ID: {art_author_id}")
     logging.info(f"Art Caption: {art_caption}")
+    logging.info(f"Art Tags: {art_tags}")
     logging.info(f"Art Create Date: {art_create_day}")
     logging.info(f"Art Update Date: {art_update_day}")
     cm.make_dir('a'+str(art_id), folder_path)
@@ -917,6 +971,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
     logging.info(f"Comic Author: {c_author}")
     logging.info(f"Comic Author ID: {c_author_id}")
     logging.info(f"Comic Caption: {c_caption}")
+    logging.info(f"Comic Tags: {comic_tag}")
     logging.info(f"Comic Create Date: {c_create_day}")
     logging.info(f"Comic Update Date: {c_update_day}")
     cm.make_dir('c'+str(comic_id), folder_path)
