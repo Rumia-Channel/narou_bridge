@@ -665,7 +665,10 @@ def dl_series(series_id, folder_path, key_data, update):
         }
 
     # 作成日で並び替え
-    #episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
+    sorted_episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
+
+    # インデックスを再設定
+    episode = {i + 1: entry for i, (key, entry) in enumerate(sorted_episode.items())}
     
     novel = {
         'version': mv,
@@ -1104,6 +1107,12 @@ def dl_comic(comic_id, folder_path, key_data, update):
             'createDate': createdate,
             'updateDate': updatedate
         }
+
+    # 作成日で並び替え
+    sorted_episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
+
+    # インデックスを再設定
+    episode = {i + 1: entry for i, (key, entry) in enumerate(sorted_episode.items())}
 
     novel = {
         'version': mv,
