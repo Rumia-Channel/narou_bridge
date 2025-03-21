@@ -294,6 +294,39 @@ def migrate_0_0_4():
 
     print("Migration 0.0.4 completed")
 
+def migrate_0_0_5():
+    import os
+    import json
+    import util
+    from tqdm import tqdm
+    
+    config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl = util.load_config()
+
+    mv = 4
+
+    total_files = 0
+    for root, dirs, files in os.walk(data_path):
+        total_files += 1
+
+    for root, dirs, files in tqdm(os.walk(data_path), total=total_files):
+
+        #raw.json
+        if "raw.json" in files:
+            with open(os.path.join(root, "raw.json"), "r", encoding="utf-8") as f:
+                raw_json = json.load(f)
+
+            sorted_episodes = sorted(raw_json["episodes"].items(), key=lambda x: x[1]['createDate'])
+
+            # インデックスを再設定し、新しい辞書に格納
+            raw_json["episodes"] = {str(i + 1): entry[1] for i, entry in enumerate(sorted_episodes)}
+
+            with open(os.path.join(root, "raw.json"), "w", encoding="utf-8") as f:
+                json.dump(raw_json, f, ensure_ascii=False, indent=4)
+
+    print("Migration 0.0.5 completed")
+
+            
+        
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate with version argument")
@@ -308,6 +341,8 @@ def main():
         migrate_0_0_3_c()
     elif args.version == "0.0.4":
         migrate_0_0_4()
+    elif args.version == "0.0.5":
+        migrate_0_0_5()
     else:
         print(f"No migration defined for version {args.version}")
 
