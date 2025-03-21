@@ -323,6 +323,8 @@ def migrate_0_0_5():
             with open(os.path.join(root, "raw.json"), "w", encoding="utf-8") as f:
                 json.dump(raw_json, f, ensure_ascii=False, indent=4)
 
+    print("Migration 0.0.5 completed")
+
             
         
 
