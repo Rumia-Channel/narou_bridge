@@ -4,7 +4,7 @@ name: &name Pixiv
 sitename: *name
 domain: www.pixiv.net
 top_url: http://localhost:8080
-url: \\k<top_url>/pixiv/(?<ncode>[ns]\d+)/
+url: \\k<top_url>/pixiv/(?<ncode>[nsac]\d+)/
 encoding: UTF-8
 confirm_over18: yes
 append_title_to_folder_name: yes
@@ -18,7 +18,7 @@ toc_url: \\k<top_url>/pixiv/\\k<ncode>/
 subtitles: |-
   (?:<div class="p-eplist__chapter-title">(?<chapter>.+?)</div>\s*
   )?<div class="p-eplist__sublist">\s*
-  <a href="(?<href>\/narou/\\k<ncode>/(?<index>\d+)\/)" class="p-eplist__subtitle">\s*
+  <a href="(?<href>\/pixiv/(?<ncode>[sc]\d+)\/(?<index>\d+)\/)" class="p-eplist__subtitle">\s*
   (?<subtitle>.+?)\s*
   </a>\s*
   <div class="p-eplist__update">\s*

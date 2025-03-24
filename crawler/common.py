@@ -278,6 +278,35 @@ def gen_site_index(folder_path ,key_data, site_name):
                                 aspect-ratio: 1 / 1;      /* 正方形を維持 */
                                 box-sizing: border-box;
                             }
+                
+                            /* 追加: スピナーのスタイル */
+                            .spinner {
+                                border: 8px solid #f3f3f3;
+                                border-top: 8px solid #3498db;
+                                border-radius: 50%;
+                                width: 60px;
+                                height: 60px;
+                                animation: spin 1s linear infinite;
+                                margin: auto;
+                            }
+                            @keyframes spin {
+                                0% { transform: rotate(0deg); }
+                                100% { transform: rotate(360deg); }
+                            }
+
+                            /* 追加: ローディング用オーバーレイ */
+                            #loading-overlay {
+                                position: fixed;
+                                top: 0;
+                                left: 0;
+                                width: 100%;
+                                height: 100%;
+                                background: rgba(255, 255, 255, 0.8);
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                z-index: 1000;
+                            }
 
                         </style>
                     </head>
@@ -368,6 +397,10 @@ def gen_site_index(folder_path ,key_data, site_name):
                 
                         <br>
                         <br>
+                
+                        <div id="loading-overlay">
+                            <div class="spinner"></div>
+                        </div>
 
                         <table>
                             <thead id="table-head">
@@ -437,22 +470,24 @@ def gen_site_index(folder_path ,key_data, site_name):
 
                             // index.jsonからデータを読み込み
                             async function fetchData() {
+                                const loadingOverlay = document.getElementById("loading-overlay");
+                                loadingOverlay.style.display = "flex"; // ローディング開始時に表示
                                 try {
-                                    const response = await fetch('index.json');  // 同一階層にあるindex.jsonを読み込み
+                                    const response = await fetch('index.json');  // 同一階層にある index.json を読み込み
                                     const data = await response.json();
-                                    tableData = data;  // JSONデータをtableDataにセット
+                                    tableData = data;  // JSONデータを tableData にセット
                                     loadSettings();  // 設定をローカルストレージから読み込み
-                                    // 変更前：createTagCheckboxes();
-                                    // 変更後：renderTagFilters();
                                     renderTagFilters();
                                     updateAuthorDropdownOptions();
                                     updateAuthorDropdownValue();
-                                    renderHiddenAuthors(); // 追加：非表示作者エリアを更新
+                                    renderHiddenAuthors();
                                     renderTableHeaders();
                                     renderTable();
                                     updatePagination();
                                 } catch (error) {
                                     console.error('JSONデータの読み込みに失敗しました: ', error);
+                                } finally {
+                                    loadingOverlay.style.display = "none"; // 終了時に非表示
                                 }
                             }
 
