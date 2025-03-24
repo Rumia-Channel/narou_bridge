@@ -494,6 +494,8 @@ def get_comic_link(cache, id):
 
             if 1 in arts.keys():
                 break
+            elif not arts:
+                return None
             else:
                 c_p += 1
                 cache = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/series/{id}?p={c_p}&lang=ja", pixiv_cookie, pixiv_header).text), "body")
@@ -956,6 +958,9 @@ def dl_comic(comic_id, folder_path, key_data, update):
     #イラストリンクの取得
     cache = c_detail
     arts = get_comic_link(cache, comic_id)
+    if not arts:
+        logging.error(f"Comic ID: {comic_id} is not available.")
+        return
 
     c_title = c_detail['extraData']['meta']['twitter']['title']
     c_author = c_author = re.search(r'「[^」]*」/「(.*?)」のシリーズ \[pixiv\]', c_detail['extraData']['meta']['title']).group(1)
@@ -1234,6 +1239,9 @@ def dl_user(user_id, folder_path, key_data, update):
         #イラストリンクの取得
         cache = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/series/{i}?p=1&lang=ja", pixiv_cookie, pixiv_header).text), "body")
         arts = get_comic_link(cache, i)
+        if not arts:
+            logging.error(f"Comic ID: {i} is not available.")
+            continue
         arts = dict(sorted(arts.items()))
 
         for j, art_id in arts.items():
