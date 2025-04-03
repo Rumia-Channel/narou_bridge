@@ -492,6 +492,9 @@ def get_comic_link(cache, id):
                 order = item["order"]
                 arts[order] = work_id
 
+                if not item:
+                    break
+
             if 1 in arts.keys():
                 break
             elif not arts:
