@@ -487,6 +487,7 @@ def get_comic_link(cache, id):
     c_p = 1
     arts = {}
     while True:
+            chache_item = None
             for item in cache["page"]["series"]:
                 work_id = item["workId"]
                 order = item["order"]
