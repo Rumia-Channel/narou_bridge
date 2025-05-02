@@ -21,6 +21,8 @@ import logging
 # 共通設定の読み込み
 import util
 
+current_task = None   # ← いま実行中のタスクを記録するグローバル変数
+
 class NoNewlineFormatter(logging.Formatter):
     """改行をスペースに置き換えるフォーマッター"""
     def format(self, record):
@@ -254,6 +256,20 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                 pickle.dump(list(queue.queue), f)  # キューの内容をリストとして保存
             logging.info(f"Queue saved to {JOB_FILE_PATH}")
 
+            # ===== ここから JSON に current_task と queue を書き出し =====
+            task_json_path = os.path.join(queue_path, "task.json")
+            try:
+                data = {
+                    "current_task": current_task,
+                    "queue": list(queue.queue)
+                }
+                with open(task_json_path, "w", encoding="utf-8") as jf:
+                    json.dump(data, jf, ensure_ascii=False, indent=4)
+                logging.info(f"Queue & current_task saved to {task_json_path}")
+            except Exception as e:
+                logging.error(f"Failed to save task.json: {e}")
+            # ===== ここまで =====
+
     def load_queue_from_file(queue, lock):
         """ファイルからキューを復元する"""
         if not os.path.exists(JOB_FILE_PATH):
@@ -355,15 +371,20 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
 
     def process_queue():
         """キューからリクエストを順番に取り出して処理するバックグラウンドスレッド"""
+        global current_task   # グローバルを操作することを明示
         while True:
             req_data = request_queue.get()  # キューからリクエストを取り出す
             if req_data is None:  # None が入った場合はスレッドを終了
                 break
 
+            current_task = req_data
+            save_queue_to_file(request_queue, lock)
+
             # リクエストを処理
             process_request(req_data)
 
-            # 処理後にキューを保存
+
+            current_task = None
             save_queue_to_file(request_queue, lock)
 
             request_queue.task_done()  # 処理が終わったら task_done を呼ぶ
