@@ -17,7 +17,6 @@ queue
 pdf
 *.json
 *.html
-*.js
 *.key
 requirements.lock
 requirements-dev.lock
