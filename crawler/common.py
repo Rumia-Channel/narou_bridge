@@ -215,7 +215,14 @@ def gen_site_index(folder_path ,key_data, site_name):
         f.write(f"{site_name} Index</title>\n")
         f.write("""
                         <!-- 画面固有スタイル -->
-                        <link rel="stylesheet" href="../css/index.css">
+                        <link rel="stylesheet" href="/css/index.css">
+                        <!-- favicon -->
+                        <link rel="icon" href="/icon/favicon.ico">
+                        <!-- PWA対応 -->
+                        <link rel="manifest" href="/manifest.json">
+                        <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
+                        <link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
+                        <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
                     </head>
                     <body>
                         <div><a href="../">戻る</a></div><br><br>""")
@@ -327,9 +334,9 @@ def gen_site_index(folder_path ,key_data, site_name):
                             <button onclick="nextPage()">次へ</button>
                         </div>
 
-                        <script src="../script/index.js"></script>
+                        <script src="/script/index.js"></script>
                         <!-- 共通スタイル -->
-                        <link rel="stylesheet" href="../css/common.css">
+                        <link rel="stylesheet" href="/css/common.css">
                     </body>
                     </html>
                     """)
