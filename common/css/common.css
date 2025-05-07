@@ -34,6 +34,14 @@ th, td {
         background-color: #333333;
     }
 
+    button:disabled {
+        background-color: #555555;
+        color: #888888;
+        border: 1px solid #666666;
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
     table, th, td {
         border-color: #555;
     }
@@ -91,6 +99,14 @@ th, td {
 
     button:hover {
         background-color: #dddddd;
+    }
+
+    button:disabled {
+        background-color: #cccccc;
+        color: #aaaaaa;
+        border: 1px solid #bbbbbb;
+        opacity: 0.6;
+        cursor: not-allowed;
     }
 
     table, th, td {
