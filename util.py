@@ -27,7 +27,12 @@ def create_index(data_path, config, post_path=''):
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
         f.write(f'<script>const POST_URL = "{post_url}";</script>')
         f.write('<script src="script/top_page.js"></script>\n')
-        f.write('<link rel="stylesheet" href="./css/common.css">')
+        f.write('<link rel="stylesheet" href="/css/common.css">\n')
+        f.write('<link rel="icon" href="/icon/favicon.ico">\n')
+        f.write('<link rel="manifest" href="/manifest.json">\n')
+        f.write('<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">\n')
+        f.write('<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">\n')
+        f.write('<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">\n')
         f.write('<title>Index</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
@@ -82,6 +87,39 @@ def create_index(data_path, config, post_path=''):
 
         f.write('</body>\n')
         f.write('</html>\n')
+
+#manifest.jsonファイルの作成
+def create_manifest(data_path):
+    # 書き出すデータ
+    manifest_data = {
+        "name": "Narou Bridge",
+        "short_name": "NarouBridge",
+        "description": "A web application for Narou Bridge.",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#ffffff",
+        "orientation": "portrait",
+        "icons": [
+            {"src": "/icon/icon_512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/icon/icon_384x384.png", "sizes": "384x384", "type": "image/png", "purpose": "any"},
+            {"src": "/icon/icon_192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/icon/icon_180x180.png", "sizes": "180x180", "type": "image/png", "purpose": "any"},
+            {"src": "/icon/icon_152x152.png", "sizes": "152x152", "type": "image/png", "purpose": "any"},
+            {"src": "/icon/icon_144x144.png", "sizes": "144x144", "type": "image/png", "purpose": "any"},
+            {"src": "/icon/icon_128x128.png", "sizes": "128x128", "type": "image/png", "purpose": "any"},
+            {"src": "/icon/icon_96x96.png", "sizes": "96x96", "type": "image/png", "purpose": "any"},
+            {"src": "/icon/icon_72x72.png", "sizes": "72x72", "type": "image/png", "purpose": "any"},
+            {"src": "/icon/icon_48x48.png", "sizes": "48x48", "type": "image/png", "purpose": "any"}
+        ]
+    }
+
+    # manifest.jsonファイルのパス
+    manifest_path = os.path.join(data_path, 'manifest.json')
+
+    # ファイルに書き出し
+    with open(manifest_path, 'w', encoding='utf-8') as f:
+        json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
 #初期設定の読み込み
 def load_config():
@@ -167,6 +205,18 @@ def load_config():
         if os.path.exists(js_destination_path):
             shutil.rmtree(js_destination_path)
         shutil.copytree(js_source_path, js_destination_path)
+
+    # common/icon フォルダを data_path/icon に上書きコピー
+    icon_source_path = os.path.join(os.getcwd(), 'common', 'icon')
+    icon_destination_path = os.path.join(data_path, 'icon')
+
+    if os.path.exists(icon_source_path):
+        if os.path.exists(icon_destination_path):
+            shutil.rmtree(icon_destination_path)
+        shutil.copytree(icon_source_path, icon_destination_path)
+    
+    # manifest.jsonをdata_pathに作成
+    create_manifest(data_path)
 
     # ログフォルダがないなら作成
     if not os.path.exists(log_path):

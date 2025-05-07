@@ -203,7 +203,12 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('<head>\n')
             f.write('<meta charset="UTF-8">\n')
             f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-            f.write(f'<link rel="stylesheet" href="{host_name}/css/common.css">\n')
+            f.write('<link rel="stylesheet" href="/css/common.css">\n')
+            f.write('<link rel="icon" href="/icon/favicon.ico">\n')
+            f.write('<link rel="manifest" href="/manifest.json">\n')
+            f.write('<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">\n')
+            f.write('<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">\n')
+            f.write('<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">\n')
             f.write('<title>Index Pixiv</title>\n')
             f.write('</head>\n')
             f.write('<body>\n')
@@ -224,7 +229,12 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('<head>\n')
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write(f'<link rel="stylesheet" href="{host_name}/css/common.css">\n')
+        f.write('<link rel="stylesheet" href="/css/common.css">\n')
+        f.write('<link rel="icon" href="/icon/favicon.ico">\n')
+        f.write('<link rel="manifest" href="/manifest.json">\n')
+        f.write('<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">\n')
+        f.write('<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">\n')
+        f.write('<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">\n')
         f.write('<title>Index Pixiv</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
@@ -275,7 +285,12 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('<head>\n')
             f.write('<meta charset="UTF-8">\n')
             f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-            f.write(f'<link rel="stylesheet" href="{host_name}/css/common.css">\n')
+            f.write('<link rel="stylesheet" href="/css/common.css">\n')
+            f.write('<link rel="icon" href="/icon/favicon.ico">\n')
+            f.write('<link rel="manifest" href="/manifest.json">\n')
+            f.write('<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">\n')
+            f.write('<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">\n')
+            f.write('<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">\n')
             f.write(f'<title>{ep["title"]}</title>\n')
             f.write('''<style>
                             img {
@@ -294,36 +309,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             write_preface(f, ep, key_data)  # 前書き生成
             write_main_text(f, ep, key_data) # 本文生成
             write_postscript(f, ep, key_data) # あとがき生成
-            f.write('''<script>
-                            function adjustImages() {
-                            const viewW = window.innerWidth;
-                            const viewH = window.innerHeight;
-                            document.querySelectorAll("img").forEach((img) => {
-                                // 一度元のサイズに戻す
-                                img.style.width = "";
-                                img.style.height = "";
-                                if (!img.naturalWidth || !img.naturalHeight) return;
-
-                                // 画像の自然サイズ
-                                const naturalW = img.naturalWidth;
-                                const naturalH = img.naturalHeight;
-
-                                // ウィンドウより大きい場合のみ縮小率を計算
-                                if (naturalW > viewW || naturalH > viewH) {
-                                const scaleW = viewW / naturalW;
-                                const scaleH = viewH / naturalH;
-                                const scale = Math.min(scaleW, scaleH);
-                                if (scale < 1) {
-                                    img.style.width = (naturalW * scale)*0.99 + "px";
-                                    img.style.height = (naturalH * scale)*0.99 + "px";
-                                }
-                                }
-                            });
-                            }
-
-                            window.addEventListener("load", adjustImages);
-                            window.addEventListener("resize", adjustImages);
-                        </script>\n''')
+            f.write('<script src="/script/image.js"></script>\n')
             f.write('</body>\n')
             f.write('</html>\n')
     #完了
