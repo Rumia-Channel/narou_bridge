@@ -203,6 +203,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('<head>\n')
             f.write('<meta charset="UTF-8">\n')
             f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
+            f.write(f'<link rel="stylesheet" href="{host_name}/css/common.css">\n')
             f.write('<title>Index Pixiv</title>\n')
             f.write('</head>\n')
             f.write('<body>\n')
@@ -223,6 +224,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('<head>\n')
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
+        f.write(f'<link rel="stylesheet" href="{host_name}/css/common.css">\n')
         f.write('<title>Index Pixiv</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
@@ -273,6 +275,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('<head>\n')
             f.write('<meta charset="UTF-8">\n')
             f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
+            f.write(f'<link rel="stylesheet" href="{host_name}/css/common.css">\n')
             f.write(f'<title>{ep["title"]}</title>\n')
             f.write('''<style>
                             img {

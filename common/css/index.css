@@ -1,0 +1,99 @@
+/* ＊＊＊＊＊＊＊＊＊  基本レイアウトと見た目 ＊＊＊＊＊＊＊＊＊ */
+
+table {
+    table-layout: fixed;
+    width: 100%;
+}
+
+.hidden-column {
+    display: none;
+}
+
+th,
+td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+    cursor: default;   /* 今回はとりあえず非ソート */
+}
+
+th {
+    background-color: #f4f4f4;
+    cursor: pointer;   /* ソートできる列なら JS 側で好きにどうぞ */
+}
+
+/* ── ページネーション ─────────────────── */
+.pagination {
+    margin-top: 10px;
+    text-align: center;
+}
+.pagination button {
+    padding: 5px 10px;
+    margin: 5px;
+    cursor: pointer;
+}
+
+/* ── セレクタ UI ─────────────────── */
+.row-selector,
+.column-selector,
+.type-selector {
+    margin-bottom: 10px;
+}
+
+/* ── タグ表示 ─────────────────── */
+.tag-item {
+    display: inline-block;
+    padding: 0.2em 0.5em;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    margin-right: 0.3em;
+    margin-bottom: 0.3em;
+    background-color: #f8f8f8;
+}
+.hidden-author-tag {
+    display: inline-block;
+    padding: 0.2em 0.5em;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    margin-right: 0.3em;
+    margin-bottom: 0.3em;
+    background-color: #ffecec;
+    cursor: pointer;
+}
+
+/* ── 行チェックボックス ─────────────────── */
+.row-checkbox {
+    width: calc(100% - 1ch);
+    margin: 0.5ch;
+    aspect-ratio: 1 / 1;
+    box-sizing: border-box;
+}
+
+/* ── ローディングスピナー ─────────────────── */
+.spinner {
+    border: 8px solid #f3f3f3;
+    border-top: 8px solid #3498db;
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    animation: spin 1s linear infinite;
+    margin: auto;
+}
+@keyframes spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* ── フルスクリーンのローディングオーバーレイ ─────────────────── */
+#loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
