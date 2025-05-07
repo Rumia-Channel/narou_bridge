@@ -150,6 +150,24 @@ def load_config():
         if not os.path.exists(cookie_path[key]):
             os.makedirs(cookie_path[key])
 
+    # common/css フォルダを data_path/css に上書きコピー
+    css_source_path = os.path.join(os.getcwd(), 'common', 'css')
+    css_destination_path = os.path.join(data_path, 'css')
+
+    if os.path.exists(css_source_path):
+        if os.path.exists(css_destination_path):
+            shutil.rmtree(css_destination_path)
+        shutil.copytree(css_source_path, css_destination_path)
+
+    # common/script フォルダを data_path/script に上書きコピー
+    js_source_path = os.path.join(os.getcwd(), 'common', 'script')
+    js_destination_path = os.path.join(data_path, 'script')
+
+    if os.path.exists(js_source_path):
+        if os.path.exists(js_destination_path):
+            shutil.rmtree(js_destination_path)
+        shutil.copytree(js_source_path, js_destination_path)
+
     # ログフォルダがないなら作成
     if not os.path.exists(log_path):
         os.makedirs(log_path)
