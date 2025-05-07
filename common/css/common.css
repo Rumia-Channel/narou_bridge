@@ -1,0 +1,127 @@
+/* ＊＊＊＊＊＊＊＊＊ ダーク・ライト共通 柔らかデザイン版 ＊＊＊＊＊＊＊＊＊ */
+
+/* 共通設定 */
+table {
+    border-collapse: collapse;
+}
+th, td {
+    border: 0.5px solid;
+}
+
+/* ダークモード */
+@media (prefers-color-scheme: dark) {
+    html {
+        color-scheme: dark;
+    }
+
+    body {
+        background-color: #1b1b1b; /* 少し温かみのある黒 */
+        color: #d8d8d8; /* やや明るい灰色 */
+    }
+
+    a {
+        color: #a0c4ff; /* 柔らかい青 */
+    }
+
+    button {
+        background-color: #2a2a2a;
+        color: #d8d8d8;
+        border: 1px solid #555;
+        border-radius: 6px;
+    }
+
+    button:hover {
+        background-color: #333333;
+    }
+
+    table, th, td {
+        border-color: #555;
+    }
+
+    th {
+        background-color: #222222;
+    }
+
+    .tag-item {
+        background-color: #333333;
+        border-color: #666;
+    }
+
+    .hidden-author-tag {
+        background-color: #553333;
+        border-color: #a88;
+    }
+
+    .pagination button {
+        background-color: #2a2a2a;
+        color: #d8d8d8;
+    }
+
+    .spinner {
+        border: 8px solid #555;
+        border-top: 8px solid #82c0ff;
+    }
+
+    #loading-overlay {
+        background: rgba(0, 0, 0, 0.5);
+    }
+}
+
+/* ライトモード */
+@media (prefers-color-scheme: light) {
+    html {
+        color-scheme: light;
+    }
+
+    body {
+        background-color: #f2f2f2; /* ふんわりとしたグレーがかった白 */
+        color: #444444; /* 少し柔らかい黒 */
+    }
+
+    a {
+        color: #6699cc; /* やや優しい青 */
+    }
+
+    button {
+        background-color: #e6e6e6;
+        color: #444444;
+        border: 1px solid #bbb;
+        border-radius: 6px;
+    }
+
+    button:hover {
+        background-color: #dddddd;
+    }
+
+    table, th, td {
+        border-color: #ddd;
+    }
+
+    th {
+        background-color: #f0f0f0;
+    }
+
+    .tag-item {
+        background-color: #e0e0e0;
+        border-color: #ccc;
+    }
+
+    .hidden-author-tag {
+        background-color: #f9dede;
+        border-color: #d99;
+    }
+
+    .pagination button {
+        background-color: #e6e6e6;
+        color: #444444;
+    }
+
+    .spinner {
+        border: 8px solid #ddd;
+        border-top: 8px solid #6699cc;
+    }
+
+    #loading-overlay {
+        background: rgba(255, 255, 255, 0.5);
+    }
+}
