@@ -1,0 +1,143 @@
+body {
+    font-family: 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    line-height: 1.8;
+    margin: 0;
+    padding: 0;
+  }
+  
+  header {
+    padding: 10px 20px;
+    text-align: center;
+    border-bottom: 1px solid var(--link-color);
+  }
+  
+  h1 {
+    font-size: 24px;
+  }
+  
+  .loading {
+    text-align: center;
+    padding-top: 50px;
+  }
+  
+  .author-group {
+    border-bottom: 1px solid var(--link-color);
+    padding: 10px;
+  }
+  
+  .author-header {
+    cursor: pointer;
+    background-color: rgba(0, 0, 0, 0.05);
+    padding: 5px 10px;
+    display: flex;
+    align-items: center;
+    font-weight: bold;
+  }
+  
+  .author-content {
+    display: none;
+    padding: 10px;
+  }
+  
+  .novel {
+    width: 150px;
+    display: inline-block;
+    vertical-align: top;
+    margin: 8px;
+    box-sizing: border-box;
+    position: relative; /* 必須：ここで position を指定 */
+  }
+  
+  .cover-container {
+    width: 100%;
+    height: 220px;
+    overflow: hidden;
+    border-radius: 5px;
+    background-color: rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .cover-container img {
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+  }
+  
+  .novel-title {
+    font-size: 14px;
+    text-align: center;
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .type-tag {
+    position: absolute; /* 絶対配置 */
+    top: 5px;
+    left: 5px;
+    background-color: rgba(100, 100, 255, 0.8);
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    z-index: 10; /* 他の要素の上に表示 */
+  }
+  
+  .new-tag {
+    background-color: rgba(255, 80, 80, 0.9);
+    color: #fff;
+    font-size: 10px;
+    padding: 2px 4px;
+    margin-left: 6px;
+    border-radius: 3px;
+  }
+  
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-color: #1b1b1b;
+      --text-color: #d8d8d8;
+      --link-color: #a0c4ff;
+    }
+  }
+  
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg-color: #f2f2f2;
+      --text-color: #444444;
+      --link-color: #6699cc;
+    }
+  }
+  
+  .episode-container, .toc-container {
+    padding: 20px;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  
+  .main-text {
+    margin-top: 20px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+  }
+  
+  .introduction, .postscript {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: rgba(100, 100, 100, 0.1);
+    border-radius: 5px;
+  }
+  
+  .toc-container ul {
+    list-style: none;
+    padding-left: 0;
+  }
+  
+  .toc-container li {
+    margin-bottom: 8px;
+  }
+  

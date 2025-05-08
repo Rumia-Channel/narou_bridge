@@ -14,6 +14,9 @@ import pickle
 from flask import Flask, request, jsonify, Response, redirect, url_for, send_file
 
 import mimetypes
+mimetypes.add_type('application/javascript', '.js')
+mimetypes.add_type('text/css', '.css')
+mimetypes.add_type('text/html', '.html')
 
 #ログを保存
 import logging
