@@ -231,29 +231,6 @@ async function preloadAndMapCover(novel, coverCache) {
   coverUrlMap.set(key, await getDefaultCoverObjectURL(coverCache, defaultUrl));
 }
 
-/**
- * default_cover.png を一度 Cache Storage に ensure → blob→ObjectURL を返す
- */
-async function getDefaultCoverObjectURL(coverCache, defaultUrl) {
-  const req = new Request(defaultUrl, { method: 'GET' });
-
-  // キャッシュに無ければ fetch＆put
-  let cachedDef = await coverCache.match(req);
-  if (!cachedDef) {
-    const resp = await fetch(req);
-    if (!resp.ok) {
-      console.error('default cover fetch failed:', resp.status, defaultUrl);
-      throw new Error('default cover not found');
-    }
-    await coverCache.put(req, resp.clone());
-    cachedDef = resp;
-  }
-
-  // blob → ObjectURL
-  const blob = await (await coverCache.match(req)).blob();
-  return URL.createObjectURL(blob);
-}
-
 /** 
  * default_cover.png を一度 Cache Storage に ensure → blob→ObjectURL を返す
  */
@@ -482,7 +459,7 @@ function getQueryParams() {
     page: (() => {
       const raw = p.get('page');
       const n = parseInt(raw, 10);
-      return Number.isNaN(n) ? 1 : n;
+      return Number.isInteger(n) ? n : undefined;
     })()
   };
 }
@@ -563,12 +540,23 @@ function renderEpisode(container, novel, episode, episodesArr) {
 
   // ページ取得：クエリ指定 > 保存済み > 1
   let currentPage;
-  if (query.page) {
-    currentPage = parseInt(query.page, 10);
+  const hasExplicitPage = typeof query.page === 'number';
+
+  if (hasExplicitPage) {
+    currentPage = query.page;
   } else {
     const saved = parseInt(localStorage.getItem(storageKey), 10);
-    currentPage = Number.isInteger(saved) ? saved : 1;
+    currentPage = Number.isInteger(saved) && saved > 1 ? saved : 1;
+
+    if (currentPage > 1) {
+      const url = createEpisodeURL(novel, episode.id, currentPage, totalPages);
+      window.location.replace(url);
+      return;
+    }
   }
+
+  console.log('currentPage from localStorage or query:', currentPage);
+  console.log('localStorage value:', localStorage.getItem(storageKey));
 
   // 範囲補正
   currentPage = Math.min(Math.max(currentPage, 1), totalPages);
@@ -610,7 +598,7 @@ function renderEpisode(container, novel, episode, episodesArr) {
   if (currentPage > 1) {
     const prev = document.createElement('a');
     prev.className = 'nav-link';
-    prev.href = createEpisodeURL(novel, episode.id, currentPage - 1);
+    prev.href = createEpisodeURL(novel, episode.id, currentPage - 1, totalPages);
     prev.textContent = '← 前のページ';
     nav.appendChild(prev);
   }
@@ -628,7 +616,7 @@ function renderEpisode(container, novel, episode, episodesArr) {
 
   selector.addEventListener('change', () => {
     const selectedPage = parseInt(selector.value, 10);
-    const url = createEpisodeURL(novel, episode.id, selectedPage);
+    const url = createEpisodeURL(novel, episode.id, selectedPage, totalPages);
     window.location.href = url;
   });
 
@@ -637,7 +625,7 @@ function renderEpisode(container, novel, episode, episodesArr) {
   if (currentPage < totalPages) {
     const next = document.createElement('a');
     next.className = 'nav-link';
-    next.href = createEpisodeURL(novel, episode.id, currentPage + 1);
+    next.href = createEpisodeURL(novel, episode.id, currentPage + 1, totalPages);
     next.textContent = '次のページ →';
     nav.appendChild(next);
   }
@@ -683,20 +671,21 @@ function renderEpisode(container, novel, episode, episodesArr) {
   requestAnimationFrame(adjustImages);
 }
 
-function createEpisodeURL(novel, episodeId = null, page = 1) {
+function createEpisodeURL(novel, episodeId = null, page = 1, totalPages) {
   let url = `?site=${novel.source}&nid=${novel.id}`;
-
-  // 連載作品のみ eid を付ける
   if (novel.serialization !== '短編' && episodeId) {
     url += `&eid=${episodeId}`;
   }
 
-  if (page > 1) {
+  // totalPages が undefined のときは常に付ける（安全のため）
+  if (typeof totalPages === 'undefined' || totalPages > 1) {
     url += `&page=${page}`;
   }
 
   return url;
 }
+
+
 
 
 /** 単純な debounce ユーティリティ */
