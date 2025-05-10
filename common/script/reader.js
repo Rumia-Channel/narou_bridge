@@ -5,6 +5,7 @@ const coverHashMap = new Map();
 
 // Cache Storage 名
 const CACHE_NAME = 'cover-images';
+const INDEX_CACHE = 'index-json-cache';
 
 /**
  * 本棚画面用：ヘッダーに「トップページに戻る」ボタンを追加
@@ -74,10 +75,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 2) localStorage からキャッシュ関連キーを削除
     Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('index_') || key.startsWith('coverFail_')) {
+      if (key.startsWith('coverFail_')) {
         localStorage.removeItem(key);
       }
     });
+
+    await caches.delete(INDEX_CACHE);
 
     // 3) メモリ上マップもクリア
     coverUrlMap.clear();
@@ -147,16 +150,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // キャッシュ付き index.json 読み込み
 async function loadIndexWithCache(source) {
-  const key = `index_${source}`;
-  const cached = localStorage.getItem(key);
-  if (cached) {
-    return JSON.parse(cached);
-  }
   const path = `../${source}/index.json`;
-  const data = await fetch(path).then(r => r.json());
-  const list = Object.entries(data).map(([id, novel]) => ({ id, source, ...novel }));
-  localStorage.setItem(key, JSON.stringify(list));
-  return list;
+  const cache = await caches.open(INDEX_CACHE);
+
+  // 1) まず Cache Storage を覗く
+  const cachedResp = await cache.match(path);
+  if (cachedResp) {
+    // キャッシュがあればその JSON を返す
+    return await cachedResp.json();
+  }
+
+  // 2) なければフェッチしてキャッシュに入れつつ返す
+  const resp = await fetch(path);
+  if (!resp.ok) throw new Error(`Failed to fetch ${path}: ${resp.status}`);
+  cache.put(path, resp.clone());
+  return await resp.json();
 }
 
 
