@@ -57,20 +57,20 @@ async function fetchData() {
 -------------------------------------------------- */
 function loadSettings() {
   const s = JSON.parse(localStorage.getItem('tableSettings')) || {};
-  rowsPerPage              = typeof s.rowsPerPage === 'number' ? s.rowsPerPage : 10;
-  hiddenCols               = s.hiddenCols            || [];
-  currentPage              = s.currentPage           || 1;
-  typeFilter               = s.typeFilter            || 'all';
-  filteredAuthors          = s.filteredAuthors       || [];
-  hiddenAuthors            = s.hiddenAuthors         || [];
-  sortInfo                 = s.sortInfo              || { column: null, ascending: true };
-  includedTags             = s.includedTags          || [];
-  excludedTags             = s.excludedTags          || [];
-  includeOperator          = s.includeOperator       || 'AND';
-  excludeOperator          = s.excludeOperator       || 'AND';
-  isIncludeTagsCollapsed   = s.isIncludeTagsCollapsed|| false;
-  isExcludeTagsCollapsed   = s.isExcludeTagsCollapsed|| false;
-  isHiddenAuthorsCollapsed = s.isHiddenAuthorsCollapsed|| false;
+  rowsPerPage = typeof s.rowsPerPage === 'number' ? s.rowsPerPage : 10;
+  hiddenCols = s.hiddenCols || [];
+  currentPage = s.currentPage || 1;
+  typeFilter = s.typeFilter || 'all';
+  filteredAuthors = s.filteredAuthors || [];
+  hiddenAuthors = s.hiddenAuthors || [];
+  sortInfo = s.sortInfo || { column: null, ascending: true };
+  includedTags = s.includedTags || [];
+  excludedTags = s.excludedTags || [];
+  includeOperator = s.includeOperator || 'AND';
+  excludeOperator = s.excludeOperator || 'AND';
+  isIncludeTagsCollapsed = s.isIncludeTagsCollapsed || false;
+  isExcludeTagsCollapsed = s.isExcludeTagsCollapsed || false;
+  isHiddenAuthorsCollapsed = s.isHiddenAuthorsCollapsed || false;
 }
 
 function saveSettings() {
@@ -109,7 +109,7 @@ function buildUI() {
 
 function applySettingsToUI() {
   document.getElementById('rowsPerPageSelect').value = rowsPerPage;
-  document.getElementById('typeSelect').value        = typeFilter;
+  document.getElementById('typeSelect').value = typeFilter;
   columns.forEach(col => {
     const cb = document.getElementById('show-' + col);
     if (cb) cb.checked = !hiddenCols.includes(col);
@@ -125,13 +125,13 @@ function updateAuthorDropdownOptions() {
   while (dd.options.length > 1) dd.remove(1);
   const map = {};
   Object.values(tableData).forEach(it => {
-    const id   = it.author_id || it.author;
+    const id = it.author_id || it.author;
     const time = new Date(it.update_date).getTime();
     if (!map[id] || time > map[id].time) map[id] = { name: it.author, time };
   });
   Object.keys(map)
-    .sort((a,b)=>map[a].name.localeCompare(map[b].name))
-    .forEach(id=>{
+    .sort((a, b) => map[a].name.localeCompare(map[b].name))
+    .forEach(id => {
       const o = document.createElement('option');
       o.value = id; o.textContent = map[id].name; dd.appendChild(o);
     });
@@ -230,7 +230,7 @@ function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
 
   // 条件セレクタ
   const sel = document.createElement('select');
-  ['AND','OR'].forEach(op=>{
+  ['AND', 'OR'].forEach(op => {
     const o = document.createElement('option');
     o.value = o.textContent = op;
     sel.appendChild(o);
@@ -270,18 +270,18 @@ function renderTableHeaders() {
   tr.appendChild(thSel);
 
   const visible = columns.filter(c => !hiddenCols.includes(c));
-  const fixedTotal = visible.reduce((sum,c)=>sum+(fixedWidthMapping[c]||0),0);
-  const varTotal   = visible.filter(c=>!fixedWidthMapping[c])
-                            .reduce((sum,c)=>sum+(variableWeightMapping[c]||0),0);
+  const fixedTotal = visible.reduce((sum, c) => sum + (fixedWidthMapping[c] || 0), 0);
+  const varTotal = visible.filter(c => !fixedWidthMapping[c])
+    .reduce((sum, c) => sum + (variableWeightMapping[c] || 0), 0);
 
   columns.forEach(c => {
     const th = document.createElement('th');
     th.textContent = columnLabel(c);
-    th.addEventListener('click', ()=>sortByColumn(c));
+    th.addEventListener('click', () => sortByColumn(c));
     th.classList.add(`th-${c}`);
     if (hiddenCols.includes(c)) th.classList.add('hidden-column');
     else if (fixedWidthMapping[c]) th.style.width = fixedWidthMapping[c] + 'ch';
-    else th.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c]||0)/varTotal})`;
+    else th.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c] || 0) / varTotal})`;
     tr.appendChild(th);
   });
   thead.appendChild(tr);
@@ -290,13 +290,13 @@ function renderTableHeaders() {
 function columnLabel(c) {
   switch (c) {
     case 'serialization': return '連載状況';
-    case 'title'        : return 'タイトル';
-    case 'author'       : return '作者名';
-    case 'type'         : return '形式';
-    case 'tags'         : return 'タグ';
-    case 'create_date'  : return '掲載日時';
-    case 'update_date'  : return '更新日時';
-    default             : return c;
+    case 'title': return 'タイトル';
+    case 'author': return '作者名';
+    case 'type': return '形式';
+    case 'tags': return 'タグ';
+    case 'create_date': return '掲載日時';
+    case 'update_date': return '更新日時';
+    default: return c;
   }
 }
 
@@ -318,17 +318,17 @@ function sortByColumn(c) {
 function formatDateTime(str) {
   const d = new Date(str);
   if (isNaN(d)) return str;
-  const z = v => ('0'+v).slice(-2);
-  return `${d.getFullYear()}/${z(d.getMonth()+1)}/${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`;
+  const z = v => ('0' + v).slice(-2);
+  return `${d.getFullYear()}/${z(d.getMonth() + 1)}/${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`;
 }
 
 function tagFilterClick(tag) {
   if (confirm(`「${tag}」を含むフィルターに追加しますか？`)) {
     if (!includedTags.includes(tag)) includedTags.push(tag);
-    excludedTags = excludedTags.filter(t=>t!==tag);
+    excludedTags = excludedTags.filter(t => t !== tag);
   } else {
     if (!excludedTags.includes(tag)) excludedTags.push(tag);
-    includedTags = includedTags.filter(t=>t!==tag);
+    includedTags = includedTags.filter(t => t !== tag);
   }
   currentPage = 1;
   saveSettings();
@@ -350,10 +350,10 @@ function renderTable() {
   tbody.innerHTML = '';
 
   let entries = Object.entries(tableData)
-    .filter(([,it]) => typeFilter === 'all' || it.type === typeFilter)
-    .filter(([,it]) => !hiddenAuthors.includes(it.author) &&
-                       (filteredAuthors.length === 0 || filteredAuthors.includes(it.author_id || it.author)))
-    .filter(([,it]) => {
+    .filter(([, it]) => typeFilter === 'all' || it.type === typeFilter)
+    .filter(([, it]) => !hiddenAuthors.includes(it.author) &&
+      (filteredAuthors.length === 0 || filteredAuthors.includes(it.author_id || it.author)))
+    .filter(([, it]) => {
       if (!it.all_tags) return true;
       const incMatch = includedTags.length === 0 ||
         (includeOperator === 'AND'
@@ -367,7 +367,7 @@ function renderTable() {
     });
 
   if (sortInfo.column) {
-    entries.sort(([,a],[,b]) => {
+    entries.sort(([, a], [, b]) => {
       let A = a[sortInfo.column] ?? '';
       let B = b[sortInfo.column] ?? '';
       if (!isNaN(A) && !isNaN(B)) { A = parseFloat(A); B = parseFloat(B); }
@@ -377,9 +377,9 @@ function renderTable() {
   }
 
   const start = (currentPage - 1) * rowsPerPage;
-  const page  = rowsPerPage ? entries.slice(start, start + rowsPerPage) : entries;
+  const page = rowsPerPage ? entries.slice(start, start + rowsPerPage) : entries;
 
-  page.forEach(([key,it]) => {
+  page.forEach(([key, it]) => {
     const tr = document.createElement('tr');
 
     // 先頭チェックボックス
@@ -399,17 +399,17 @@ function renderTable() {
 
     // データセル
     const fixedTotal = fixedWidthMapping.serialization + fixedWidthMapping.type +
-                       fixedWidthMapping.create_date + fixedWidthMapping.update_date;
-    const varTotal   = variableWeightMapping.title + variableWeightMapping.author + variableWeightMapping.tags;
+      fixedWidthMapping.create_date + fixedWidthMapping.update_date;
+    const varTotal = variableWeightMapping.title + variableWeightMapping.author + variableWeightMapping.tags;
 
-    columns.forEach(c=>{
+    columns.forEach(c => {
       const td = document.createElement('td');
       if (hiddenCols.includes(c)) {
         td.classList.add('hidden-column');
       } else {
         td.classList.add(`td-${c}`);
         if (fixedWidthMapping[c]) td.style.width = fixedWidthMapping[c] + 'ch';
-        else td.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c]||0)/varTotal})`;
+        else td.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c] || 0) / varTotal})`;
 
         switch (c) {
           case 'serialization':
@@ -427,7 +427,7 @@ function renderTable() {
             a.href = it.author_url;
             a.target = '_blank';
             a.textContent = it.author;
-            a.addEventListener('click', e=>{
+            a.addEventListener('click', e => {
               if (e.ctrlKey) handleAuthorFiltering(it.author, it.author_id || it.author, e);
             });
             td.appendChild(a);
@@ -438,12 +438,12 @@ function renderTable() {
             break;
           case 'tags':
             if (Array.isArray(it.all_tags)) {
-              it.all_tags.forEach(t=>{
+              it.all_tags.forEach(t => {
                 const s = document.createElement('span');
                 s.textContent = t;
                 s.classList.add('tag-item');
                 s.style.cursor = 'pointer';
-                s.addEventListener('click', ()=>tagFilterClick(t));
+                s.addEventListener('click', () => tagFilterClick(t));
                 td.appendChild(s);
               });
             }
@@ -468,13 +468,13 @@ function renderTable() {
 -------------------------------------------------- */
 function updatePagination() {
   const pageInfo = document.getElementById('page-info');
-  const totalItems = Object.entries(tableData).filter(([,it]) => {
+  const totalItems = Object.entries(tableData).filter(([, it]) => {
     if (typeFilter !== 'all' && it.type !== typeFilter) return false;
     if (hiddenAuthors.includes(it.author)) return false;
     if (filteredAuthors.length && !filteredAuthors.includes(it.author_id || it.author)) return false;
     if (it.all_tags) {
-      const inc = includedTags.every(t=>it.all_tags.includes(t));
-      const exc = excludedTags.every(t=>!it.all_tags.includes(t));
+      const inc = includedTags.every(t => it.all_tags.includes(t));
+      const exc = excludedTags.every(t => !it.all_tags.includes(t));
       if (!(inc && exc)) return false;
     }
     return true;
@@ -544,13 +544,13 @@ function showCopyPopup(titles) {
   box.innerHTML = `<strong>リンク先をコピーしました</strong><br><br>${titles.join('<br>')}<br><br><button id="close-copy-popup">閉じる</button>`;
   overlay.appendChild(box);
   document.body.appendChild(overlay);
-  document.getElementById('close-copy-popup').addEventListener('click', ()=>document.body.removeChild(overlay));
+  document.getElementById('close-copy-popup').addEventListener('click', () => document.body.removeChild(overlay));
 }
 
 function copySelected() {
   const links = [];
   const titles = [];
-  document.querySelectorAll('.row-checkbox').forEach(cb=>{
+  document.querySelectorAll('.row-checkbox').forEach(cb => {
     if (cb.checked) {
       const row = cb.closest('tr');
       const a = row.querySelector('.td-title a');
@@ -558,8 +558,8 @@ function copySelected() {
     }
   });
   navigator.clipboard.writeText(links.join('\n'))
-    .then(()=>showCopyPopup(titles))
-    .catch(err=>alert('コピーに失敗しました: ' + err));
+    .then(() => showCopyPopup(titles))
+    .catch(err => alert('コピーに失敗しました: ' + err));
 }
 
 /* --------------------------------------------------
@@ -570,7 +570,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('reset-localstorage-button').addEventListener('click', () => {
     if (confirm('ローカルストレージをリセットしますか？')) {
-      localStorage.clear();
+      // このページで使っている設定 only
+      localStorage.removeItem('tableSettings');
       location.reload();
     }
   });
@@ -630,7 +631,7 @@ document.addEventListener('keydown', event => {
       Object.keys(tableData).forEach(k => selectedRows.add(k));
     } else if (event.ctrlKey && !event.shiftKey) {
       // 表示中の行だけ選択
-      document.querySelectorAll('#user-table-body .row-checkbox').forEach(cb=>{
+      document.querySelectorAll('#user-table-body .row-checkbox').forEach(cb => {
         cb.checked = true;
         selectedRows.add(cb.dataset.key);
       });
@@ -643,4 +644,4 @@ document.addEventListener('keydown', event => {
 /* --------------------------------------------------
    起動
 -------------------------------------------------- */
-fetchData().then(()=>applySettingsToUI());
+fetchData().then(() => applySettingsToUI());
