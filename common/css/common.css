@@ -4,7 +4,9 @@
 table {
     border-collapse: collapse;
 }
-th, td {
+
+th,
+td {
     border: 0.5px solid;
 }
 
@@ -15,12 +17,15 @@ th, td {
     }
 
     body {
-        background-color: #1b1b1b; /* 少し温かみのある黒 */
-        color: #d8d8d8; /* やや明るい灰色 */
+        background-color: #1b1b1b;
+        /* 少し温かみのある黒 */
+        color: #d8d8d8;
+        /* やや明るい灰色 */
     }
 
     a {
-        color: #a0c4ff; /* 柔らかい青 */
+        color: #a0c4ff;
+        /* 柔らかい青 */
     }
 
     button {
@@ -42,7 +47,9 @@ th, td {
         cursor: not-allowed;
     }
 
-    table, th, td {
+    table,
+    th,
+    td {
         border-color: #555;
     }
 
@@ -82,12 +89,15 @@ th, td {
     }
 
     body {
-        background-color: #f2f2f2; /* ふんわりとしたグレーがかった白 */
-        color: #444444; /* 少し柔らかい黒 */
+        background-color: #f2f2f2;
+        /* ふんわりとしたグレーがかった白 */
+        color: #444444;
+        /* 少し柔らかい黒 */
     }
 
     a {
-        color: #6699cc; /* やや優しい青 */
+        color: #6699cc;
+        /* やや優しい青 */
     }
 
     button {
@@ -109,7 +119,9 @@ th, td {
         cursor: not-allowed;
     }
 
-    table, th, td {
+    table,
+    th,
+    td {
         border-color: #ddd;
     }
 

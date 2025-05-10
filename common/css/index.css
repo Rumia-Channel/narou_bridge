@@ -14,12 +14,14 @@ td {
     border: 1px solid #ddd;
     padding: 8px;
     text-align: left;
-    cursor: default;   /* 今回はとりあえず非ソート */
+    cursor: default;
+    /* 今回はとりあえず非ソート */
 }
 
 th {
     background-color: #f4f4f4;
-    cursor: pointer;   /* ソートできる列なら JS 側で好きにどうぞ */
+    cursor: pointer;
+    /* ソートできる列なら JS 側で好きにどうぞ */
 }
 
 /* ── ページネーション ─────────────────── */
@@ -27,6 +29,7 @@ th {
     margin-top: 10px;
     text-align: center;
 }
+
 .pagination button {
     padding: 5px 10px;
     margin: 5px;
@@ -50,6 +53,7 @@ th {
     margin-bottom: 0.3em;
     background-color: #f8f8f8;
 }
+
 .hidden-author-tag {
     display: inline-block;
     padding: 0.2em 0.5em;
@@ -79,9 +83,15 @@ th {
     animation: spin 1s linear infinite;
     margin: auto;
 }
+
 @keyframes spin {
-    0%   { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
 /* ── フルスクリーンのローディングオーバーレイ ─────────────────── */
