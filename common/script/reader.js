@@ -213,7 +213,7 @@ async function preloadAndMapCover(novel, coverCache) {
       if (!head.ok) continue;
 
       const origBlob = await (await fetch(url)).blob();
-      const smallBlob = await shrinkBlob(origBlob, 300, 0.7);
+      const smallBlob = await shrinkBlob(origBlob, 400, 0.75);
       const objectURL = await dedupeBlob(smallBlob);
 
       // キャッシュにも登録
@@ -253,6 +253,51 @@ async function getDefaultCoverObjectURL(coverCache, defaultUrl) {
   // blob → ObjectURL
   const blob = await (await coverCache.match(req)).blob();
   return URL.createObjectURL(blob);
+}
+
+function getReadStatus(novel) {
+  // episodes_data があればそちらを優先、なければ episodes を利用
+  const episodes = novel.episodes_data || novel.episodes || {};
+  const keys = Object.keys(episodes);
+  if (keys.length === 0) {
+    return 'unread';
+  }
+
+  // 完読済みエピソード一覧を取得
+  const epDoneKey = `epFinished_${novel.source}_${novel.id}`;
+  const doneSet = new Set(JSON.parse(localStorage.getItem(epDoneKey) || '[]'));
+
+  let anyProgress = false;
+  let finishedCount = 0;
+
+  // 各エピソードについて判定
+  for (const key of keys) {
+    // episodes_data[key].id を実際のエピソードIDとして利用
+    const epId = episodes[key].id;
+
+    // 完読済みであればカウント
+    if (doneSet.has(String(epId))) {
+      finishedCount++;
+      continue;
+    }
+
+    // 途中既読判定用のキー
+    const readKey = `readPage_${novel.source}_${novel.id}_${epId}`;
+    if (localStorage.getItem(readKey)) {
+      anyProgress = true;
+    }
+  }
+
+  // すべて完読済み
+  if (finishedCount === keys.length) {
+    return 'finished';
+  }
+  // まったく進捗がない
+  if (!anyProgress && finishedCount === 0) {
+    return 'unread';
+  }
+  // それ以外は途中まで既読
+  return 'read';
 }
 
 /** 
@@ -303,6 +348,11 @@ async function renderLibrary(container, novelsList) {
     authors[novel.author].push(novel);
   });
 
+  // 作者内で更新日時順（新しい順）に並べ替え
+  for (const list of Object.values(authors)) {
+    list.sort((a, b) => new Date(b.update_date) - new Date(a.update_date));
+  }
+
   // 作者名順にソート（日本語ロケール対応）
   const sortedAuthors = Object.keys(authors)
     .sort((a, b) => a.localeCompare(b, 'ja'));
@@ -316,14 +366,15 @@ async function renderLibrary(container, novelsList) {
     header.className = 'author-header';
     header.textContent = author;
 
-    // NEWマーク判定
+    // 【追加】作者ヘッダーにも NEW バッジ
     const hasNew = authors[author].some(novel =>
       (now - new Date(novel.update_date)) / (1000 * 3600 * 24) <= 7
     );
     if (hasNew) {
       const tag = document.createElement('span');
-      tag.className = 'new-tag';
+      tag.className = 'new-tag';      // CSS は既存の .new-tag をそのまま使う
       tag.textContent = 'NEW';
+      tag.style.marginLeft = '0.5em'; // お好みでスペース調整
       header.appendChild(tag);
     }
 
@@ -349,54 +400,62 @@ async function renderLibrary(container, novelsList) {
       const novelElem = document.createElement('div');
       novelElem.className = 'novel';
 
-      // 連載状況タグ
-      const statusTag = document.createElement('span');
-      statusTag.className = 'status-tag';
-      // 短編 / 完結済み / 連載中 を振り分け
-      if (novel.serialization === '短編') {
-        statusTag.textContent = '短編';
-      } else if (novel.serialization === '完結済み') {
-        statusTag.textContent = '完結済み';
-      } else {
-        statusTag.textContent = '連載中';
-      }
-      novelElem.appendChild(statusTag);
-
-      // 種類バッジ
-      const typeBadge = document.createElement('span');
-      typeBadge.className = 'type-badge';
-      typeBadge.textContent = novel.type === 'comic' ? '漫画' : '小説';
-      novelElem.appendChild(typeBadge);
-
       // カバー
       const covCont = document.createElement('div');
       covCont.className = 'cover-container';
+
       const img = document.createElement('img');
       const key = `${novel.source}_${novel.id}`;
       img.src = coverUrlMap.get(key);
       covCont.appendChild(img);
+
+      // バッジ表示用のラッパー
+      const badgeWrap = document.createElement('div');
+      badgeWrap.className = 'cover-badges';
+
+      // 状態の計算
+      const days = (now - new Date(novel.update_date)) / (1000 * 3600 * 24);
+      const readStatus = getReadStatus(novel); // ← localStorage を参照
+
+      // 1. NEW
+      badgeWrap.appendChild(makeBadge('NEW', days <= 7));
+
+      // 2. 読書状態
+      const statusLabel = readStatus === 'unread' ? '未読'
+        : readStatus === 'read' ? '既読'
+          : '完読';
+      badgeWrap.appendChild(makeBadge(statusLabel));
+
+      // 3. 連載状況（短編・完結済み・連載中）
+      badgeWrap.appendChild(makeBadge(novel.serialization));
+
+      // 4. 種別（小説・漫画）
+      badgeWrap.appendChild(makeBadge(novel.type === 'comic' ? '漫画' : '小説'));
+
+      covCont.appendChild(badgeWrap);
+
+      // カバー全体にリンク挙動
       covCont.addEventListener('click', () => {
         window.location.href = createNovelURL(novel);
       });
 
+      novelElem.appendChild(covCont);
+
       // タイトル
       const title = document.createElement('div');
       title.className = 'novel-title';
-      title.textContent = novel.title;
 
-      // NEWマーク
-      const days = (now - new Date(novel.update_date)) / (1000 * 3600 * 24);
-      if (days <= 7) {
-        const nt = document.createElement('span');
-        nt.className = 'new-tag';
-        nt.textContent = 'NEW';
-        title.appendChild(nt);
-      }
+      const titleText = document.createElement('div');
+      titleText.className = 'title-text';
+      titleText.textContent = novel.title;
 
-      novelElem.appendChild(covCont);
+      title.appendChild(titleText);
       novelElem.appendChild(title);
+
       content.appendChild(novelElem);
     }
+
+
 
     group.appendChild(header);
     group.appendChild(content);
@@ -404,6 +463,14 @@ async function renderLibrary(container, novelsList) {
   }
 }
 
+function makeBadge(label, active = true) {
+  const span = document.createElement('span');
+  span.className = 'cover-badge';
+  span.dataset.type = label;
+  if (!active) span.classList.add('disabled-badge');
+  span.textContent = label;
+  return span;
+}
 
 
 // URL生成関数を追加
@@ -507,7 +574,14 @@ async function renderReaderScreen(query) {
         || episodesArr.find(ep => String(ep.id) === String(query.eid));
     } else {
       episode = episodesArr[0];
+      // ★ 短編エピソードにIDがない場合に補う
+      if (!episode.id) {
+        episode.id = 1; // ← novel.id をエピソードIDとして扱う
+        console.log('[短編補正] episode.id が未定義だったので補正:', episode.id)
+        novel.episodes = { [novel.id]: episode }; // ← key 付きに整える
+      }
     }
+
 
     if (!episode) {
       app.innerHTML = '<div>指定されたエピソードが見つかりません。</div>';
@@ -525,41 +599,60 @@ async function renderReaderScreen(query) {
 
 
 
-function renderEpisode(container, novel, episode, episodesArr) {
+async function renderEpisode(container, novel, episode, episodesArr) {
+  // コンテナをクリア
   container.innerHTML = '';
+  document.body.classList.add('reader');
 
+  // タイトル
   const h2 = document.createElement('h2');
   h2.textContent = episode.title;
   container.appendChild(h2);
 
+  // ページ分割
   const pageTexts = episode.text.split(/\[newpage\]/);
   const totalPages = pageTexts.length;
 
+  // 現在のページを取得
   const query = getQueryParams();
-  const storageKey = `readPage_${novel.source}_${novel.id}_${episode.id}`;
+  const rawId = query.nid;           // URL の nid
+  const epId = episode.id;          // episodes_data 内の実 ID
+  const storageKey = `readPage_${novel.source}_${rawId}_${epId}`;
 
-  // ページ取得：クエリ指定 > 保存済み > 1
   let currentPage;
-  const hasExplicitPage = typeof query.page === 'number';
-
-  if (hasExplicitPage) {
+  const hasExplicit = typeof query.page === 'number';
+  if (hasExplicit) {
     currentPage = query.page;
   } else {
     const saved = parseInt(localStorage.getItem(storageKey), 10);
-    currentPage = Number.isInteger(saved) && saved > 1 ? saved : 1;
-
+    currentPage = Number.isInteger(saved) && saved >= 1 ? saved : 1;
     if (currentPage > 1) {
-      const url = createEpisodeURL(novel, episode.id, currentPage, totalPages);
+      // URL を置き換えてリダイレクト
+      const url = createEpisodeURL(novel, epId, currentPage, totalPages);
       window.location.replace(url);
       return;
     }
   }
 
-  console.log('currentPage from localStorage or query:', currentPage);
-  console.log('localStorage value:', localStorage.getItem(storageKey));
-
   // 範囲補正
   currentPage = Math.min(Math.max(currentPage, 1), totalPages);
+
+  // ★ 短編も含め、最終ページ到達時のみ完読扱いに
+  if (currentPage === totalPages) {
+    // ページキーは消して
+    localStorage.removeItem(storageKey);
+
+    // 完読配列に追加
+    const epDoneKey = `epFinished_${novel.source}_${rawId}`;
+    const doneArr = JSON.parse(localStorage.getItem(epDoneKey) || '[]');
+    if (!doneArr.includes(String(epId))) {
+      doneArr.push(String(epId));
+      localStorage.setItem(epDoneKey, JSON.stringify(doneArr));
+    }
+  } else {
+    // 最終ページでなければ進捗を保存
+    localStorage.setItem(storageKey, String(currentPage));
+  }
 
   // 前書き（1ページ目のみ）
   if (currentPage === 1 && episode.introduction) {
@@ -570,11 +663,12 @@ function renderEpisode(container, novel, episode, episodesArr) {
   }
 
   // 本文
-  const currentText = pageTexts[currentPage - 1] || '';
-  const p = document.createElement('div');
-  p.className = 'main-text';
-  p.innerHTML = formatText(currentText, novel, episode);
-  container.appendChild(p);
+  const raw = pageTexts[currentPage - 1] || '';
+  const main = document.createElement('div');
+  main.className = 'main-text';
+  // ★ innerHTML で挿入することで <img> タグなどを正しく解釈
+  main.innerHTML = formatText(raw, novel, episode);
+  container.appendChild(main);
 
   // あとがき（最終ページのみ）
   if (currentPage === totalPages && episode.postscript) {
@@ -584,57 +678,64 @@ function renderEpisode(container, novel, episode, episodesArr) {
     container.appendChild(post);
   }
 
-  // --- ページ保存（最終ページなら削除）
+  // ページ保存 or 完了処理
   if (currentPage < totalPages) {
+    // 途中ページを保存
     localStorage.setItem(storageKey, String(currentPage));
   } else {
+    // 最終ページ到達 → 途中保存を削除
     localStorage.removeItem(storageKey);
+
+    // 完読一覧に追加
+    const epDoneKey = `epFinished_${novel.source}_${rawId}`;
+    const doneArr = JSON.parse(localStorage.getItem(epDoneKey) || '[]');
+    if (!doneArr.includes(String(epId))) {
+      doneArr.push(String(epId));
+      localStorage.setItem(epDoneKey, JSON.stringify(doneArr));
+    }
   }
 
-  // --- ページナビゲーション
+  // --- ページナビゲーション ---
   const nav = document.createElement('div');
   nav.className = 'page-nav';
 
   if (currentPage > 1) {
     const prev = document.createElement('a');
     prev.className = 'nav-link';
-    prev.href = createEpisodeURL(novel, episode.id, currentPage - 1, totalPages);
+    prev.href = createEpisodeURL(novel, epId, currentPage - 1, totalPages);
     prev.textContent = '← 前のページ';
     nav.appendChild(prev);
   }
 
   const selector = document.createElement('select');
   selector.className = 'page-select';
-
   for (let i = 1; i <= totalPages; i++) {
-    const option = document.createElement('option');
-    option.value = i;
-    option.textContent = `${i}ページ目`;
-    if (i === currentPage) option.selected = true;
-    selector.appendChild(option);
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = `${i}ページ目`;
+    if (i === currentPage) opt.selected = true;
+    selector.appendChild(opt);
   }
-
   selector.addEventListener('change', () => {
-    const selectedPage = parseInt(selector.value, 10);
-    const url = createEpisodeURL(novel, episode.id, selectedPage, totalPages);
-    window.location.href = url;
+    const sel = parseInt(selector.value, 10);
+    window.location.href = createEpisodeURL(novel, epId, sel, totalPages);
   });
-
   nav.appendChild(selector);
 
   if (currentPage < totalPages) {
     const next = document.createElement('a');
     next.className = 'nav-link';
-    next.href = createEpisodeURL(novel, episode.id, currentPage + 1, totalPages);
+    next.href = createEpisodeURL(novel, epId, currentPage + 1, totalPages);
     next.textContent = '次のページ →';
     nav.appendChild(next);
   }
 
-  // --- エピソード間ナビゲーション
+  container.appendChild(nav);
+
+  // --- エピソード間ナビ ---
   const epNav = document.createElement('div');
   epNav.className = 'episode-nav';
-
-  const idx = episodesArr.findIndex(ep => String(ep.id) === String(episode.id));
+  const idx = episodesArr.findIndex(ep => String(ep.id) === String(epId));
 
   if (idx > 0) {
     const prevEp = episodesArr[idx - 1];
@@ -651,7 +752,7 @@ function renderEpisode(container, novel, episode, episodesArr) {
     back.href = '/reader/';
     back.textContent = '本棚に戻る';
   } else {
-    back.href = `?site=${novel.source}&nid=${novel.id}`;
+    back.href = `?site=${novel.source}&nid=${rawId}`;
     back.textContent = '目次に戻る';
   }
   epNav.appendChild(back);
@@ -664,12 +765,12 @@ function renderEpisode(container, novel, episode, episodesArr) {
     a.textContent = '次の話へ →';
     epNav.appendChild(a);
   }
-
-  container.appendChild(nav);
   container.appendChild(epNav);
 
+  // 画像サイズ調整
   requestAnimationFrame(adjustImages);
 }
+
 
 function createEpisodeURL(novel, episodeId = null, page = 1, totalPages) {
   let url = `?site=${novel.source}&nid=${novel.id}`;
@@ -699,9 +800,9 @@ function debounce(fn, ms) {
 function formatText(text, novel = null, episode = null) {
   return text
     // ルビ変換
-    .replace(/\[ruby:<([^>]+)>\(([^)]+)\)\]/g, (_, rb, rt) => {
-      return `<ruby><rb>${rb}</rb><rt>${rt}</rt></ruby>`;
-    })
+    .replace(/\[ruby:<([^>]+)>\(([^)]+)\)\]/g, (_, rb, rt) =>
+      `<ruby><rb>${rb}</rb><rt>${rt}</rt></ruby>`
+    )
 
     // ページジャンプ
     .replace(/\[jump:(\d+)\]/g, (_, page) => {
@@ -711,9 +812,9 @@ function formatText(text, novel = null, episode = null) {
     })
 
     // 画像表示
-    .replace(/\[image\]\(([^)]+)\)/g, (_, filename) => {
-      return `<img src="/images/${filename}" class="inline-image" alt="">`;
-    })
+    .replace(/\[image\]\(([^)]+)\)/g, (_, filename) =>
+      `<img src="/images/${filename}" class="inline-image" alt="">`
+    )
 
     // 改行
     .replace(/\n/g, '<br>');
@@ -741,7 +842,7 @@ function renderToc(container, novel, query) {
   });
 
   // 3) 折りたたみ状態を取得
-  const storageKey = `tocCollapsed_${novel.source}_${novel.id}`;
+  const storageKey = `tocCollapsed_${novel.source}_${novel.id} `;
   const collapsed = JSON.parse(localStorage.getItem(storageKey) || '[]');
 
   // 4) DOM生成
@@ -787,7 +888,7 @@ function renderToc(container, novel, query) {
         const li = document.createElement('li');
         const a = document.createElement('a');
         a.href = `?site=${query.site}&nid=${query.nid}&eid=${ep.id}`;
-        a.textContent = `${ep.title} — ${formatDate(ep.updateDate)}`;
+        a.textContent = `${ep.title} — ${formatDate(ep.updateDate)} `;
         li.appendChild(a);
         list.appendChild(li);
       });
@@ -799,7 +900,7 @@ function renderToc(container, novel, query) {
         const li = document.createElement('li');
         const a = document.createElement('a');
         a.href = `?site=${query.site}&nid=${query.nid}&eid=${ep.id}`;
-        a.textContent = `${ep.title} — ${formatDate(ep.updateDate)}`;
+        a.textContent = `${ep.title} — ${formatDate(ep.updateDate)} `;
         li.appendChild(a);
         toc.appendChild(li);
       });
@@ -823,8 +924,8 @@ function renderToc(container, novel, query) {
 function formatDate(dateStr) {
   const d = new Date(dateStr);
   const z = v => String(v).padStart(2, '0');
-  return `${d.getFullYear()}/${z(d.getMonth() + 1)}/${z(d.getDate())} `
-    + `${z(d.getHours())}:${z(d.getMinutes())}`;
+  return `${d.getFullYear()} /${z(d.getMonth() + 1)}/${z(d.getDate())} `
+    + `${z(d.getHours())}:${z(d.getMinutes())} `;
 }
 
 
