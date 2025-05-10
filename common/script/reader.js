@@ -183,30 +183,31 @@ async function loadJSON(path) {
 async function preloadAndMapCover(novel, coverCache) {
   const key = `${novel.source}_${novel.id}`;
   const base = `../${novel.source}/${novel.id}/`;
-  const defaultUrl = '/images/default_cover.png';
+  // 絶対パスで指定
+  const defaultUrl = `${window.location.origin}/images/default_cover.png`;
 
   // ローカルストレージで失敗回数を管理
   const failKey = `coverFail_${novel.source}_${novel.id}`;
   let failCount = parseInt(localStorage.getItem(failKey)) || 0;
+
+  // 3回以上失敗していれば即デフォルトを返す
   if (failCount >= 3) {
-    // 失敗3回以上は defaultCoverBlobURL を使って即返す
     coverUrlMap.set(key, await getDefaultCoverObjectURL(coverCache, defaultUrl));
     return;
   }
 
-  // 1) 既存の cover.jpg/png/gif キャッシュチェック
+  // 1) キャッシュ済みの cover.jpg/png/gif を探す
   for (const ext of ['jpg', 'png', 'gif']) {
     const url = base + `cover.${ext}`;
-    const cached = await coverCache.match(url);
-    if (cached) {
-      const blob = await cached.blob();
-      const objectURL = await dedupeBlob(blob);
-      coverUrlMap.set(key, objectURL);
+    const cachedResp = await coverCache.match(url);
+    if (cachedResp) {
+      const blob = await cachedResp.blob();
+      coverUrlMap.set(key, await dedupeBlob(blob));
       return;
     }
   }
 
-  // 2) HEAD→fetch→低解像度化→ハッシュチェック→キャッシュ登録
+  // 2) HEAD → fetch → 低解像度化 → キャッシュ登録
   for (const ext of ['jpg', 'png', 'gif']) {
     const url = base + `cover.${ext}`;
     try {
@@ -217,32 +218,65 @@ async function preloadAndMapCover(novel, coverCache) {
       const smallBlob = await shrinkBlob(origBlob, 300, 0.7);
       const objectURL = await dedupeBlob(smallBlob);
 
+      // キャッシュにも登録
       await coverCache.put(url, new Response(smallBlob));
       coverUrlMap.set(key, objectURL);
       return;
     } catch {
-      continue;
+      // 次の拡張子へ
     }
   }
 
-  // 3) どの拡張子も見つからなかった → 失敗カウント＆default処理
+  // 3) 全滅 → 失敗カウントアップ＆デフォルトを返す
   failCount++;
   localStorage.setItem(failKey, String(failCount));
   coverUrlMap.set(key, await getDefaultCoverObjectURL(coverCache, defaultUrl));
+}
+
+/**
+ * default_cover.png を一度 Cache Storage に ensure → blob→ObjectURL を返す
+ */
+async function getDefaultCoverObjectURL(coverCache, defaultUrl) {
+  const req = new Request(defaultUrl, { method: 'GET' });
+
+  // キャッシュに無ければ fetch＆put
+  let cachedDef = await coverCache.match(req);
+  if (!cachedDef) {
+    const resp = await fetch(req);
+    if (!resp.ok) {
+      console.error('default cover fetch failed:', resp.status, defaultUrl);
+      throw new Error('default cover not found');
+    }
+    await coverCache.put(req, resp.clone());
+    cachedDef = resp;
+  }
+
+  // blob → ObjectURL
+  const blob = await (await coverCache.match(req)).blob();
+  return URL.createObjectURL(blob);
 }
 
 /** 
  * default_cover.png を一度 Cache Storage に ensure → blob→ObjectURL を返す
  */
 async function getDefaultCoverObjectURL(coverCache, defaultUrl) {
+  // 絶対URL の Request オブジェクトを生成しておく
+  const req = new Request(defaultUrl, { method: 'GET' });
+
   // キャッシュに無ければ fetch＆put
-  const cachedDef = await coverCache.match(defaultUrl);
+  let cachedDef = await coverCache.match(req);
   if (!cachedDef) {
-    const resp = await fetch(defaultUrl);
-    if (resp.ok) await coverCache.put(defaultUrl, resp.clone());
+    const resp = await fetch(req);
+    if (!resp.ok) {
+      console.error('default cover fetch failed:', resp.status, defaultUrl);
+      throw new Error('default cover not found');
+    }
+    await coverCache.put(req, resp.clone());
+    cachedDef = resp;
   }
-  // blob→ObjectURL
-  const blob = await (await coverCache.match(defaultUrl)).blob();
+
+  // blob → ObjectURL
+  const blob = await (await coverCache.match(req)).blob();
   return URL.createObjectURL(blob);
 }
 
