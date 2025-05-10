@@ -12,6 +12,9 @@ import logging
 import crawler.common as cm
 import crawler.convert_narou as cn
 
+#バージョン
+mv = 5
+
 def extract_second_highest_group_line(last_details):
     """
     最終ページの右半分から、ページ内で最もy座標が大きい文字群の次にy座標が大きい文字群を抽出
@@ -354,9 +357,11 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type,
     update_date = str(datetime.now().astimezone(timezone(timedelta(hours=9))))
     gen_date = str(datetime.strptime(gen_date, "%Y年%m月%d日%H時%M分発行").replace(tzinfo=timezone(timedelta(hours=9))))
 
+    results['version'] = mv
     results['get_date'] = update_date
     results['title'] = novel_title
     results['id'] = ncode
+    results['nid'] = ncode
     results['url'] = "https://ncode.syosetu.com/" + ncode
     results['author'] = author
     results['author_id'] = author_id

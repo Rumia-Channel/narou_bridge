@@ -85,8 +85,61 @@ def create_index(data_path, config, post_path=''):
         for key in config['crawler']:
             f.write(f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>\n')
 
+        f.write('<br><br><br><br><a href="#" onclick="redirectWithParams(/reader/)">簡易リーダーへ移動</a>\n')
         f.write('</body>\n')
         f.write('</html>\n')
+
+#リーダー用のindexファイルの作成
+def create_reader_index(data_path, site_list):
+    with open(os.path.join(data_path, 'reader', 'index.html'), 'w', encoding='utf-8') as f:
+        f.write("""<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Web小説リーダー</title>
+  <link rel="stylesheet" href="/css/reader.css">
+  <link rel="icon" href="/icon/favicon.ico">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
+</head>
+<body>
+  <header>
+    <h1>Web小説リーダー</h1>
+    <button id="btn-clear-cache">キャッシュクリア</button>
+  </header>
+
+  <!-- 進捗バー -->
+  <div id="progress-container">
+    <div id="progress-bar"></div>
+    <div id="progress-info">0.00% (0/0)</div>
+  </div>
+
+  <main id="app">
+    <!-- 本棚／リーダー画面がここに描画されます -->
+  </main>
+
+  <script>
+  // HTML側で単純リストを定義
+""")
+        f.write(f"  const sources = {site_list};")
+        f.write("""  </script>
+  <script src="/script/reader.js"></script>
+  <!--<script src="/script/image.js"></script>-->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const p = new URLSearchParams(location.search);
+      if (p.has('site') && p.has('nid') && typeof window.adjustImages === 'function') {
+        window.adjustImages();
+      }
+    });
+  </script>
+
+</body>
+</html>
+""")
 
 #manifest.jsonファイルの作成
 def create_manifest(data_path):
@@ -176,9 +229,17 @@ def load_config():
     if not os.path.exists(image_path):
         os.makedirs(image_path)
 
+    #ないなら作れreaderフォルダ
+    reader_path = os.path.join(data_path, 'reader')
+    if not os.path.exists(reader_path):
+        os.makedirs(reader_path)
+
+    site_list = []
+
     # dataフォルダcookieフォルダとサイト名のマトリョシカを作成
     for key in config['crawler']:
         folder_name = key
+        site_list.append(folder_name)
         site_dic[key] = config['crawler'][key]
         login_dic[key] = int(config['login'][key])
         folder_path[key] = os.path.join(data_path, folder_name)
@@ -187,6 +248,8 @@ def load_config():
             os.makedirs(folder_path[key])
         if not os.path.exists(cookie_path[key]):
             os.makedirs(cookie_path[key])
+
+    create_reader_index(data_path, site_list)
 
     # common/css フォルダを data_path/css に上書きコピー
     css_source_path = os.path.join(os.getcwd(), 'common', 'css')

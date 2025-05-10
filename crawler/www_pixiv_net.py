@@ -27,7 +27,7 @@ import crawler.common as cm
 import crawler.convert_narou as cn
 
 #ファイルのバージョン
-mv = 4
+mv = 5
 
 #初期化処理
 def init(cookie_path, data_path, is_login, interval):
@@ -479,8 +479,21 @@ def remove_chapter_tag(data):
 
 #URLへのリンクを置き換え
 def format_for_url(data):
+    # [[jumpuri:リンクテキスト > URL]] のパターンをキャッチ
     pattern = re.compile(r"\[\[jumpuri:(.*?) > (.*?)\]\]", re.DOTALL)
-    return re.sub(pattern, lambda match: f'<a href={match.group(2)}>{match.group(1)}</a>', data)
+    
+    def repl(match):
+        text = match.group(1)       # リンクテキスト
+        url  = match.group(2)       # 元のURL
+        
+        # URLが "/http://" もしくは "/https://" で始まっていたらスラッシュを除去
+        if url.startswith('/http://') or url.startswith('/https://'):
+            url = url[1:]
+        
+        # href属性には必ずクォートで囲む
+        return f'<a href="{url}">{text}</a>'
+    
+    return pattern.sub(repl, data)
 
 #漫画シリーズからリンクを取得する
 def get_comic_link(cache, id):
@@ -683,6 +696,7 @@ def dl_series(series_id, folder_path, key_data, update):
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9)))),
         'title': series_title,
         'id': series_id,
+        'nid': 's'+str(series_id),
         'url': f"https://www.pixiv.net/novel/series/{series_id}",
         'author': series_author,
         'author_id': series_author_id,
@@ -777,6 +791,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
         'title': novel_title,
         'id': novel_id,
+        'nid': 'n'+str(novel_id),
         'url': f"https://www.pixiv.net/novel/show.php?id={novel_id}",
         'author': novel_author,
         'author_id': novel_author_id,
@@ -923,6 +938,7 @@ def dl_art(art_id, folder_path, key_data):
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S%z')),
         'title': art_title,
         'id': art_id,
+        'nid': 'a'+str(art_id),
         'url': f"https://www.pixiv.net/artworks/{art_id}",
         'author': art_author,
         'author_id': art_author_id,
@@ -1130,6 +1146,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
         'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9)))),
         'title': c_title,
         'id': comic_id,
+        'nid': 'c'+str(comic_id),
         'url': f"https://www.pixiv.net/user/{c_author_id}/series/{comic_id}",
         'author': c_author,
         'author_id': c_author_id,
