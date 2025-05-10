@@ -5,7 +5,7 @@ const coverHashMap = new Map();
 
 // Cache Storage 名
 const CACHE_NAME = 'cover-images';
-const INDEX_CACHE = 'index-json-cache';
+//const INDEX_CACHE = 'index-json-cache';
 
 /**
  * 本棚画面用：ヘッダーに「トップページに戻る」ボタンを追加
@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
 
-    await caches.delete(INDEX_CACHE);
+    //await caches.delete(INDEX_CACHE);
 
     // 3) メモリ上マップもクリア
     coverUrlMap.clear();
@@ -150,21 +150,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // キャッシュ付き index.json 読み込み
 async function loadIndexWithCache(source) {
-  const cache = await caches.open(INDEX_CACHE);
+//  const cache = await caches.open(INDEX_CACHE);
   const url = new URL(`../${source}/index.json`, location.href).toString();
 
-  // 1) Cache Storage にあればそちらから
-  const cachedResp = await cache.match(url);
-  if (cachedResp) {
-    const data = await cachedResp.json();
-    return Object.entries(data).map(([id, novel]) => ({ id, source, ...novel }));
-  }
+//  const cachedResp = await cache.match(url);
+//  if (cachedResp) {
+//    const data = await cachedResp.json();
+//    return Object.entries(data).map(([id, novel]) => ({ id, source, ...novel }));
+//  }
 
-  // 2) なければ fetch → cache.put → 配列化して返す
-  const resp = await fetch(url);
+  // Cache API は使用せず、常に新鮮なデータを取得
+  const resp = await fetch(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`index.json fetch failed: ${resp.status}`);
-  // clone してキャッシュに積む
-  cache.put(url, resp.clone());
+//  cache.put(url, resp.clone());
 
   const data = await resp.json();
   return Object.entries(data).map(([id, novel]) => ({ id, source, ...novel }));
@@ -643,7 +641,15 @@ function debounce(fn, ms) {
 
 // 改行やタグの処理（必要に応じて追加）
 function formatText(text) {
-  return text.replace(/\n/g, '<br>').replace(/\[newpage\]/g, '<hr>');
+  return text
+    // 改行を <br> に
+    .replace(/\n/g, '<br>')
+    // [newpage] を <hr> に
+    .replace(/\[newpage\]/g, '<hr>')
+    // [ruby:<本文>(ルビ)] を <ruby><rb>本文</rb><rt>ルビ</rt></ruby> に
+    .replace(/\[ruby:<([^>]+)>\(([^)]+)\)\]/g, (_, rb, rt) => {
+      return `<ruby><rb>${rb}</rb><rt>${rt}</rt></ruby>`;
+    });
 }
 
 /**
