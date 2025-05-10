@@ -277,6 +277,14 @@ def load_config():
         if os.path.exists(icon_destination_path):
             shutil.rmtree(icon_destination_path)
         shutil.copytree(icon_source_path, icon_destination_path)
+
+    # default_cover.pngをdata_path/imagesに上書きコピー
+    default_cover_source_path = os.path.join(os.getcwd(), 'common', 'default_cover.png')
+    default_cover_destination_path = os.path.join(data_path, 'images', 'default_cover.png')
+    if os.path.exists(default_cover_source_path):
+        if os.path.exists(default_cover_destination_path):
+            os.remove(default_cover_destination_path)
+        shutil.copy2(default_cover_source_path, default_cover_destination_path)
     
     # manifest.jsonをdata_pathに作成
     create_manifest(data_path)
