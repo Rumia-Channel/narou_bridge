@@ -324,3 +324,17 @@ body.reader .toc-container li {
   list-style: none;
   /* 念のためliにもnoneを指定 */
 }
+
+.page-nav {
+  text-align: center;
+  margin-top: 2em;
+}
+
+.page-nav .nav-link {
+  margin: 0 1em;
+}
+
+.page-nav .page-select {
+  margin: 0 1em;
+  font-size: 1em;
+}
