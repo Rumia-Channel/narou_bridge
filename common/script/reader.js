@@ -150,33 +150,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // キャッシュ付き index.json 読み込み
 async function loadIndexWithCache(source) {
-  const key = `index_${source}`;
-  const cached = localStorage.getItem(key);
-  if (cached) {
-    const parsed = JSON.parse(cached);
-    // parsed が配列かどうかをチェック
-    if (Array.isArray(parsed)) {
-      return parsed;
-    } else {
-      // オブジェクト→配列に変換
-      return Object.entries(parsed)
-        .map(([id, novel]) => ({ id, source, ...novel }));
-    }
+  const cache = await caches.open(INDEX_CACHE);
+  const url = new URL(`../${source}/index.json`, location.href).toString();
+
+  // 1) Cache Storage にあればそちらから
+  const cachedResp = await cache.match(url);
+  if (cachedResp) {
+    const data = await cachedResp.json();
+    return Object.entries(data).map(([id, novel]) => ({ id, source, ...novel }));
   }
 
-  // キャッシュがなければ fetch して配列を作成
-  const path = `../${source}/index.json`;
-  const data = await fetch(path).then(r => r.json());
-  const list = Object.entries(data)
-    .map(([id, novel]) => ({ id, source, ...novel }));
+  // 2) なければ fetch → cache.put → 配列化して返す
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`index.json fetch failed: ${resp.status}`);
+  // clone してキャッシュに積む
+  cache.put(url, resp.clone());
 
-  // キャッシュにはオブジェクトのまま or list のままでも可
-  // ↓もし容量が気にならなければ list 自体を保存
-  localStorage.setItem(key, JSON.stringify(list));
-  // ↓生データを保存したいならこちらを使う
-  // localStorage.setItem(key, JSON.stringify(data));
-
-  return list;
+  const data = await resp.json();
+  return Object.entries(data).map(([id, novel]) => ({ id, source, ...novel }));
 }
 
 
