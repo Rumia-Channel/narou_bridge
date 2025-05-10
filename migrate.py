@@ -170,7 +170,7 @@ def migrate_0_0_3():
                             else:
                                 new_image_file = f'pixiv_{value['id']}_' + str(image_file)
                     else:
-                        site_id = os.path.dirname(os.path.dirname(root)).reprace(data_path, '')
+                        site_id = os.path.dirname(os.path.dirname(root)).replace(data_path, '')
                         new_image_file = f'{site_id}_{image_file}'
 
                     if os.path.exists(os.path.join(image_file_folder, image_file)):
@@ -294,6 +294,7 @@ def migrate_0_0_4():
 
     print("Migration 0.0.4 completed")
 
+#0.0.5からの移行
 def migrate_0_0_5():
     import os
     import json
@@ -325,6 +326,114 @@ def migrate_0_0_5():
 
     print("Migration 0.0.5 completed")
 
+#0.0.8からの移行
+def migrate_0_0_8():
+    import os
+    import json
+    import util
+    from tqdm import tqdm
+    
+    config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, ssl_crt, ssl_key, port, domain, use_proxy, proxy_port, proxy_ssl = util.load_config()
+
+    mv = 5
+
+    # ── pixiv データのマイグレーション ──
+    pixiv_root = os.path.join(data_path, "pixiv")
+    total_files = sum(len(files) for _, _, files in os.walk(pixiv_root))
+    file_counter = 0
+
+    for root, dirs, files in tqdm(os.walk(pixiv_root), total=total_files, desc="Processing pixiv data"):
+        for file in files:
+            file_counter += 1
+#            tqdm.write(f"Processing file {file_counter}/{total_files}: {os.path.join(root, file)}")
+
+        raw_path = os.path.join(root, "raw.json")
+        user_path = os.path.join(root, "user.json")
+
+        if os.path.exists(raw_path):
+            with open(raw_path, "r", encoding="utf-8") as f:
+                raw_json = json.load(f)
+
+            if not ver_check(raw_json, mv):
+                # novel / comic の場合のみ prefix を決定
+                t   = raw_json.get("type")
+                ser = raw_json.get("serialization")
+                if t == "novel":
+                    prefix = "n" if ser == "短編" else "s"
+                elif t == "comic":
+                    prefix = "a" if ser == "短編" else "c"
+
+                raw_json["nid"] = prefix + str(raw_json["id"])
+
+                # テキスト中の余分なスラッシュを除去
+                for ep in raw_json.get("episodes", {}).values():
+                    ep["text"] = (
+                        ep["text"]
+                        .replace('<a href="/https:', '<a href="https:')
+                        .replace('<a href="/http:', '<a href="http:')
+                    )
+                    ep["introduction"] = (
+                        ep["introduction"]
+                        .replace('<a href="/https:', '<a href="https:')
+                        .replace('<a href="/http:', '<a href="http:')
+                    )
+                    ep["postscript"] = (
+                        ep["postscript"]
+                        .replace('<a href="/https:', '<a href="https:')
+                        .replace('<a href="/http:', '<a href="http:')
+                    )
+
+                raw_json["version"] = mv
+
+                with open(raw_path, "w", encoding="utf-8") as f:
+                    json.dump(raw_json, f, ensure_ascii=False, indent=4)
+
+        if os.path.exists(user_path):
+            with open(user_path, "r", encoding="utf-8") as f:
+                user_json = json.load(f)
+
+            if not ver_check(user_json, mv):
+                user_json["version"] = mv
+
+                with open(user_path, "w", encoding="utf-8") as f:
+                    json.dump(user_json, f, ensure_ascii=False, indent=4)
+
+    # ── narou データのマイグレーション ──
+    narou_root = os.path.join(data_path, "narou")
+    total_files = sum(len(files) for _, _, files in os.walk(narou_root))
+    file_counter = 0
+
+    for root, dirs, files in tqdm(os.walk(narou_root), total=total_files, desc="Processing narou data"):
+        for file in files:
+            file_counter += 1
+#            tqdm.write(f"Processing file {file_counter}/{total_files}: {os.path.join(root, file)}")
+
+        raw_path = os.path.join(root, "raw.json")
+        user_path = os.path.join(root, "user.json")
+
+        if os.path.exists(raw_path):
+            with open(raw_path, "r", encoding="utf-8") as f:
+                raw_json = json.load(f)
+
+            if not ver_check(raw_json, mv):
+                # 常に ID を文字列化して nid にセット
+                raw_json["nid"] = str(raw_json["id"])
+                raw_json["version"] = mv
+
+                with open(raw_path, "w", encoding="utf-8") as f:
+                    json.dump(raw_json, f, ensure_ascii=False, indent=4)
+
+        if os.path.exists(user_path):
+            with open(user_path, "r", encoding="utf-8") as f:
+                user_json = json.load(f)
+
+            if not ver_check(user_json, mv):
+                user_json["version"] = mv
+
+                with open(user_path, "w", encoding="utf-8") as f:
+                    json.dump(user_json, f, ensure_ascii=False, indent=4)
+
+    print("Migration 0.0.8 completed")
             
         
 
@@ -343,6 +452,8 @@ def main():
         migrate_0_0_4()
     elif args.version == "0.0.5":
         migrate_0_0_5()
+    elif args.version == "0.0.8":
+        migrate_0_0_8()
     else:
         print(f"No migration defined for version {args.version}")
 

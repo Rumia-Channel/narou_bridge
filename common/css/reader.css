@@ -1,0 +1,326 @@
+:root {
+  /* レイアウト調整用カスタムプロパティ */
+  --reader-width: 65%;
+  /* ウィンドウ幅に対する本文幅 */
+  --reader-max-width: 42.5em;
+  /* 本文の最大幅 */
+  --reader-horizontal-padding: 1em;
+
+  --header-padding-vertical: 0.625em;
+  --header-padding-horizontal: 1.25em;
+
+  --button-padding-vertical: 0.375em;
+  --button-padding-horizontal: 0.75em;
+  --button-radius: 0.25em;
+
+  --section-padding-vertical: 1.25em;
+
+  --book-margin-vertical: 2.5em;
+  --page-padding: 1.875em;
+  --perspective: 93.75em;
+  /* 1500px ÷ 16 */
+}
+
+body {
+  font-family: 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  line-height: 1.8;
+  margin: 0;
+  padding: 0;
+}
+
+/* ダーク/ライトモード変数 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-color: #1b1b1b;
+    --text-color: #d8d8d8;
+    --link-color: #a0c4ff;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-color: #f2f2f2;
+    --text-color: #444444;
+    --link-color: #6699cc;
+  }
+}
+
+/* header */
+header {
+  display: flex;
+  align-items: center;
+  padding: var(--header-padding-vertical) var(--header-padding-horizontal);
+  position: relative;
+}
+
+header h1 {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+}
+
+#btn-clear-cache {
+  margin-left: auto;
+  background: var(--link-color);
+  color: var(--bg-color);
+  border: none;
+  padding: var(--button-padding-vertical) var(--button-padding-horizontal);
+  border-radius: var(--button-radius);
+  cursor: pointer;
+}
+
+/* ローディング表示 */
+.loading {
+  text-align: center;
+  padding-top: 3.125em;
+  /* 50px */
+}
+
+/* 進捗バー */
+#progress-container {
+  position: relative;
+  width: 100%;
+  height: 0.25em;
+  /* 4px */
+  background: rgba(0, 0, 0, 0.1);
+  margin-bottom: 0.25em;
+  /* 4px */
+}
+
+#progress-bar {
+  width: 0%;
+  height: 100%;
+  background: var(--link-color);
+  transition: width 0.2s ease;
+}
+
+#progress-info {
+  position: absolute;
+  right: 0.625em;
+  /* 10px */
+  top: -1.25em;
+  /* -20px */
+  font-size: 0.75em;
+  /* 12px */
+  color: var(--text-color);
+}
+
+/* 本文・目次コンテナ */
+body.reader #app {
+  width: var(--reader-width) !important;
+  margin: 0 auto !important;
+  /* ← これがないと左寄せになります */
+  padding: 0 var(--reader-horizontal-padding) !important;
+  box-sizing: border-box !important;
+}
+
+/* 著者グループ */
+.author-group {
+  border-bottom: 0.0625em solid var(--link-color);
+  /* 1px */
+  padding: 0.625em;
+  /* 10px */
+}
+
+.author-header {
+  cursor: pointer;
+  background-color: rgba(0, 0, 0, 0.05);
+  padding: 0.3125em 0.625em;
+  /* 5px 10px */
+  display: flex;
+  align-items: center;
+  font-weight: bold;
+}
+
+.author-content {
+  display: block;
+  padding: 0.625em;
+  /* 10px */
+}
+
+/* 小説カード */
+.novel {
+  width: 9.375em;
+  /* 150px */
+  display: inline-block;
+  vertical-align: top;
+  margin: 0.5em;
+  /* 8px */
+  box-sizing: border-box;
+  position: relative;
+}
+
+.cover-container {
+  width: 100%;
+  height: 13.75em;
+  /* 220px */
+  overflow: hidden;
+  border-radius: 0.3125em;
+  /* 5px */
+  background-color: rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cover-container img {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+}
+
+.novel-title {
+  font-size: 0.875em;
+  /* 14px */
+  text-align: center;
+  margin-top: 0.25em;
+  /* 4px */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.type-badge {
+  position: absolute;
+  top: 0.375em;
+  /* 6px */
+  right: 0.375em;
+  /* 6px */
+  background-color: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 0.625em;
+  /* 10px */
+  padding: 0.125em 0.25em;
+  /* 2px 4px */
+  border-radius: 0.1875em;
+  /* 3px */
+  z-index: 5;
+}
+
+.new-tag {
+  background-color: rgba(255, 80, 80, 0.9);
+  color: #fff;
+  font-size: 0.625em;
+  /* 10px */
+  padding: 0.125em 0.25em;
+  /* 2px 4px */
+  margin-left: 0.375em;
+  /* 6px */
+  border-radius: 0.1875em;
+  /* 3px */
+}
+
+/* 目次・エピソード全体ラッパー */
+.episode-container,
+.toc-container {
+  width: 100%;
+  max-width: var(--reader-max-width);
+  margin: 0 auto;
+  padding: var(--section-padding-vertical) 0;
+}
+
+.episode-container h2,
+.toc-container h2 {
+  text-align: center;
+  margin-bottom: 1em;
+}
+
+/* 本文・挿絵・あとがき */
+.main-text {
+  margin: 1.25em auto;
+  /* 20px */
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+body.reader #app .introduction,
+body.reader #app .postscript {
+  /* 幅を #app の内側いっぱいに */
+  width: 100%;
+  box-sizing: border-box;
+
+  /* 上下余白は 1em、左右は本文と同じ横パディング */
+  margin: 1em 0;
+  padding: var(--section-padding-vertical) var(--reader-horizontal-padding);
+
+  /* 背景色・丸角はそのまま維持 */
+  background-color: rgba(100, 100, 100, 0.1);
+  border-radius: 0.3125em;
+
+  /* max-width 制約を解除 */
+  max-width: none !important;
+}
+
+/*
+.episode-illustration {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.25em auto;
+}*/
+
+
+
+/* ナビリンク */
+.nav-links {
+  display: flex;
+  justify-content: center;
+  gap: 1em;
+  margin: 1.5em 0;
+  /* 24px */
+}
+
+.nav-link {
+  text-decoration: none;
+  font-weight: bold;
+}
+
+/* フリップブック */
+body.reader .book {
+  width: var(--reader-width) !important;
+  max-width: var(--reader-max-width) !important;
+  margin: var(--book-margin-vertical) auto !important;
+  /* ← auto で左右中央 */
+  perspective: var(--perspective) !important;
+}
+
+.page {
+  width: 50%;
+  padding: var(--page-padding);
+  box-sizing: border-box;
+}
+
+/* 本棚カードの「連載状況」タグ */
+.novel .status-tag {
+  position: absolute;
+  top: 0.25em;
+  /* 4px */
+  left: 0.25em;
+  /* 4px */
+  background-color: rgba(80, 160, 255, 0.9);
+  color: #fff;
+  font-size: 0.625em;
+  /* 10px */
+  padding: 0.125em 0.25em;
+  /* 2px 4px */
+  border-radius: 0.1875em;
+  /* 3px */
+  z-index: 6;
+}
+
+/* 目次画面のリストマーカーを消す */
+body.reader .toc-container ul {
+  list-style: none;
+  /* 親のulでマーカーを無効化 */
+  padding-left: 0;
+  /* インデント余白もリセット */
+  margin: 0;
+  /* 必要であれば上下の余白も調整 */
+}
+
+body.reader .toc-container li {
+  list-style: none;
+  /* 念のためliにもnoneを指定 */
+}
