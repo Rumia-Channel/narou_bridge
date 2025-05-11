@@ -6,7 +6,7 @@ import requests
 from requests.exceptions import RequestException, ConnectionError, Timeout
 from urllib.parse import unquote
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import hashlib
 import base64
 
@@ -57,6 +57,28 @@ def check_image_file(img_path, file_name):
                 return value+f'{os.path.splitext(key)[1]}'
 
     return None
+
+# 日本標準時(JST)を使いたいときに便利
+JST = timezone(timedelta(hours=9))
+
+def safe_fromiso(date_str, tzinfo=JST):
+    """
+    ISO フォーマット文字列を安全に datetime に変換します。
+    - date_str が None や空文字列なら None を返します。
+    - パースに失敗した場合は警告ログを出して None を返します。
+    - tzinfo を指定すると astimezone(tzinfo) を行います。
+    """
+    if not date_str:
+        logging.warning(f"safe_fromiso: empty or None date_str received")
+        return None
+    try:
+        dt = datetime.fromisoformat(date_str)
+        if tzinfo is not None:
+            return dt.astimezone(tzinfo)
+        return dt
+    except ValueError:
+        logging.warning(f"safe_fromiso: invalid ISO format: {date_str}")
+        return None
 
 #画像ファイルのハッシュをチェック
 def check_image_hash(img_path, file_data, file_name):
