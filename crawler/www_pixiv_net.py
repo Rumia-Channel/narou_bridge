@@ -1691,7 +1691,7 @@ def update(folder_path, key_data, data_path, host_name):
                 if resp.status_code == 404:
                     logging.warning(f"作品 {folder_name} のシリーズノベルが404: {resp.url}")
                     continue
-                s_detail = cm.find_key_recursively(resp.json(), "body")
+                s_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{series_id}", pixiv_cookie, pixiv_header).text), "body")
                 with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as osf:
                     old = json.load(osf)
                 if safe_fromiso(s_detail['updateDate']) != safe_fromiso(old['updateDate']):
@@ -1709,7 +1709,7 @@ def update(folder_path, key_data, data_path, host_name):
                 if resp.status_code != 200:
                     logging.warning(f"作品 {folder_name} の短編マンガ取得失敗: {resp.status_code}")
                     continue
-                json_data = resp.json()
+                json_data = return_comic_content_json(art_id)
                 with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as onf:
                     old = json.load(onf)
                 if safe_fromiso(json_data['body']['uploadDate']) != safe_fromiso(old['updateDate']):
@@ -1727,7 +1727,7 @@ def update(folder_path, key_data, data_path, host_name):
                 if resp.status_code == 404:
                     logging.warning(f"作品 {folder_name} のシリーズマンガが404: {resp.url}")
                     continue
-                c_detail = cm.find_key_recursively(resp.json(), "body")
+                c_detail = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/series/{comic_id}?p=1&lang=ja", pixiv_cookie, pixiv_header).text), "body")
                 with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as osf:
                     old = json.load(osf)
                 # 更新判定
