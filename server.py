@@ -30,30 +30,42 @@ class NoNewlineFormatter(logging.Formatter):
     """改行をスペースに置き換えるフォーマッター"""
     def format(self, record):
         message = super().format(record)
-        # 改行をスペースに置き換える
         return message.replace("\n", " ").replace("\r", " ")
 
 def setup_logging(log_path, save_log):
     """ログ設定を初期化"""
-    # 共通フォーマット
+    # フォーマットの定義
     common_format = '%(asctime)s - %(levelname)s - %(message)s'
     
-    # コンソールログ（改行そのまま）
+    # コンソールログ（そのまま改行あり）
     console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(logging.Formatter(common_format))
     
-    # 初期化するハンドラのリスト
     handlers = [console_handler]
     
     if save_log:
-        # ファイルログ（改行を除去）
-        file_handler = logging.FileHandler(os.path.join(log_path, 'server.log'), encoding='utf-8')
-        file_handler.setFormatter(NoNewlineFormatter(common_format))
-        handlers.append(file_handler)
+        # １）全レベルを出力する server.log
+        server_handler = logging.FileHandler(
+            os.path.join(log_path, 'server.log'),
+            encoding='utf-8'
+        )
+        server_handler.setLevel(logging.DEBUG)
+        server_handler.setFormatter(NoNewlineFormatter(common_format))
+        handlers.append(server_handler)
+        
+        # ２）ERROR 以上だけを出力する error.log
+        error_handler = logging.FileHandler(
+            os.path.join(log_path, 'error.log'),
+            encoding='utf-8'
+        )
+        error_handler.setLevel(logging.ERROR)
+        error_handler.setFormatter(NoNewlineFormatter(common_format))
+        handlers.append(error_handler)
     
-    # ログ設定
+    # ルートロガーにハンドラを登録
     logging.basicConfig(
-        level=logging.DEBUG,  # DEBUGレベル以上を記録
+        level=logging.DEBUG,
         handlers=handlers
     )
 

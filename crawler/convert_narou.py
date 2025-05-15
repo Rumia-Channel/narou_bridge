@@ -2,6 +2,7 @@ from datetime import datetime
 import os
 import re
 
+from crawler.common import safe_fromiso
 #ログを保存
 import logging
 
@@ -16,8 +17,18 @@ def write_index(f, data, key_data):
     for ep in data['episodes'].values():  # ソートせずにそのまま順番で処理
         episode_id = ep['id']
         episode_title = ep['title']
-        create_date = datetime.fromisoformat(ep['createDate']).strftime("%Y/%m/%d %H:%M")
-        update_date = datetime.fromisoformat(ep['updateDate']).strftime("%Y/%m/%d %H:%M")
+        # 安全に更新日や作成日を取得
+        create_date = safe_fromiso(ep['createDate'])
+        if create_date:
+            create_date = create_date.strftime("%Y/%m/%d %H:%M")
+        else:
+            create_date = "作成日を取得できませんでした。"
+        update_date = safe_fromiso(ep['updateDate'])
+        if update_date:
+            update_date = update_date.strftime("%Y/%m/%d %H:%M")
+        else:
+            update_date = "更新日を取得できませんでした。"
+
         if not ep['chapter'] == chapter:
             if ep['chapter']:
                 chapter = ep['chapter']
@@ -224,6 +235,16 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('</body>\n')
             f.write('</html>\n')
     
+    formatted_create = (
+        safe_fromiso(data.get("createDate")).strftime("%Y年 %m月%d日 %H時%M分")
+        if safe_fromiso(data.get("createDate")) else ""
+    )
+
+    formatted_update = (
+        safe_fromiso(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")
+        if safe_fromiso(data.get("updateDate")) else ""
+    )
+
     #インフォメーションファイルの生成
     info_path = os.path.join(nove_path, 'info', 'index.html')
     with open(info_path, 'w', encoding='utf-8') as f:
@@ -256,7 +277,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>掲載日</th>\n')
-        f.write(f'<td>{datetime.fromisoformat(data.get("createDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
+        f.write(f'<td>{formatted_create}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         if data.get("serialization") == "短編":
@@ -265,7 +286,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('<th>最新掲載日</th>\n')
         elif data.get("serialization") == "完結済":
             f.write('<th>最終掲載日</th>\n')
-        f.write(f'<td>{datetime.fromisoformat(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
+        f.write(f'<td>{formatted_update}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>文字数</th>\n')

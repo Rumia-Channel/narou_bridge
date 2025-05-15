@@ -4,6 +4,7 @@ import json
 import re
 import tqdm
 from datetime import datetime, timedelta, timezone
+from crawler.common import safe_fromiso
 
 #ログを保存
 import logging
