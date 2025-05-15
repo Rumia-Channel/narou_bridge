@@ -506,10 +506,10 @@ def http_run(config, reload_time, auto_update, save_log, interval, auto_update_i
     # Flask サーバーをバックグラウンドスレッドで実行 (debug=False)
     if use_ssl:
         app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
-        server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port, 'ssl_context': (ssl_crt, ssl_key)})
+        server_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'debug': False, 'threaded': True, 'port': port, 'ssl_context': (ssl_crt, ssl_key)})
     else:
         app = create_app(config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, key, use_ssl, port, domain, use_proxy, proxy_port, proxy_ssl)
-        server_thread = threading.Thread(target=app.run, kwargs={'debug': False, 'threaded': True, 'port': port})
+        server_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'debug': False, 'threaded': True, 'port': port})
     
     server_thread.daemon = True
     server_thread.start()
