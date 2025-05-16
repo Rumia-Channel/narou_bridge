@@ -4,7 +4,7 @@ import shutil
 import requests
 from urllib.parse import unquote
 import json
-from playwright.sync_api import Playwright, sync_playwright, expect
+from playwright.sync_api import Playwright, sync_playwright, expect, TimeoutError
 from playwright_recaptcha import recaptchav2
 from html import unescape
 from datetime import datetime, timezone, timedelta
@@ -118,140 +118,82 @@ def init(cookie_path, data_path, is_login, interval):
 
 
     def login(playwright: Playwright) -> None:
-        # ブラウザ設定
-
-        # 通常モードからユーザーエージェントを取得
-        browser = playwright.firefox.launch(headless=False)  # 通常モード（UIあり）でブラウザを起動
+        # 1) UI ありで一瞬起動し UA を取得
+        browser = playwright.firefox.launch(headless=False)
         context = browser.new_context()
         page = context.new_page()
-        user_agent = page.evaluate('navigator.userAgent')
+        user_agent = page.evaluate("() => navigator.userAgent")
         browser.close()
 
-
-        #ヘッドレスモードで起動
-        browser = playwright.firefox.launch(
-            headless=True,
-            args=[
-                "-headless",  # ヘッドレスモード
-                "--disable-blink-features=AutomationControlled"  # 自動化検出の回避
-            ])
-        context = browser.new_context(locale='en-US', viewport={"width": 1920, "height": 1080}, screen={"width": 1920, "height": 1080}, user_agent=user_agent)
+        # 2) ヘッドレスブラウザを同じ UA で起動
+        browser = playwright.firefox.launch(headless=True)
+        context = browser.new_context(
+            locale="en-US",
+            viewport={"width": 1920, "height": 1080},
+            screen={"width": 1920, "height": 1080},
+            user_agent=user_agent,
+        )
         page = context.new_page()
-        #page.set_viewport_size({'width': 1280, 'height': 1280})
-        
-        # ヘッドレスモードを隠すためのスクリプト
+
+        # 3) ステルス & フィンガープリント偽装（元コードそのまま）
         page.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined
-        });
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(window, 'chrome', { get: () => ({ runtime: {} }) });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
         """)
 
-        # フィンガープリントを偽装するスクリプトを挿入
-        page.add_init_script("""
-        Object.defineProperty(window, 'chrome', {
-        get: () => ({ runtime: {} }),
-        });
-
-        Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3],  // プラグイン情報を設定
-        });
-
-        Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en']
-        });
-        """)
-
-        # Pixivのログインページにアクセス
-        logging.info("Navigating to Pixiv...")
-        page.goto("https://www.pixiv.net/")
-        time.sleep(random.uniform(1, 5))
-        
-        # ログインリンクをクリック
-        logging.info("Clicking login link...")
+        # 4) Pixiv へ遷移
+        logging.info("Navigating to Pixiv")
+        page.goto("https://www.pixiv.net/", timeout=0)
         page.get_by_role("link", name="Login").click()
 
-        # ユーザー情報を入力
-        page.get_by_placeholder("E-mail address or pixiv ID").click()
+        # 5) 資格情報入力
         mail = input("メールアドレスを入力してください: ")
-        page.get_by_placeholder("E-mail address or pixiv ID").fill(mail)
-        page.get_by_placeholder("Password").click()
         pswd = input("パスワードを入力してください: ")
+        page.get_by_placeholder("E-mail address or pixiv ID").fill(mail)
         page.get_by_placeholder("Password").fill(pswd)
-        
-        time.sleep(random.uniform(2, 5))
-        logging.info("Attempting to log in...")
         page.get_by_role("button", name="Log In", exact=True).click()
 
-        # リキャプチャの確認を1度だけ行う
-        time.sleep(random.uniform(2, 5))
-        logging.info(f"Current URL after login attempt: {page.url}")
-        if "accounts.pixiv.net" in page.url and "two-factor-authentication" in page.url:  # Pixivのログインページに留まっている場合
-            logging.info("reCAPTCHA detected. Solving...")
+        time.sleep(random.uniform(2, 5))  # ほんの少し待つ
+
+        # 6) reCAPTCHA を検出したら自動解決
+        if "accounts.pixiv.net" in page.url and "two-factor-authentication" not in page.url:
+            logging.info("Checking for reCAPTCHA")
             try:
-                with recaptchav2.SyncSolver(page) as solver:
+                with recaptchav2.SyncSolver(page) as solver:          # ← 元の呼び方を維持
                     token = solver.solve_recaptcha(wait=True)
-                    logging.info(f"reCAPTCHA token obtained: {token}")
-                    if not token:
-                        raise ValueError("Failed to retrieve a valid reCAPTCHA token.")
-                logging.info("Retrying login after solving reCAPTCHA...")
+                if not token:
+                    raise ValueError("Failed to obtain reCAPTCHA token")
                 page.get_by_role("button", name="Log In", exact=True).click()
-                time.sleep(random.uniform(2, 5))
             except Exception as e:
-                logging.info(f"Failed to solve reCAPTCHA: {e}")
-                return
+                # reCAPTCHA がページに無い場合は通常フローを続行
+                if "not found" in str(e).lower():
+                    logging.info("reCAPTCHA iframe が見当たらないためスキップして続行します")
+                else:
+                    logging.error(f"reCAPTCHA solving failed: {e}")
+                    context.close(); browser.close()
+                    return
 
-        # ログイン成功後、リダイレクト処理を待機
-        def wait_for_redirects(page, is_2fa=False, timeout=60):
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                page.wait_for_load_state("load")
-                logging.info(f"Waiting for redirects... Current URL: {page.url}")
-                
-                # 2段階認証ページが表示された場合
-                if "two-factor-authentication" in page.url and not is_2fa:
-                    logging.info("Two-factor authentication page detected.")
-                    return "two-factor-authentication"
-                
-                # ホームページに到達した場合
-                if page.url in ["https://www.pixiv.net/", "https://www.pixiv.net/en/"]:
-                    logging.info("Successfully redirected to Pixiv homepage.")
-                    return "success"
-            return "timeout"
-
-        redirect_status = wait_for_redirects(page)
-        
-        if redirect_status == "timeout":
-            logging.error("Redirect did not complete within the timeout period.")
-            return
-        
-        if redirect_status == "two-factor-authentication":
-            # 2段階認証処理
-            logging.info("2-factor authentication required.")
-            time.sleep(random.uniform(1, 5))
-            page.get_by_label("Trust this browser").check()  # ブラウザを信頼する
-            tfak = input("2段階認証のコードを入力してください: ")  # ユーザーにコードを入力させる
+        # 7) 2FA が出た場合の処理
+        try:
+            page.wait_for_url("**/two-factor-authentication", timeout=5000)
+            logging.info("Two-factor authentication page detected")
+            page.get_by_label("Trust this browser").check()
+            tfak = input("2段階認証コードを入力してください: ")
             page.get_by_placeholder("Verification code").fill(tfak)
-            time.sleep(random.uniform(1, 5))
-            page.get_by_role("button", name="Log In").click()  # ログインボタンをクリック
+            page.get_by_role("button", name="Log In").click()
+            page.wait_for_url("https://www.pixiv.net/**", timeout=15000)
+        except TimeoutError:  # 2FA へ遷移しなければスルー
+            pass
 
-            # 2段階認証後のリダイレクトを待機（is_2fa=Trueとして呼び出し）
-            logging.info("Waiting for redirect after 2-factor authentication...")
-            redirect_status = wait_for_redirects(page, is_2fa=True)
-            if redirect_status == "timeout":
-                logging.error("Redirect after 2-factor authentication did not complete.")
-                return
-
-        # ログイン完了
         logging.info(f"Login successful. Final URL: {page.url}")
 
+        # 8) Cookie と UA を保存（JSON 形式は一切変更なし）
         cookies = context.cookies()
-        user_agent = page.evaluate("() => navigator.userAgent")
-        
         cm.save_cookies_and_ua(cookie_path, cookies, user_agent)
 
-        # ---------------------
-        context.close()
-        browser.close()
+        context.close(); browser.close()
 
     #クッキーとユーザーエージェントをグローバルで宣言
     global pixiv_cookie
