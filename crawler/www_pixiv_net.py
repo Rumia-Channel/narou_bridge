@@ -118,6 +118,23 @@ def init(cookie_path, data_path, is_login, interval):
 
 
     def login(playwright: Playwright) -> None:
+        
+        # 0) 既存クッキーチェック
+        if os.path.exists(cookie_path):
+            context = playwright.firefox.launch(headless=True).new_context()
+            # クッキーと UA をロードして context にセット
+            cookies, ua = cm.load_cookies_and_ua(cookie_path)
+            context.set_extra_http_headers({"User-Agent": ua})
+            context.add_cookies(cookies)
+            # 確認のためダッシュボードに飛んでステータスだけチェック
+            page = context.new_page()
+            page.goto("https://www.pixiv.net/dashboard", timeout=0)
+            if page.url.startswith("https://www.pixiv.net/dashboard"):
+                logging.info("Existing cookie で認証済みと判定。ログイン処理を省略します。")
+                return
+        
+        # 認証切れなら以降で新規ログイン
+        
         # 1) UI ありで一瞬起動し UA を取得
         browser = playwright.firefox.launch(headless=False)
         context = browser.new_context()
