@@ -66,15 +66,8 @@ def init(cookie_path, data_path, is_login, interval):
             raw_cookies, ua = cm.load_cookies_and_ua(cookie_path)
             if isinstance(raw_cookies, dict):
                 cookie_list = [
-                    {
-                        "name": name,
-                        "value": value,
-                        "domain": ".pixiv.net",
-                        "path": "/",
-                        "secure": True,
-                        "httpOnly": True,
-                    }
-                    for name, value in raw_cookies.items() if value
+                    {"name": n, "value": v, "domain": ".pixiv.net", "path": "/", "secure": True, "httpOnly": True}
+                    for n, v in raw_cookies.items() if v
                 ]
             else:
                 cookie_list = raw_cookies
@@ -88,25 +81,20 @@ def init(cookie_path, data_path, is_login, interval):
             )
             page = context.new_page()
             context.add_cookies(cookie_list)
-            page.goto("https://www.pixiv.net/dashboard", timeout=5000)
-
+            page.goto("https://www.pixiv.net/dashboard", timeout=15000)
             if page.url.startswith("https://www.pixiv.net/dashboard"):
                 logging.info("既存クッキーで認証済みと判定し、ログインを省略します")
-                context.close()
-                browser.close()
+                context.close(); browser.close()
                 return
+            context.close(); browser.close()
 
-            context.close()
-            browser.close()
-
-        # 1) 一度だけ UI ありで UA を取得
+        # UA を取得してヘッドレスコンテキストを準備
         browser = playwright.firefox.launch(headless=True)
-        context = browser.new_context()
-        page = context.new_page()
-        user_agent = page.evaluate("() => navigator.userAgent")
+        ctx_tmp = browser.new_context()
+        page_tmp = ctx_tmp.new_page()
+        user_agent = page_tmp.evaluate("() => navigator.userAgent")
         browser.close()
 
-        # 2) ヘッドレスで同じ UA によるコンテキスト生成
         browser = playwright.firefox.launch(headless=True)
         context = browser.new_context(
             locale="en-US",
@@ -116,77 +104,94 @@ def init(cookie_path, data_path, is_login, interval):
         )
         page = context.new_page()
 
-        # 3) ステルス & フィンガープリント偽装
+        # ステルス用スクリプト
         page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(window, 'chrome', { get: () => ({ runtime: {} }) });
+            Object.defineProperty(window, 'chrome',    { get: () => ({ runtime: {} }) });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            Object.defineProperty(navigator, 'languages',{ get: () => ['en-US','en'] });
         """)
 
-        # 4) Pixiv ログイン画面へ
+        # ログイン画面へ
         logging.info("Navigating to Pixiv")
         page.goto("https://www.pixiv.net/", timeout=0)
         page.get_by_role("link", name="Login").click()
 
-        # 5) メール・パスワード入力
+        # 資格情報入力
         mail = input("メールアドレスを入力してください: ")
         pswd = input("パスワードを入力してください: ")
         page.get_by_placeholder("E-mail address or pixiv ID").fill(mail)
         page.get_by_placeholder("Password").fill(pswd)
         page.get_by_role("button", name="Log In", exact=True).click()
 
-        # 6) リダイレクト完了を待機（ログインページ／2FA／トップいずれか）
-        page.wait_for_url([
-            "https://accounts.pixiv.net/login**",
-            "**/login/two-factor-authentication**",
-            "https://www.pixiv.net/**",
-        ], timeout=15000)
-        current = page.url
+        # リダイレクト完了を自前ループで待機する関数
+        def wait_for_redirects(page, ignore_2fa=False, timeout=60):
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                page.wait_for_load_state("load", timeout=1000)
+                url = page.url
+                parsed = urlparse(url)
+                host, path = parsed.netloc, parsed.path
 
-        # ─ reCAPTCHA 自動解決 ─
-        if current.startswith("https://accounts.pixiv.net/login") and "two-factor-authentication" not in current:
-            logging.info("Checking for reCAPTCHA on login page")
+                # --- 2FA ページ検出 ---
+                if host == "accounts.pixiv.net" and "two-factor-authentication" in path:
+                    if ignore_2fa:            # ２回目呼び出し時は無視して待機を続ける
+                        time.sleep(0.5)
+                        continue
+                    return "2fa"
+
+                # --- 成功判定 (www.pixiv.net ドメイン) ---
+                if host == "www.pixiv.net" and not path.startswith("/login"):
+                    return "success"
+
+                # --- まだログインフォームの場合 ---
+                if host == "accounts.pixiv.net" and path.startswith("/login"):
+                    time.sleep(0.5)
+                    continue
+
+                return "failure"             # 想定外 URL
+            return "timeout"
+
+
+        status = wait_for_redirects(page)
+
+        if status == "timeout":
+            logging.error("Redirect timeout")
+            context.close(); browser.close()
+            return
+
+        # reCAPTCHA 解決が必要な場合
+        if status == "failure" and page.url.startswith("https://accounts.pixiv.net/login"):
+            logging.info("Checking for reCAPTCHA")
             try:
                 with recaptchav2.SyncSolver(page) as solver:
                     token = solver.solve_recaptcha(wait=True)
                 if token:
                     page.get_by_role("button", name="Log In", exact=True).click()
-                    page.wait_for_url([
-                        "**/login/two-factor-authentication**",
-                        "https://www.pixiv.net/**",
-                    ], timeout=15000)
-                    current = page.url
+                    status = wait_for_redirects(page)
                 else:
-                    logging.info("reCAPTCHA は見つかったがトークン取得できず。スキップします")
+                    logging.info("Token not obtained for reCAPTCHA; skip")
             except recaptchav2.NoRecaptchaFoundError:
-                logging.info("reCAPTCHA iframe が見当たらなかったためスキップします")
+                logging.info("No reCAPTCHA iframe; skip")
             except Exception as e:
-                logging.error(f"reCAPTCHA 処理中に予期せぬ例外: {e} — 続行します")
+                logging.error(f"Unexpected error in reCAPTCHA: {e}; continue")
 
-        # 7) ２段階認証 or 成否判定
-        parsed = urlparse(current)
-        if parsed.netloc == "accounts.pixiv.net" and "two-factor-authentication" in parsed.path:
-            logging.info("Two-factor authentication page detected")
+        # 2FA フロー
+        if status == "2fa":
+            logging.info("Two-factor authentication required")
             page.get_by_label("Trust this browser").check()
-            tfak = input("2段階認証コードを入力してください: ")
+            tfak = input("２段階認証コードを入力してください: ")
             page.get_by_placeholder("Verification code").fill(tfak)
             page.get_by_role("button", name="Log In", exact=True).click()
-            page.wait_for_url("https://www.pixiv.net/**", timeout=15000)
-            current = page.url
+            status = wait_for_redirects(page, ignore_2fa=True, timeout=30)
 
-        # 最終判定：www.pixiv.net ドメインかつ /login を含まなければ成功
+        # 最終判定
+        if status == "success":
+            logging.info(f"Login successful. Final URL: {page.url}")
+            cookies = context.cookies()
+            cm.save_cookies_and_ua(cookie_path, cookies, user_agent)
         else:
-            if parsed.netloc != "www.pixiv.net" or parsed.path.startswith("/login"):
-                logging.error(f"Login failed. Unexpected URL: {current}")
-                context.close()
-                browser.close()
-                return
-            logging.info(f"Login successful. Final URL: {current}")
-
-        # 8) Cookie と UA を保存
-        cookies = context.cookies()
-        cm.save_cookies_and_ua(cookie_path, cookies, user_agent)
+            logging.error(f"Login failed (status={status}). URL: {page.url}")
 
         context.close()
         browser.close()
