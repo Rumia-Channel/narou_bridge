@@ -119,7 +119,7 @@ def init(cookie_path, data_path, is_login, interval):
 
     def login(playwright: Playwright) -> None:
         # 1) UI ありで一瞬起動し UA を取得
-        browser = playwright.firefox.launch(headless=False)
+        browser = playwright.firefox.launch(headless=True)
         context = browser.new_context()
         page = context.new_page()
         user_agent = page.evaluate("() => navigator.userAgent")
