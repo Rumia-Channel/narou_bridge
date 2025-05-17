@@ -119,21 +119,49 @@ def init(cookie_path, data_path, is_login, interval):
 
     def login(playwright: Playwright) -> None:
         
-        # 0) 既存クッキーチェック
-        if os.path.exists(cookie_path):
-            context = playwright.firefox.launch(headless=True).new_context()
-            # クッキーと UA をロードして context にセット
-            cookies, ua = cm.load_cookies_and_ua(cookie_path)
-            context.set_extra_http_headers({"User-Agent": ua})
-            context.add_cookies(cookies)
-            # 確認のためダッシュボードに飛んでステータスだけチェック
+        # 既存クッキーチェック
+        if os.path.isfile(cookie_path):
+            # ① Cookie と UA をロード
+            raw_cookies, ua = cm.load_cookies_and_ua(cookie_path)
+            # dict の場合は domain/path/etc. を付与
+            if isinstance(raw_cookies, dict):
+                cookie_list = [
+                    {
+                        "name": name,
+                        "value": value,
+                        "domain": ".pixiv.net",
+                        "path": "/",
+                        "secure": True,
+                        "httpOnly": True,
+                    }
+                    for name, value in raw_cookies.items() if value
+                ]
+            else:
+                cookie_list = raw_cookies  # 既に list[dict] ならそのまま
+
+            # ② ヘッドレスでブラウザ起動＆コンテキスト生成
+            browser = playwright.firefox.launch(headless=True)
+            context = browser.new_context(
+                locale="en-US",
+                viewport={"width": 1920, "height": 1080},
+                screen={"width": 1920, "height": 1080},
+                user_agent=ua,
+            )
+            # ③ クッキーをセットしてダッシュボードへアクセス
+            context.add_cookies(cookie_list)
             page = context.new_page()
-            page.goto("https://www.pixiv.net/dashboard", timeout=0)
+            page.goto("https://www.pixiv.net/dashboard", timeout=5000)
+
+            # ④ URL を見て認証済みか判定
             if page.url.startswith("https://www.pixiv.net/dashboard"):
-                logging.info("Existing cookie で認証済みと判定。ログイン処理を省略します。")
-                return
-        
-        # 認証切れなら以降で新規ログイン
+                logging.info("既存クッキーで認証済みと判定し、ログインを省略します")
+                context.close()
+                browser.close()
+                return  # ここで早期リターン
+
+            # 認証切れなら閉じて通常ログインへ
+            context.close()
+            browser.close()
         
         # 1) UI ありで一瞬起動し UA を取得
         browser = playwright.firefox.launch(headless=False)
