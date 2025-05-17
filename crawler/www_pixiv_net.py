@@ -2,7 +2,7 @@ import re
 import os
 import shutil
 import requests
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 import json
 from playwright.sync_api import Playwright, sync_playwright, expect, TimeoutError
 from playwright_recaptcha import recaptchav2
@@ -61,28 +61,17 @@ def init(cookie_path, data_path, is_login, interval):
     logging.info(f'Login : {is_login}')
 
     def login(playwright: Playwright) -> None:
-        
         # 既存クッキーチェック
         if os.path.isfile(cookie_path):
-            # ① Cookie と UA をロード
             raw_cookies, ua = cm.load_cookies_and_ua(cookie_path)
-            # dict の場合は domain/path/etc. を付与
             if isinstance(raw_cookies, dict):
                 cookie_list = [
-                    {
-                        "name": name,
-                        "value": value,
-                        "domain": ".pixiv.net",
-                        "path": "/",
-                        "secure": True,
-                        "httpOnly": True,
-                    }
-                    for name, value in raw_cookies.items() if value
+                    {"name": n, "value": v, "domain": ".pixiv.net", "path": "/", "secure": True, "httpOnly": True}
+                    for n, v in raw_cookies.items() if v
                 ]
             else:
-                cookie_list = raw_cookies  # 既に list[dict] ならそのまま
+                cookie_list = raw_cookies
 
-            # ② ヘッドレスでブラウザ起動＆コンテキスト生成
             browser = playwright.firefox.launch(headless=True)
             context = browser.new_context(
                 locale="en-US",
@@ -90,12 +79,9 @@ def init(cookie_path, data_path, is_login, interval):
                 screen={"width": 1920, "height": 1080},
                 user_agent=ua,
             )
-            # ③ クッキーをセットしてダッシュボードへアクセス
-            context.add_cookies(cookie_list)
             page = context.new_page()
-            page.goto("https://www.pixiv.net/dashboard", timeout=5000)
-
-            # ④ URL を見て認証済みか判定
+            context.add_cookies(cookie_list)
+            page.goto("https://www.pixiv.net/dashboard", timeout=15000)
             if page.url.startswith("https://www.pixiv.net/dashboard"):
                 logging.info("既存クッキーで認証済みと判定し、ログインを省略します")
                 context.close()
@@ -123,65 +109,97 @@ def init(cookie_path, data_path, is_login, interval):
         )
         page = context.new_page()
 
-        # 3) ステルス & フィンガープリント偽装（元コードそのまま）
+        # ステルス用スクリプト
         page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(window, 'chrome', { get: () => ({ runtime: {} }) });
+            Object.defineProperty(window, 'chrome',    { get: () => ({ runtime: {} }) });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            Object.defineProperty(navigator, 'languages',{ get: () => ['en-US','en'] });
         """)
 
-        # 4) Pixiv へ遷移
+        # ログイン画面へ
         logging.info("Navigating to Pixiv")
         page.goto("https://www.pixiv.net/", timeout=0)
         page.get_by_role("link", name="Login").click()
 
-        # 5) 資格情報入力
+        # 資格情報入力
         mail = input("メールアドレスを入力してください: ")
         pswd = input("パスワードを入力してください: ")
         page.get_by_placeholder("E-mail address or pixiv ID").fill(mail)
         page.get_by_placeholder("Password").fill(pswd)
         page.get_by_role("button", name="Log In", exact=True).click()
 
-        time.sleep(random.uniform(2, 5))  # ほんの少し待つ
+        # リダイレクト完了を自前ループで待機する関数
+        def wait_for_redirects(page, ignore_2fa=False, timeout=60):
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                page.wait_for_load_state("load", timeout=1000)
+                url = page.url
+                parsed = urlparse(url)
+                host, path = parsed.netloc, parsed.path
 
-        # 6) reCAPTCHA を検出したら自動解決
-        if "accounts.pixiv.net" in page.url and "two-factor-authentication" not in page.url:
+                # --- 2FA ページ検出 ---
+                if host == "accounts.pixiv.net" and "two-factor-authentication" in path:
+                    if ignore_2fa:            # ２回目呼び出し時は無視して待機を続ける
+                        time.sleep(0.5)
+                        continue
+                    return "2fa"
+
+                # --- 成功判定 (www.pixiv.net ドメイン) ---
+                if host == "www.pixiv.net" and not path.startswith("/login"):
+                    return "success"
+
+                # --- まだログインフォームの場合 ---
+                if host == "accounts.pixiv.net" and path.startswith("/login"):
+                    time.sleep(0.5)
+                    continue
+
+                return "failure"             # 想定外 URL
+            return "timeout"
+
+
+        status = wait_for_redirects(page)
+
+        if status == "timeout":
+            logging.error("Redirect timeout")
+            context.close(); browser.close()
+            return
+
+        # reCAPTCHA 解決が必要な場合
+        if status == "failure" and page.url.startswith("https://accounts.pixiv.net/login"):
             logging.info("Checking for reCAPTCHA")
             try:
-                with recaptchav2.SyncSolver(page) as solver:          # ← 元の呼び方を維持
+                with recaptchav2.SyncSolver(page) as solver:
                     token = solver.solve_recaptcha(wait=True)
-                if not token:
-                    raise ValueError("Failed to obtain reCAPTCHA token")
-                page.get_by_role("button", name="Log In", exact=True).click()
-            except Exception as e:
-                # reCAPTCHA がページに無い場合は通常フローを続行
-                if "not found" in str(e).lower():
-                    logging.info("reCAPTCHA iframe が見当たらないためスキップして続行します")
+                if token:
+                    page.get_by_role("button", name="Log In", exact=True).click()
+                    status = wait_for_redirects(page)
                 else:
-                    logging.error(f"reCAPTCHA solving failed: {e}")
-                    context.close(); browser.close()
-                    return
+                    logging.info("Token not obtained for reCAPTCHA; skip")
+            except recaptchav2.NoRecaptchaFoundError:
+                logging.info("No reCAPTCHA iframe; skip")
+            except Exception as e:
+                logging.error(f"Unexpected error in reCAPTCHA: {e}; continue")
 
-        # 7) 2FA が出た場合の処理
-        try:
-            page.wait_for_url("**/two-factor-authentication", timeout=5000)
-            logging.info("Two-factor authentication page detected")
+        # 2FA フロー
+        if status == "2fa":
+            logging.info("Two-factor authentication required")
             page.get_by_label("Trust this browser").check()
-            tfak = input("2段階認証コードを入力してください: ")
+            tfak = input("２段階認証コードを入力してください: ")
             page.get_by_placeholder("Verification code").fill(tfak)
-            page.get_by_role("button", name="Log In").click()
-            page.wait_for_url("https://www.pixiv.net/**", timeout=15000)
-        except TimeoutError:  # 2FA へ遷移しなければスルー
-            pass
+            page.get_by_role("button", name="Log In", exact=True).click()
+            status = wait_for_redirects(page, ignore_2fa=True, timeout=30)
 
-        logging.info(f"Login successful. Final URL: {page.url}")
+        # 最終判定
+        if status == "success":
+            logging.info(f"Login successful. Final URL: {page.url}")
+            cookies = context.cookies()
+            cm.save_cookies_and_ua(cookie_path, cookies, user_agent)
+        else:
+            logging.error(f"Login failed (status={status}). URL: {page.url}")
 
-        # 8) Cookie と UA を保存（JSON 形式は一切変更なし）
-        cookies = context.cookies()
-        cm.save_cookies_and_ua(cookie_path, cookies, user_agent)
-
-        context.close(); browser.close()
+        context.close()
+        browser.close()
 
     #クッキーとユーザーエージェントをグローバルで宣言
     global pixiv_cookie
