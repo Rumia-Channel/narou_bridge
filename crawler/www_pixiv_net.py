@@ -1547,6 +1547,8 @@ def update(folder_path, key_data, data_path, host_name):
     if os.path.isfile(os.path.join(folder_path, 'user.json')):
         with open(os.path.join(folder_path, 'user.json'), 'r', encoding='utf-8') as uf:
             user_json = json.load(uf)
+    else:
+        user_json = {}
 
     for user_id, status in user_json.items():
         if user_id == "version":
