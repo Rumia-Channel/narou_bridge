@@ -247,7 +247,7 @@ def gen_site_index(folder_path ,key_data, site_name):
                         <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
                     </head>
                     <body>
-                        <div><a href="../">戻る</a></div><br><br>""")
+                        <div><a href="../" class="header-link">戻る</a></div><br><br>""")
 
         f.write(f"    <div style='display: flex; justify-content: space-between;'><h1>{site_name} Index</h1><button id='reset-localstorage-button'>ローカルストレージリセット</button></div>")
         f.write("""
