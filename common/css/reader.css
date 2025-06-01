@@ -338,6 +338,22 @@ body.reader .toc-container li {
   font-size: 1em;
 }
 
+.episode-nav {
+  text-align: center;
+  margin-top: 2em;
+  margin-bottom: 2em;
+}
+
+.episode-nav .nav-link {
+  margin: 0 1em;
+}
+
+.nav-link--disabled {
+  pointer-events: none;    /* クリックできなくする */
+  opacity: 0;              /* 完全に透明にする（必要なら0.3なども可） */
+  visibility: hidden;      /* 空白ではなく完全に消したい場合 */
+}
+
 /* バッジごとの色分け */
 .cover-badge[data-type="NEW"] {
   background-color: rgba(255, 80, 80, 0.9);

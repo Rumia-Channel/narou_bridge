@@ -32,18 +32,19 @@ function initNavOnReader(novelData, query) {
   const header = document.querySelector('header');
   if (!header || document.getElementById('btn-nav-reader')) return;
 
-  const btn = document.createElement('button');
-  btn.id = 'btn-nav-reader';
-
-  let label, href;
   const isShort = novelData.serialization === '短編';
   const hasEid = Boolean(query.eid);
 
+  // --- 目次 or 本文に戻るボタン ---
+  const btnBack = document.createElement('button');
+  btnBack.id = 'btn-nav-reader';
+
+  let label, href;
   if (isShort || hasEid) {
     // --- 本文表示中 ---
     if (isShort) {
       label = '本棚に戻る';
-      href = '/reader/';  // 本棚へのパス
+      href = '/reader/';
     } else {
       label = '目次に戻る';
       href = `?site=${novelData.source}&nid=${novelData.id}`;
@@ -54,12 +55,21 @@ function initNavOnReader(novelData, query) {
     href = '/reader/';
   }
 
-  btn.textContent = label;
-  btn.style.marginLeft = '1em';
-  btn.addEventListener('click', () => {
+  btnBack.textContent = label;
+  btnBack.style.marginLeft = '1em';
+  btnBack.addEventListener('click', () => {
     window.location.href = href;
   });
-  header.appendChild(btn);
+  header.appendChild(btnBack);
+
+  // --- 本文へ進むボタン ---
+  const btnToText = document.createElement('button');
+  btnToText.textContent = '本文へ進む';
+  btnToText.style.marginLeft = '1em';
+  btnToText.addEventListener('click', () => {
+    window.location.href = `/${novelData.source}/${novelData.id}/`;
+  });
+  header.appendChild(btnToText);
 }
 
 
@@ -735,17 +745,22 @@ async function renderEpisode(container, novel, episode, episodesArr) {
   // --- エピソード間ナビ ---
   const epNav = document.createElement('div');
   epNav.className = 'episode-nav';
+
   const idx = episodesArr.findIndex(ep => String(ep.id) === String(epId));
 
+  // ← 前の話へ
+  const prevA = document.createElement('a');
+  prevA.className = 'nav-link';
+  prevA.textContent = '← 前の話へ';
   if (idx > 0) {
     const prevEp = episodesArr[idx - 1];
-    const a = document.createElement('a');
-    a.className = 'nav-link';
-    a.href = createEpisodeURL(novel, prevEp.id, 1);
-    a.textContent = '← 前の話へ';
-    epNav.appendChild(a);
+    prevA.href = createEpisodeURL(novel, prevEp.id, 1);
+  } else {
+    prevA.classList.add('nav-link--disabled');
   }
+  epNav.appendChild(prevA);
 
+  // 戻る
   const back = document.createElement('a');
   back.className = 'nav-link';
   if (novel.serialization === '短編') {
@@ -757,15 +772,19 @@ async function renderEpisode(container, novel, episode, episodesArr) {
   }
   epNav.appendChild(back);
 
+  // 次の話へ →
+  const nextA = document.createElement('a');
+  nextA.className = 'nav-link';
+  nextA.textContent = '次の話へ →';
   if (idx < episodesArr.length - 1) {
     const nextEp = episodesArr[idx + 1];
-    const a = document.createElement('a');
-    a.className = 'nav-link';
-    a.href = createEpisodeURL(novel, nextEp.id, 1);
-    a.textContent = '次の話へ →';
-    epNav.appendChild(a);
+    nextA.href = createEpisodeURL(novel, nextEp.id, 1);
+  } else {
+    nextA.classList.add('nav-link--disabled');
   }
-  container.appendChild(epNav);
+  epNav.appendChild(nextA);
+
+  container.appendChild(epNav)
 
   // 画像サイズ調整
   requestAnimationFrame(adjustImages);

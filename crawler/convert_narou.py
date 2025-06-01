@@ -205,10 +205,12 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
 
     img_link = '/images/'  # 画像ファイルが保存されているディレクトリのリンク
 
-    #目次ファイルの生成
-    if not data.get("serialization") == "短編":
-        link = host_name + nove_path.replace(data_folder, '').replace('\\', '/')
-        a_link = nove_path.replace(data_folder, '').replace('\\', '/')
+    # 目次ファイルの生成
+    if data.get("serialization") != "短編":
+        relpath = os.path.relpath(nove_path, data_folder).replace('\\', '/')
+        
+        link = f"{host_name}/{relpath}"
+        a_link = f"/{relpath}"
         index_path = os.path.join(nove_path, 'index.html')
         with open(index_path, 'w', encoding='utf-8') as f:
             f.write('<!DOCTYPE html>\n')
@@ -225,9 +227,9 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('<title>Index Pixiv</title>\n')
             f.write('</head>\n')
             f.write('<body>\n')
-            f.write(f'<a href="../{key_data}">戻る</a>\n')
-            f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
-            f.write(f'<a href="/reader/?site={site_name}&nid={nid}">簡易リーダーで読む</a>\n')
+            f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
+            f.write(f'<a href="./info/{key_data}" class="header-link">作品情報</a>\n')
+            f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
             f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
             f.write('<div class="index_box">\n')
             write_index(f, data, key_data)  # 目次生成
@@ -262,8 +264,8 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('<title>Index Pixiv</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
-        f.write(f'<a href="../{key_data}">戻る</a>\n')
-        f.write(f'<a href="/reader/?site={site_name}&nid={nid}">簡易リーダーで読む</a>\n')
+        f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
+        f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
         f.write(f'<h1><a href="{data.get("url")}" target="_blank">{data.get("title")}</a></h1>\n')
         if data.get("serialization") == "短編":
             f.write(f'<div><span id="noveltype">短編</span></div>\n')
@@ -324,14 +326,14 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
                         </style>\n''')
             f.write('</head>\n')
             f.write('<body>\n')
-            f.write(f'<a href="../{key_data}">戻る</a>\n')
+            f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
             if data.get("serialization") == "短編":
-                f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
-                f.write(f'<a href="/reader/?site={site_name}&nid={nid}">簡易リーダーで読む</a>\n')
+                f.write(f'<a href="./info/{key_data}" class="header-link">作品情報</a>\n')
+                f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
                 f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
             else:
-                f.write(f'<a href="../info/{key_data}">作品情報</a>\n')
-                f.write(f'<a href="/reader/?site={site_name}&nid={nid}&eid={ep["id"]}">簡易リーダーで読む</a>\n')
+                f.write(f'<a href="../info/{key_data}" class="header-link">作品情報</a>\n')
+                f.write(f'<a href="/reader/?site={site_name}&nid={nid}&eid={ep["id"]}" class="header-link">簡易リーダーで読む</a>\n')
                 f.write(f'<p class="novel_subtitle">{ep["title"]}</p>\n')
             write_preface(f, ep, key_data)  # 前書き生成
             write_main_text(f, ep, key_data) # 本文生成
