@@ -286,18 +286,19 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
             # ===== ここまで =====
 
     def load_queue_from_file(queue, lock):
-        """ファイルからキューを復元する"""
         if not os.path.exists(JOB_FILE_PATH):
             logging.info(f"No job file found at {JOB_FILE_PATH}. Starting with an empty queue.")
             return
         
-        with lock:  # ロックを取得してスレッドセーフに
+        with lock:
             with open(JOB_FILE_PATH, "rb") as f:
                 try:
-                    jobs = pickle.load(f)  # ファイルからリストを読み込む
+                    jobs = pickle.load(f)
+                    # 隣接リクエストをまとめる
+                    jobs = compact_requests_list(jobs)
                     for job in jobs:
-                        queue.put(job)  # キューに復元
-                    logging.info(f"Queue restored from {JOB_FILE_PATH} with {len(jobs)} items.")
+                        queue.put(job)
+                    logging.info(f"Queue restored and compacted from {JOB_FILE_PATH} with {len(jobs)} items.")
                 except Exception as e:
                     logging.error(f"Failed to load queue from file: {e}")
 
@@ -439,6 +440,36 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
             # キューに戻す
             for item in compacted:
                 request_queue.put(item)
+
+    def compact_requests_list(requests):
+        """隣接する重複リクエストをまとめる（リスト版）"""
+        if not requests:
+            return []
+
+        compacted = []
+        buffer = []
+
+        for req in requests:
+            if req is None:
+                if buffer:
+                    compacted.append(merge_requests(buffer))
+                    buffer = []
+                compacted.append(None)
+                continue
+
+            if not buffer:
+                buffer.append(req)
+            else:
+                if are_requests_mergeable(buffer[-1], req):
+                    buffer.append(req)
+                else:
+                    compacted.append(merge_requests(buffer))
+                    buffer = [req]
+
+        if buffer:
+            compacted.append(merge_requests(buffer))
+
+        return compacted
 
     def process_queue():
         """キューからリクエストを順番に取り出して処理するバックグラウンドスレッド"""
