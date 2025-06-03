@@ -400,7 +400,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         return requests[0]
 
     def compact_queue(request_queue, lock):
-        """キュー内の隣接する重複リクエストをまとめてキューに戻す"""
+        """キュー内の重複リクエストをすべてまとめてキューに戻す"""
         with lock:
             items = []
             while True:
@@ -415,59 +415,51 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                     break
 
             compacted = []
-            buffer = []
+            seen = {}
 
             for req in items:
                 if req is None:
-                    if buffer:
-                        compacted.append(merge_requests(buffer))
-                        buffer = []
+                    # Noneはまとめてそのまま残す
                     compacted.append(None)
                     continue
 
-                if not buffer:
-                    buffer.append(req)
+                # request_idを除くキー・値のペアをソートしてタプル化し、辞書のキーにする
+                key = tuple(sorted((k, v) for k, v in req.items() if k != "request_id"))
+                if key not in seen:
+                    seen[key] = [req]
                 else:
-                    if are_requests_mergeable(buffer[-1], req):
-                        buffer.append(req)
-                    else:
-                        compacted.append(merge_requests(buffer))
-                        buffer = [req]
+                    seen[key].append(req)
 
-            if buffer:
-                compacted.append(merge_requests(buffer))
+            # 各グループについてまとめる（merge_requestsは複数受け取って1つ返す関数）
+            for group in seen.values():
+                compacted.append(merge_requests(group))
 
             # キューに戻す
             for item in compacted:
                 request_queue.put(item)
 
+
     def compact_requests_list(requests):
-        """隣接する重複リクエストをまとめる（リスト版）"""
+        """リスト内の重複リクエストをすべてまとめる"""
         if not requests:
             return []
 
         compacted = []
-        buffer = []
+        seen = {}
 
         for req in requests:
             if req is None:
-                if buffer:
-                    compacted.append(merge_requests(buffer))
-                    buffer = []
                 compacted.append(None)
                 continue
 
-            if not buffer:
-                buffer.append(req)
+            key = tuple(sorted((k, v) for k, v in req.items() if k != "request_id"))
+            if key not in seen:
+                seen[key] = [req]
             else:
-                if are_requests_mergeable(buffer[-1], req):
-                    buffer.append(req)
-                else:
-                    compacted.append(merge_requests(buffer))
-                    buffer = [req]
+                seen[key].append(req)
 
-        if buffer:
-            compacted.append(merge_requests(buffer))
+        for group in seen.values():
+            compacted.append(merge_requests(group))
 
         return compacted
 
