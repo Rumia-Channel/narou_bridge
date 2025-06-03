@@ -384,10 +384,68 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         response.status_code = 200
         return response
 
+    def are_requests_mergeable(req1, req2):
+        """request_id以外の全キーの値が一致するかチェック"""
+        keys = set(req1.keys()) | set(req2.keys())
+        for key in keys:
+            if key == "request_id":
+                continue
+            if req1.get(key) != req2.get(key):
+                return False
+        return True
+
+    def merge_requests(requests):
+        """複数リクエストをまとめる（代表のものを返すだけ）"""
+        return requests[0]
+
+    def compact_queue(request_queue, lock):
+        """キュー内の隣接する重複リクエストをまとめてキューに戻す"""
+        with lock:
+            items = []
+            while True:
+                try:
+                    item = request_queue.get_nowait()
+                    if item is None:
+                        # Noneは終了フラグとして保持
+                        items.append(item)
+                        break
+                    items.append(item)
+                except queue.Empty:
+                    break
+
+            compacted = []
+            buffer = []
+
+            for req in items:
+                if req is None:
+                    if buffer:
+                        compacted.append(merge_requests(buffer))
+                        buffer = []
+                    compacted.append(None)
+                    continue
+
+                if not buffer:
+                    buffer.append(req)
+                else:
+                    if are_requests_mergeable(buffer[-1], req):
+                        buffer.append(req)
+                    else:
+                        compacted.append(merge_requests(buffer))
+                        buffer = [req]
+
+            if buffer:
+                compacted.append(merge_requests(buffer))
+
+            # キューに戻す
+            for item in compacted:
+                request_queue.put(item)
+
     def process_queue():
         """キューからリクエストを順番に取り出して処理するバックグラウンドスレッド"""
         global current_task   # グローバルを操作することを明示
         while True:
+            # 処理前にキューをまとめる
+            compact_queue(request_queue, lock)
             req_data = request_queue.get()  # キューからリクエストを取り出す
             if req_data is None:  # None が入った場合はスレッドを終了
                 break
@@ -491,6 +549,9 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
 
             request_queue.put(req_data)  # リクエストをキューに追加
 
+            # キューをまとめる（隣接重複を除去）
+            compact_queue(request_queue, lock)
+            
             # キューを保存
             save_queue_to_file(request_queue, lock)
 
