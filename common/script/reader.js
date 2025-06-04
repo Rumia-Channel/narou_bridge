@@ -73,49 +73,56 @@ function initNavOnReader(novelData, query) {
 }
 
 /**
- * 同時接続数を制限しつつ preloadAndMapCover を呼び出す
- * @param {Array} novelsList - 小説オブジェクトの配列
- * @param {Cache} coverCache - Cache Storage オブジェクト
- * @param {Function} updateCoverBar - 「coverDLフェーズ」のプログレス更新関数
+ * 同時接続数を 10 に制限しつつ、完了次第すぐに次のダウンロードを開始する版
+ * @param {Array}  novelsList - 小説オブジェクトの配列
+ * @param {Cache}  coverCache  - Cache Storage オブジェクト
+ * @param {Function} onComplete - １ファイルが完了するたびに呼ばれるコールバック
  */
-async function preloadAllCoversWithLimit(novelsList, coverCache, updateCoverBar) {
-  const CONCURRENCY_LIMIT = 10;
-  let i = 0;
-  const executing = [];
+async function preloadAllCoversWithLimit(novelsList, coverCache, onComplete) {
+  const CONCURRENCY_LIMIT = 4;
+  let index = 0;        // 次に処理すべき novelsList のインデックス
+  const executing = []; // 現在ダウンロード中の Promise を格納
 
-  async function enqueue() {
-    if (i === novelsList.length) {
-      return Promise.resolve();
-    }
-
-    const novel = novelsList[i];
-    const taskPromise = preloadAndMapCover(novel, coverCache)
+  // 1件分のダウンロードタスクを作成して executing に追加し、完了時に executing から外しつつ onComplete() を呼ぶ
+  function enqueueOne() {
+    if (index >= novelsList.length) return null;
+    const novel = novelsList[index++];
+    const p = preloadAndMapCover(novel, coverCache)
       .then(() => {
-        updateCoverBar(); // 1件完了ごとに「coverDLフェーズ」のバーを更新
-        executing.splice(executing.indexOf(taskPromise), 1);
+        // 成功したら進捗コールバックを呼ぶ
+        if (typeof onComplete === 'function') onComplete();
       })
       .catch(() => {
-        updateCoverBar();
-        executing.splice(executing.indexOf(taskPromise), 1);
+        // 失敗でも進捗コールバックを呼ぶ(状況に応じて)
+        if (typeof onComplete === 'function') onComplete();
+      })
+      .finally(() => {
+        // 完了したら executing から外す
+        const i = executing.indexOf(p);
+        if (i !== -1) executing.splice(i, 1);
       });
-
-    executing.push(taskPromise);
-    i++;
-
-    let next = Promise.resolve();
-    if (executing.length >= CONCURRENCY_LIMIT) {
-      next = Promise.race(executing);
-    }
-    return next.then(enqueue);
+    executing.push(p);
+    return p;
   }
 
-  await enqueue();
+  // 最初に最大 CONCURRENCY_LIMIT 件だけキューに乗せる
+  for (let i = 0; i < CONCURRENCY_LIMIT; i++) {
+    const t = enqueueOne();
+    if (!t) break;
+  }
+
+  // いずれかが終わるたびに新しいタスクを enqueueOne していく
+  while (executing.length > 0) {
+    await Promise.race(executing);
+    enqueueOne();
+  }
 }
+
 
 document.addEventListener('DOMContentLoaded', async () => {
   const query = getQueryParams();
 
-  // キャッシュクリアボタン（そのまま）
+ // キャッシュクリアボタン（そのまま）
   const btnClear = document.getElementById('btn-clear-cache');
   btnClear.addEventListener('click', async () => {
     await caches.delete(CACHE_NAME);
@@ -146,10 +153,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pb  = document.getElementById('progress-bar');
   const pi  = document.getElementById('progress-info');
 
+  //
   // (1) index.json 取得フェーズ
+  //
   if (pc) pc.style.display = 'block';
   let completedIndex = 0;
   const totalIndex   = sources.length;
+
+  // index.json取得中に呼び出す関数
   function updateIndexBar() {
     const pct = totalIndex > 0 ? (completedIndex / totalIndex * 100) : 0;
     pb.style.width = pct + '%';
@@ -157,6 +168,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   updateIndexBar();
 
+  // sources 配列を並列に fetch しつつ、完了ごとに進捗更新
   const indexPromises = sources.map(async (src) => {
     const arr = await loadIndexWithCache(src);
     completedIndex++;
@@ -164,29 +176,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     return arr.map(item => ({ ...item, source: src }));
   });
   const allArrays = await Promise.all(indexPromises);
+
+  // novelsList にまとめる
   const novelsList = [];
   allArrays.forEach(arr => novelsList.push(...arr));
 
+  //
   // (2) 目次構築中フェーズ
+  //
+  // index取得完了したので一度バーを100%にして短時間表示
   pi.textContent = '目次を読み込み中…';
   pb.style.width = '100%';
-  // 目次構築中の表示を少しだけ見せるため、約200ms待つ。不要なら 0 にしても可。
+  // 目次構築中の状態を少しだけ見せる（不要なら delay を 0 に変更可）
   await new Promise(r => setTimeout(r, 200));
 
-  // (3) キャッシュ状況チェック
+  //
+  // (3) カバーキャッシュチェック → キャッシュミス分をDL
+  //
   const coverCache = await caches.open(CACHE_NAME);
+
+  // 「キャッシュミスのノベル一覧」を作る
   const needFetchList = [];
   for (const novel of novelsList) {
     const base = `../${novel.source}/${novel.id}/`;
     let cached = false;
     for (const ext of ['jpg', 'png', 'gif']) {
       const url = base + `cover.${ext}`;
-      // Cache Storage に同じ URL で保存済みか確認
-      // （当初キャッシュされていれば、HEAD や fetch せずに済む前提）
-      // match() はパスの完全一致をチェックします
-      // もし `Cache Storage` に同一パスのキーがあればキャッシュ済みとみなす
-      // （http(s) のパスによっては絶対 URL になる点だけ注意）
-      // ここでは相対 URL を渡しても match が機能する想定です
+      // Cache Storage 内に同一URLがあれば cached=true
       const resp = await coverCache.match(url);
       if (resp) {
         cached = true;
@@ -198,33 +214,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // もしキャッシュミスがゼロなら、バーを隠して一度だけ目次を描画して終了
   if (needFetchList.length === 0) {
-    // ─── (4a) 全てキャッシュ済み ───
-    // プログレスバーを非表示にし、そのまま目次を一度だけ描画
     if (pc) pc.style.display = 'none';
     renderLibrary(app, novelsList);
     return;
   }
 
-  // ─── (4b) 一部キャッシュミスあり ───
-  // 「カバーをダウンロード中: 0% (0/needFetchList.length)」を表示してフェーズ開始
+  // 「カバーDL中」フェーズの進捗用変数を用意
   let completedCover = 0;
   const totalCover   = needFetchList.length;
+
   function updateCoverBar() {
     const pct = totalCover > 0 ? (completedCover / totalCover * 100) : 0;
     pb.style.width = pct + '%';
     pi.textContent = `カバーをダウンロード中: ${pct.toFixed(2)}% (${completedCover}/${totalCover})`;
   }
+
+  // フェーズ開始時にバーを 0% に初期化して文字表示
   completedCover = 0;
   updateCoverBar();
 
-  // 同時制限付きでキャッシュミス分だけダウンロード
-  await preloadAllCoversWithLimit(needFetchList, coverCache, () => {
-    completedCover++;
-    updateCoverBar();
-  });
+  // 同時最大 10 件でダウンロードし、完了ごとに updateCoverBar を呼ぶ
+  await preloadAllCoversWithLimit(
+    needFetchList,
+    coverCache,
+    () => {
+      completedCover++;
+      updateCoverBar();
+    }
+  );
 
-  // ダウンロード完了後にバーを隠して目次表示
+  // カバーDL完了後にバーを隠して最終的に目次を描画
   if (pc) pc.style.display = 'none';
   renderLibrary(app, novelsList);
 });
