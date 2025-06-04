@@ -34,15 +34,75 @@ let isExcludeTagsCollapsed = false;
 let isHiddenAuthorsCollapsed = false;
 
 /* --------------------------------------------------
-   データ取得
+   データ取得（ETagによるキャッシュ判定を導入）
 -------------------------------------------------- */
 async function fetchData() {
   const overlay = document.getElementById('loading-overlay');
   overlay.style.display = 'flex';
+
+  // 以前に保存したETagを取得（初回はnullになります）
+  const etagKey = 'indexJsonEtag_' + basePath;
+  const savedEtag = localStorage.getItem(etagKey);
+
   try {
-    const response = await fetch(basePath + 'index.json');
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    let response;
+    let newEtag = null;
+
+    if (savedEtag) {
+      // 1) サーバーにHEADリクエストを送り、最新のETagだけを取得する
+      try {
+        const headResp = await fetch(basePath + 'index.json', {
+          method: 'HEAD'
+        });
+        if (!headResp.ok) {
+          throw new Error(`HEADリクエストが失敗しました (${headResp.status})`);
+        }
+        newEtag = headResp.headers.get('ETag');
+      } catch (headErr) {
+        // HEADが失敗した場合は通常のGETにフォールバック
+        console.warn('HEADリクエスト失敗、GETで再取得します', headErr);
+        response = await fetch(basePath + 'index.json');
+      }
+
+      if (newEtag && newEtag === savedEtag) {
+        // 2) ETagが同じ → ブラウザのHTTPキャッシュ（Cache Storage）からのみ読み込む
+        try {
+          response = await fetch(basePath + 'index.json', {
+            method: 'GET',
+            cache: 'only-if-cached',
+            mode: 'same-origin'
+          });
+          if (!response || !response.ok) {
+            // キャッシュにない場合は通常のGETにフォールバック
+            throw new Error('only-if-cachedでの取得に失敗、GETで再取得します');
+          }
+        } catch (cacheErr) {
+          console.warn('キャッシュからの読み込み失敗、GETで再取得します', cacheErr);
+          response = await fetch(basePath + 'index.json');
+        }
+      } else {
+        // 3) ETagが異なる（またはHEADでETag取得に失敗）→ GETで再取得し、新しいETagを保存
+        response = await fetch(basePath + 'index.json');
+        newEtag = response.headers.get('ETag');
+      }
+    } else {
+      // savedEtagがない（初回ロード）→ 通常のGETで取得
+      response = await fetch(basePath + 'index.json');
+      newEtag = response.headers.get('ETag');
+    }
+
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    // JSONデータを取得
     tableData = await response.json();
+
+    // 新しいETagが取得できていたらlocalStorageに保存
+    if (newEtag) {
+      localStorage.setItem(etagKey, newEtag);
+    }
+
     loadSettings();
     buildUI();
   } catch (err) {
