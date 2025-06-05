@@ -73,50 +73,46 @@ function initNavOnReader(novelData, query) {
 }
 
 /**
- * 同時接続数を 10 に制限しつつ、完了次第すぐに次のダウンロードを開始する版
- * @param {Array}  novelsList - 小説オブジェクトの配列
- * @param {Cache}  coverCache  - Cache Storage オブジェクト
- * @param {Function} onComplete - １ファイルが完了するたびに呼ばれるコールバック
+ * 同時接続数を制限しつつ preloadAndMapCover を呼び出す
+ * @param {Array}  novelsList     - 小説オブジェクトの配列
+ * @param {Cache}  coverCache     - Cache Storage オブジェクト
+ * @param {Function} onComplete   - 1 件ダウンロード完了ごとに呼ぶコールバック
+ * @param {number} concurrencyLimit - 同時に処理する coverDL の上限
  */
-async function preloadAllCoversWithLimit(novelsList, coverCache, onComplete) {
-  const CONCURRENCY_LIMIT = 4;
-  let index = 0;        // 次に処理すべき novelsList のインデックス
-  const executing = []; // 現在ダウンロード中の Promise を格納
+async function preloadAllCoversWithLimit(novelsList, coverCache, onComplete, concurrencyLimit) {
+  let i = 0;
+  const executing = [];
 
-  // 1件分のダウンロードタスクを作成して executing に追加し、完了時に executing から外しつつ onComplete() を呼ぶ
-  function enqueueOne() {
-    if (index >= novelsList.length) return null;
-    const novel = novelsList[index++];
-    const p = preloadAndMapCover(novel, coverCache)
+  async function enqueue() {
+    if (i === novelsList.length) {
+      return Promise.resolve();
+    }
+
+    const novel = novelsList[i];
+    const taskPromise = preloadAndMapCover(novel, coverCache)
       .then(() => {
-        // 成功したら進捗コールバックを呼ぶ
-        if (typeof onComplete === 'function') onComplete();
+        executing.splice(executing.indexOf(taskPromise), 1);
+        onComplete();
       })
       .catch(() => {
-        // 失敗でも進捗コールバックを呼ぶ(状況に応じて)
-        if (typeof onComplete === 'function') onComplete();
-      })
-      .finally(() => {
-        // 完了したら executing から外す
-        const i = executing.indexOf(p);
-        if (i !== -1) executing.splice(i, 1);
+        executing.splice(executing.indexOf(taskPromise), 1);
+        onComplete();
       });
-    executing.push(p);
-    return p;
+
+    executing.push(taskPromise);
+    i++;
+
+    let next = Promise.resolve();
+    if (executing.length >= concurrencyLimit) {
+      // いずれかのタスクが終わるまで待つ
+      next = Promise.race(executing);
+    }
+    return next.then(enqueue);
   }
 
-  // 最初に最大 CONCURRENCY_LIMIT 件だけキューに乗せる
-  for (let i = 0; i < CONCURRENCY_LIMIT; i++) {
-    const t = enqueueOne();
-    if (!t) break;
-  }
-
-  // いずれかが終わるたびに新しいタスクを enqueueOne していく
-  while (executing.length > 0) {
-    await Promise.race(executing);
-    enqueueOne();
-  }
+  await enqueue();
 }
+
 
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -311,12 +307,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   completedCover = 0;
   updateCoverBar();
 
-  // 「同時ダウンロード数」は入力フィールドから取得し、1〜10 の範囲にクランプ
-  let concurrencyLimit = parseInt(input.value, 10);
-  if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1) concurrencyLimit = 1;
-  if (concurrencyLimit > 10) concurrencyLimit = 10;
+  // まず localStorage に保存された同時ダウンロード数を取得
+  let concurrencyLimit = parseInt(localStorage.getItem('concurrencyLimit'), 10);
 
-  // needFetchList の各要素を並列にダウンロード（上限は concurrencyLimit）
+  // localStorage に正しい値が入っていなければ、input.value を参照
+  if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1) {
+    concurrencyLimit = parseInt(input.value, 10);
+    if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1) {
+      concurrencyLimit = 1;
+    }
+  }
+
+  // 上限を設ける（例：最大 10）
+  if (concurrencyLimit > 10) {
+    concurrencyLimit = 10;
+  }
+
+  // ここで preloadAllCoversWithLimit に渡す
   await preloadAllCoversWithLimit(
     needFetchList,
     coverCache,
