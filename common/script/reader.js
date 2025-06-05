@@ -127,23 +127,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   const header = document.querySelector('header');
   // wrapper <div> を作成し、横並び (inline-block) に設定
   const wrapper = document.createElement('div');
-  wrapper.style.display     = 'inline-block';
+  wrapper.style.display = 'inline-block';
   wrapper.style.marginRight = '1em';
-  wrapper.style.fontSize    = '0.9em';
+  wrapper.style.fontSize = '0.9em';
 
   // ラベルを作成
   const label = document.createElement('label');
-  label.htmlFor    = 'concurrency-input';
+  label.htmlFor = 'concurrency-input';
   label.textContent = '同時ダウンロード数：';
 
   // 数値入力フィールドを作成
   const input = document.createElement('input');
-  input.id    = 'concurrency-input';
-  input.type  = 'number';
-  input.min   = '1';
-  input.max   = '10';
-  input.step  = '1';
-  input.style.width      = '3em';
+  input.id = 'concurrency-input';
+  input.type = 'number';
+  input.min = '1';
+  input.max = '10';
+  input.step = '1';
+  input.style.width = '3em';
   input.style.marginLeft = '0.5em';
 
   // localStorage から前回値を復元（なければ「4」を初期値に）
@@ -157,8 +157,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 値が変わったら即座に localStorage に保存
   input.addEventListener('change', () => {
     let v = parseInt(input.value, 10);
-    if (!Number.isInteger(v) || v < 1)      v = 1;
-    else if (v > 10)                        v = 10;
+    if (!Number.isInteger(v) || v < 1) v = 1;
+    else if (v > 10) v = 10;
     input.value = String(v);
     localStorage.setItem('concurrencyLimit', String(v));
   });
@@ -180,14 +180,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ───── 「キャッシュクリア」ボタンのクリック処理 ─────
   const btnClear = document.getElementById('btn-clear-cache');
   btnClear.addEventListener('click', async () => {
+    // (A) Cover 画像キャッシュを削除
     await caches.delete(CACHE_NAME);
+
+    // (B) index.json 用の Cache Storage も削除
+    await caches.delete(INDEX_CACHE);
+
+    // (C) localStorage 中の coverFail_* をすべて削除
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('coverFail_')) {
         localStorage.removeItem(key);
       }
     });
+
+    // (D) localStorage 中の indexETag_* をすべて削除
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith(INDEX_ETAG_KEY_PREFIX)) {
+        localStorage.removeItem(key);
+      }
+    });
+
+    // (E) メモリ上の Map もクリア
     coverUrlMap.clear();
     coverHashMap.clear();
+
     alert('キャッシュをクリアしました。ページを再読み込みします。');
     window.location.reload();
   });
@@ -205,16 +221,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ─── ライブラリ画面フロー ───
   initNavOnLibrary();
   const app = document.getElementById('app');
-  const pc  = document.getElementById('progress-container');
-  const pb  = document.getElementById('progress-bar');
-  const pi  = document.getElementById('progress-info');
+  const pc = document.getElementById('progress-container');
+  const pb = document.getElementById('progress-bar');
+  const pi = document.getElementById('progress-info');
 
   //
   // (1) index.json 取得フェーズ
   //
   if (pc) pc.style.display = 'block';
   let completedIndex = 0;
-  const totalIndex   = sources.length;
+  const totalIndex = sources.length;
 
   function updateIndexBar() {
     const pct = totalIndex > 0 ? (completedIndex / totalIndex * 100) : 0;
@@ -246,20 +262,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   //
   // (3) カバーキャッシュチェック → キャッシュ済みは coverUrlMap に登録、未キャッシュは needFetchList へ
   //
-  const coverCache   = await caches.open(CACHE_NAME);
+  const coverCache = await caches.open(CACHE_NAME);
   const needFetchList = [];
 
   for (const novel of novelsList) {
-    const key  = `${novel.source}_${novel.id}`;
+    const key = `${novel.source}_${novel.id}`;
     const base = `../${novel.source}/${novel.id}/`;
     let foundInCache = false;
 
     // 「jpg → png → gif」の順でキャッシュを探し、見つかれば ObjectURL を生成して coverUrlMap に登録
     for (const ext of ['jpg', 'png', 'gif']) {
-      const url      = base + `cover.${ext}`;
+      const url = base + `cover.${ext}`;
       const cachedRs = await coverCache.match(url);
       if (cachedRs) {
-        const blob      = await cachedRs.blob();
+        const blob = await cachedRs.blob();
         const objectURL = await dedupeBlob(blob);
         coverUrlMap.set(key, objectURL);
         foundInCache = true;
@@ -284,7 +300,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // (4b) キャッシュミス分のカバーDLフェーズ
   //
   let completedCover = 0;
-  const totalCover   = needFetchList.length;
+  const totalCover = needFetchList.length;
 
   function updateCoverBar() {
     const pct = totalCover > 0 ? (completedCover / totalCover * 100) : 0;
@@ -323,7 +339,7 @@ const INDEX_ETAG_KEY_PREFIX = 'indexETag_';          // localStorage に ETag �
 
 /**
  * キャッシュ付き index.json の読み込み（条件付き GET 版）
- * ※ 戻り値を「配列」に変換して返すように修正
+ * ※ 「キャッシュが無いのに 304 が返ってくる」ケースを回避する
  * @param {string} source - サイト名またはディレクトリ名
  * @returns {Promise<Array>} - [{ id, source, ...novelObject }, …] の配列
  */
@@ -331,27 +347,31 @@ async function loadIndexWithCache(source) {
   const url = new URL(`../${source}/index.json`, location.href).toString();
   const cache = await caches.open(INDEX_CACHE);
   const etagKey = `${INDEX_ETAG_KEY_PREFIX}${source}`;
-  const storedEtag = localStorage.getItem(etagKey);
+  let storedEtag = localStorage.getItem(etagKey);
 
-  // --- 1) Cache Storage からキャッシュ済みレスポンスを取得 ---
+  // 1) Cache Storage からキャッシュ済みレスポンスを取得
   const cachedResp = await cache.match(url);
   let cachedObj = null;
   if (cachedResp) {
     try {
-      cachedObj = await cachedResp.clone().json();  // オブジェクト形式で取得
+      cachedObj = await cachedResp.clone().json(); // オブジェクト形式で取得
     } catch {
       cachedObj = null;
     }
   }
 
-  // --- 2) 条件付き GET 用ヘッダーを準備 ---
+  // 2) 条件付き GET 用ヘッダーを準備
   const headers = {};
-  if (storedEtag) {
+  // 「キャッシュ版（cachedObj）が存在するときだけ ETag を使う」
+  if (storedEtag && cachedObj) {
     headers['If-None-Match'] = storedEtag;
-    // サーバーが Last-Modified のみ返す場合は、ここで headers['If-Modified-Since'] = storedEtag; を使う
+  } else {
+    // キャッシュが無いのに ETag が残っている→破棄して再取得させる
+    localStorage.removeItem(etagKey);
+    storedEtag = null;
   }
 
-  // --- 3) サーバーへ GET 要請（If-None-Match / If-Modified-Since を付与） ---
+  // 3) サーバーへ GET 要請（If-None-Match を付与するかどうか）
   let resp;
   try {
     resp = await fetch(url, {
@@ -360,25 +380,25 @@ async function loadIndexWithCache(source) {
       cache: 'no-store'
     });
   } catch (e) {
-    // ネットワークエラーなどで失敗したら、キャッシュ版があればそれを配列化して返す
+    // ネットワークエラーなどで失敗したら、キャッシュ版があればそれを返す
     if (cachedObj) {
       return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
     }
     throw e;
   }
 
-  // --- 4) 304 Not Modified：キャッシュ版をそのまま配列で返す ---
+  // 4) 304 Not Modified：キャッシュが最新なのでキャッシュデータを返す
   if (resp.status === 304 && cachedObj) {
     return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
   }
 
-  // --- 5) 200 OK：更新があった → JSONをパースしてキャッシュも更新 ---
+  // 5) 200 OK：更新があった → JSON をパースしてキャッシュを更新
   if (resp.status === 200) {
     let freshObj;
     try {
-      freshObj = await resp.clone().json();  // オブジェクト形式で取得
+      freshObj = await resp.clone().json(); // オブジェクト形式で取得
     } catch (e) {
-      // パース失敗でもキャッシュ版があれば配列化して返す
+      // JSON パースエラーでもキャッシュ版があればそれを返す
       if (cachedObj) {
         return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
       }
@@ -388,7 +408,7 @@ async function loadIndexWithCache(source) {
     // Cache Storage に最新の index.json を保存
     await cache.put(url, resp.clone());
 
-    // 新しい ETag（または Last-Modified）を localStorage に保存
+    // サーバーから返ってきた新しい ETag（または Last-Modified）を localStorage に保存
     const newEtag = resp.headers.get('ETag') || resp.headers.get('Last-Modified');
     if (newEtag) {
       localStorage.setItem(etagKey, newEtag);
@@ -398,7 +418,8 @@ async function loadIndexWithCache(source) {
     return Object.entries(freshObj).map(([id, novel]) => ({ id, source, ...novel }));
   }
 
-  // --- 6) その他ステータス（404, 500 など）はキャッシュ版あればそれを返し、なければ例外 ---
+  // 6) その他ステータス（404, 500, 304＋キャッシュ無し など）は、
+  //    キャッシュ版があればそれを返し、無ければ例外
   if (cachedObj) {
     return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
   }
