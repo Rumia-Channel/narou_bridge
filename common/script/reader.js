@@ -122,7 +122,62 @@ async function preloadAllCoversWithLimit(novelsList, coverCache, onComplete) {
 document.addEventListener('DOMContentLoaded', async () => {
   const query = getQueryParams();
 
- // キャッシュクリアボタン（そのまま）
+  // ──────────── 「同時ダウンロード数」入力フィールドの生成 ────────────
+  // header 要素を取得
+  const header = document.querySelector('header');
+  // wrapper <div> を作成し、横並び (inline-block) に設定
+  const wrapper = document.createElement('div');
+  wrapper.style.display     = 'inline-block';
+  wrapper.style.marginRight = '1em';
+  wrapper.style.fontSize    = '0.9em';
+
+  // ラベルを作成
+  const label = document.createElement('label');
+  label.htmlFor    = 'concurrency-input';
+  label.textContent = '同時ダウンロード数：';
+
+  // 数値入力フィールドを作成
+  const input = document.createElement('input');
+  input.id    = 'concurrency-input';
+  input.type  = 'number';
+  input.min   = '1';
+  input.max   = '10';
+  input.step  = '1';
+  input.style.width      = '3em';
+  input.style.marginLeft = '0.5em';
+
+  // localStorage から前回値を復元（なければ「4」を初期値に）
+  const stored = parseInt(localStorage.getItem('concurrencyLimit'), 10);
+  if (!Number.isInteger(stored) || stored < 1) {
+    input.value = '4';
+  } else {
+    input.value = String(stored);
+  }
+
+  // 値が変わったら即座に localStorage に保存
+  input.addEventListener('change', () => {
+    let v = parseInt(input.value, 10);
+    if (!Number.isInteger(v) || v < 1)      v = 1;
+    else if (v > 10)                        v = 10;
+    input.value = String(v);
+    localStorage.setItem('concurrencyLimit', String(v));
+  });
+
+  wrapper.appendChild(label);
+  wrapper.appendChild(input);
+
+  // ヘッダー内の最初の <button>（通常はキャッシュクリア）がある場所を取得
+  const firstButton = header.querySelector('button');
+  // その直前に wrapper を差し込む
+  if (firstButton) {
+    header.insertBefore(wrapper, firstButton);
+  } else {
+    // 万一 button が見つからなければ header の末尾に挿入
+    header.appendChild(wrapper);
+  }
+  // ──────────────────────────────────────────────────────────
+
+  // ───── 「キャッシュクリア」ボタンのクリック処理 ─────
   const btnClear = document.getElementById('btn-clear-cache');
   btnClear.addEventListener('click', async () => {
     await caches.delete(CACHE_NAME);
@@ -136,8 +191,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     alert('キャッシュをクリアしました。ページを再読み込みします。');
     window.location.reload();
   });
+  // ────────────────────────────────────────────────────────
 
-  // リーダー画面かどうか判定
+  // 「リーダー画面かどうか」を判定し、リーダーならそちらの処理へ
   if (query.site && query.nid) {
     initWidthSelector();
     const pcReader = document.getElementById('progress-container');
@@ -160,7 +216,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   let completedIndex = 0;
   const totalIndex   = sources.length;
 
-  // index.json取得中に呼び出す関数
   function updateIndexBar() {
     const pct = totalIndex > 0 ? (completedIndex / totalIndex * 100) : 0;
     pb.style.width = pct + '%';
@@ -168,7 +223,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   updateIndexBar();
 
-  // sources 配列を並列に fetch しつつ、完了ごとに進捗更新
   const indexPromises = sources.map(async (src) => {
     const arr = await loadIndexWithCache(src);
     completedIndex++;
@@ -184,44 +238,51 @@ document.addEventListener('DOMContentLoaded', async () => {
   //
   // (2) 目次構築中フェーズ
   //
-  // index取得完了したので一度バーを100%にして短時間表示
+  // index.json 取得が終わったので、一度バーを 100% にして短時間表示
   pi.textContent = '目次を読み込み中…';
   pb.style.width = '100%';
-  // 目次構築中の状態を少しだけ見せる（不要なら delay を 0 に変更可）
   await new Promise(r => setTimeout(r, 200));
 
   //
-  // (3) カバーキャッシュチェック → キャッシュミス分をDL
+  // (3) カバーキャッシュチェック → キャッシュ済みは coverUrlMap に登録、未キャッシュは needFetchList へ
   //
-  const coverCache = await caches.open(CACHE_NAME);
-
-  // 「キャッシュミスのノベル一覧」を作る
+  const coverCache   = await caches.open(CACHE_NAME);
   const needFetchList = [];
+
   for (const novel of novelsList) {
+    const key  = `${novel.source}_${novel.id}`;
     const base = `../${novel.source}/${novel.id}/`;
-    let cached = false;
+    let foundInCache = false;
+
+    // 「jpg → png → gif」の順でキャッシュを探し、見つかれば ObjectURL を生成して coverUrlMap に登録
     for (const ext of ['jpg', 'png', 'gif']) {
-      const url = base + `cover.${ext}`;
-      // Cache Storage 内に同一URLがあれば cached=true
-      const resp = await coverCache.match(url);
-      if (resp) {
-        cached = true;
+      const url      = base + `cover.${ext}`;
+      const cachedRs = await coverCache.match(url);
+      if (cachedRs) {
+        const blob      = await cachedRs.blob();
+        const objectURL = await dedupeBlob(blob);
+        coverUrlMap.set(key, objectURL);
+        foundInCache = true;
         break;
       }
     }
-    if (!cached) {
+
+    // キャッシュが見つからなかった場合だけリストに追加
+    if (!foundInCache) {
       needFetchList.push(novel);
     }
   }
 
-  // もしキャッシュミスがゼロなら、バーを隠して一度だけ目次を描画して終了
+  // (4a) キャッシュミスがゼロなら、バーを隠して一度だけ目次を描画して終了
   if (needFetchList.length === 0) {
     if (pc) pc.style.display = 'none';
     renderLibrary(app, novelsList);
     return;
   }
 
-  // 「カバーDL中」フェーズの進捗用変数を用意
+  //
+  // (4b) キャッシュミス分のカバーDLフェーズ
+  //
   let completedCover = 0;
   const totalCover   = needFetchList.length;
 
@@ -230,22 +291,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     pb.style.width = pct + '%';
     pi.textContent = `カバーをダウンロード中: ${pct.toFixed(2)}% (${completedCover}/${totalCover})`;
   }
-
-  // フェーズ開始時にバーを 0% に初期化して文字表示
+  // フェーズ開始時にバーと文字を初期化
   completedCover = 0;
   updateCoverBar();
 
-  // 同時最大 10 件でダウンロードし、完了ごとに updateCoverBar を呼ぶ
+  // 「同時ダウンロード数」は入力フィールドから取得し、1〜10 の範囲にクランプ
+  let concurrencyLimit = parseInt(input.value, 10);
+  if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1) concurrencyLimit = 1;
+  if (concurrencyLimit > 10) concurrencyLimit = 10;
+
+  // needFetchList の各要素を並列にダウンロード（上限は concurrencyLimit）
   await preloadAllCoversWithLimit(
     needFetchList,
     coverCache,
     () => {
       completedCover++;
       updateCoverBar();
-    }
+    },
+    concurrencyLimit
   );
 
-  // カバーDL完了後にバーを隠して最終的に目次を描画
+  // (5) カバーDL完了後、バーを隠して最終的に目次を描画
   if (pc) pc.style.display = 'none';
   renderLibrary(app, novelsList);
 });
