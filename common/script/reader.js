@@ -63,13 +63,18 @@ function initNavOnReader(novelData, query) {
   header.appendChild(btnBack);
 
   // --- 本文へ進むボタン ---
+  const h1 = header.querySelector('h1');
   const btnToText = document.createElement('button');
   btnToText.textContent = '本文へ進む';
   btnToText.style.marginLeft = '1em';
   btnToText.addEventListener('click', () => {
     window.location.href = `/${novelData.source}/${novelData.id}/`;
   });
-  header.appendChild(btnToText);
+  if (h1) {
+    header.insertBefore(btnToText, h1);
+  } else {
+    header.appendChild(btnToText);
+  }
 }
 
 /**
@@ -163,12 +168,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   wrapper.appendChild(input);
 
   // ヘッダー内の最初の <button>（通常はキャッシュクリア）がある場所を取得
-  const firstButton = header.querySelector('button');
-  // その直前に wrapper を差し込む
-  if (firstButton) {
-    header.insertBefore(wrapper, firstButton);
+  const h1 = header.querySelector('h1');
+  if (h1) {
+    header.insertBefore(wrapper, h1);
   } else {
-    // 万一 button が見つからなければ header の末尾に挿入
     header.appendChild(wrapper);
   }
   // ──────────────────────────────────────────────────────────
@@ -998,6 +1001,14 @@ async function renderEpisode(container, novel, episode, episodesArr) {
     prev.href = createEpisodeURL(novel, epId, currentPage - 1, totalPages);
     prev.textContent = '← 前のページ';
     nav.appendChild(prev);
+  } else {
+    // クリック不可・表示だけのダミー
+    const prev = document.createElement('span');
+    prev.className = 'nav-link nav-link--disabled';
+    prev.textContent = '← 前のページ';
+    prev.style.pointerEvents = 'none';
+    prev.style.opacity = '0.6';
+    nav.appendChild(prev);
   }
 
   const selector = document.createElement('select');
@@ -1021,7 +1032,16 @@ async function renderEpisode(container, novel, episode, episodesArr) {
     next.href = createEpisodeURL(novel, epId, currentPage + 1, totalPages);
     next.textContent = '次のページ →';
     nav.appendChild(next);
+  } else {
+    // 非活性表示・クリック不可でレイアウト維持
+    const next = document.createElement('span');
+    next.className = 'nav-link nav-link--disabled';
+    next.textContent = '次のページ →';
+    next.style.pointerEvents = 'none';
+    next.style.opacity = '0.6';
+    nav.appendChild(next);
   }
+
 
   container.appendChild(nav);
 
