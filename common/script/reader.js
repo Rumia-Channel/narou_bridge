@@ -629,45 +629,54 @@ function updateProgress(doneCount, totalCount, messageLabel) {
 async function renderLibraryWithProgress(container, novelsList) {
   container.innerHTML = '';
 
-  // LocalStorage から折りたたみ状態を取得
+  // LocalStorage から折りたたみ状態を取得（author_id をキーに保存します）
   const collapsed = JSON.parse(localStorage.getItem('collapsedAuthors') || '[]');
   const now = new Date();
 
-  // 作者でグループ化
+  // author_id でグループ化
   const authorsMap = {};
   novelsList.forEach(novel => {
-    if (!authorsMap[novel.author]) authorsMap[novel.author] = [];
-    authorsMap[novel.author].push(novel);
+    const aid = novel.author_id;
+    if (!authorsMap[aid]) authorsMap[aid] = [];
+    authorsMap[aid].push(novel);
   });
 
-  // 作者内で更新日時順（新しい順）に並べ替え
+  // 各グループ内を更新日時順（新しい順）にソート
   Object.values(authorsMap).forEach(list => {
     list.sort((a, b) => new Date(b.update_date) - new Date(a.update_date));
   });
 
-  // 作者名順にソート（日本語ロケール）
-  const sortedAuthors = Object.keys(authorsMap).sort((a, b) => a.localeCompare(b, 'ja'));
+  // グループごとに表示する作者名を最新作品から取得
+  const authorNameMap = {};
+  Object.entries(authorsMap).forEach(([aid, list]) => {
+    authorNameMap[aid] = list[0].author;
+  });
+
+  // author_id のリストを表示名の五十音順でソート
+  const sortedAuthorIds = Object.keys(authorsMap).sort((a, b) => {
+    return authorNameMap[a].localeCompare(authorNameMap[b], 'ja');
+  });
 
   // ここから「目次を読み込み中」フェーズ
-  const totalItems = novelsList.length;  // 全体の小説数を総数とする
+  const totalItems = novelsList.length;
   let doneItems = 0;
   updateProgress(doneItems, totalItems, '目次を読み込み中:');
 
-  // 小説カードを作る前に、暫定的に progress bar を表示しつつ、少しだけ待機してユーザーが見やすいようにする
+  // 少し待ってから描画開始（UI が固まるのを防ぐため）
   await new Promise(r => setTimeout(r, 50));
 
-  for (const author of sortedAuthors) {
+  for (const aid of sortedAuthorIds) {
     // 作者グループ全体のコンテナを作成
     const group = document.createElement('div');
     group.className = 'author-group';
 
-    // 【ヘッダー部分】
+    // ヘッダーに表示用作者名をセット
     const header = document.createElement('div');
     header.className = 'author-header';
-    header.textContent = author;
+    header.textContent = authorNameMap[aid];
 
     // NEW バッジ（7日以内に更新があれば）
-    const hasNew = authorsMap[author].some(novel =>
+    const hasNew = authorsMap[aid].some(novel =>
       (now - new Date(novel.update_date)) / (1000 * 3600 * 24) <= 7
     );
     if (hasNew) {
@@ -681,22 +690,26 @@ async function renderLibraryWithProgress(container, novelsList) {
     // 折りたたみ状態復元
     const content = document.createElement('div');
     content.className = 'author-content';
-    content.style.display = collapsed.includes(author) ? 'none' : 'block';
+    content.style.display = collapsed.includes(aid) ? 'none' : 'block';
 
     header.addEventListener('click', () => {
       const isNow = content.style.display === 'block';
       content.style.display = isNow ? 'none' : 'block';
-      const idx = collapsed.indexOf(author);
+      const idx = collapsed.indexOf(aid);
       if (isNow) {
-        if (idx === -1) collapsed.push(author);
+        if (idx === -1) collapsed.push(aid);
       } else {
         if (idx !== -1) collapsed.splice(idx, 1);
       }
       localStorage.setItem('collapsedAuthors', JSON.stringify(collapsed));
     });
 
+    group.appendChild(header);
+    group.appendChild(content);
+    container.appendChild(group);
+
     // カードを１つずつ作成
-    for (const novel of authorsMap[author]) {
+    for (const novel of authorsMap[aid]) {
       const novelElem = document.createElement('div');
       novelElem.className = 'novel';
 
@@ -715,9 +728,7 @@ async function renderLibraryWithProgress(container, novelsList) {
       const days = (now - new Date(novel.update_date)) / (1000 * 3600 * 24);
       const readStatus = getReadStatus(novel);
       badgeWrap.appendChild(makeBadge('NEW', days <= 7));
-      const statusLabel = readStatus === 'unread' ? '未読'
-        : readStatus === 'read' ? '既読'
-          : '完読';
+      const statusLabel = readStatus === 'unread' ? '未読' : readStatus === 'read' ? '既読' : '完読';
       badgeWrap.appendChild(makeBadge(statusLabel));
       badgeWrap.appendChild(makeBadge(novel.serialization));
       badgeWrap.appendChild(makeBadge(novel.type === 'comic' ? '漫画' : '小説'));
@@ -742,22 +753,19 @@ async function renderLibraryWithProgress(container, novelsList) {
       // １件レンダリングごとに進捗更新
       doneItems++;
       updateProgress(doneItems, totalItems, '目次を読み込み中:');
-      // ほんの数ミリ秒ウェイトを入れると表示がスムーズになることがあります（必要なければ省略可）
+
+      // 100件ごとに少しだけ待つ（UI 更新が詰まるのを防ぐ）
       if (doneItems % 100 === 0) {
-        // 100 件ごとに少しだけ待つ（UI 更新が詰まるのを防ぐため）
         await new Promise(r => setTimeout(r, 10));
       }
     }
-
-    group.appendChild(header);
-    group.appendChild(content);
-    container.appendChild(group);
   }
 
   // レンダリング完了したらプログレスバーを非表示に
   const pcEl = document.getElementById('progress-container');
   if (pcEl) pcEl.style.display = 'none';
 }
+
 
 function makeBadge(label, active = true) {
   const span = document.createElement('span');
