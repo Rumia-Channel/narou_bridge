@@ -271,6 +271,25 @@ function renderTagFilters() {
   );
 }
 
+function getFilteredEntries() {
+  return Object.entries(tableData)
+    .filter(([, it]) => typeFilter === 'all' || it.type === typeFilter)
+    .filter(([, it]) => !hiddenAuthors.includes(it.author) &&
+      (filteredAuthors.length === 0 || filteredAuthors.includes(it.author_id || it.author)))
+    .filter(([, it]) => {
+      if (!it.all_tags) return true;
+      const incMatch = includedTags.length === 0 ||
+        (includeOperator === 'AND'
+          ? includedTags.every(t => it.all_tags.includes(t))
+          : includedTags.some(t => it.all_tags.includes(t)));
+      const excMatch = excludedTags.length === 0 ||
+        (excludeOperator === 'OR'
+          ? !excludedTags.some(t => it.all_tags.includes(t))
+          : !excludedTags.every(t => it.all_tags.includes(t)));
+      return incMatch && excMatch;
+    });
+}
+
 function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
   const root = document.getElementById(kind === 'include' ? 'include-tags' : 'exclude-tags');
   if (!root) return;
@@ -288,7 +307,6 @@ function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
   root.appendChild(head);
   if (collapsed) return;
 
-  // 条件セレクタ
   const sel = document.createElement('select');
   ['AND', 'OR'].forEach(op => {
     const o = document.createElement('option');
@@ -296,12 +314,16 @@ function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
     sel.appendChild(o);
   });
   sel.value = operator;
-  sel.addEventListener('change', () => { setOp(sel.value); saveSettings(); renderTable(); });
+  sel.addEventListener('change', () => {
+    setOp(sel.value);
+    saveSettings();
+    renderTable();
+    updatePagination();
+  });
   root.appendChild(document.createTextNode(' 条件: '));
   root.appendChild(sel);
   root.appendChild(document.createElement('br'));
 
-  // チェックボックス
   tagArr.forEach(tag => {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
@@ -311,6 +333,7 @@ function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
       saveSettings();
       renderTagFilters();
       renderTable();
+      updatePagination();
     });
     root.appendChild(cb);
     root.appendChild(document.createTextNode(' ' + tag));
@@ -409,23 +432,10 @@ function renderTable() {
   const tbody = document.getElementById('user-table-body');
   tbody.innerHTML = '';
 
-  let entries = Object.entries(tableData)
-    .filter(([, it]) => typeFilter === 'all' || it.type === typeFilter)
-    .filter(([, it]) => !hiddenAuthors.includes(it.author) &&
-      (filteredAuthors.length === 0 || filteredAuthors.includes(it.author_id || it.author)))
-    .filter(([, it]) => {
-      if (!it.all_tags) return true;
-      const incMatch = includedTags.length === 0 ||
-        (includeOperator === 'AND'
-          ? includedTags.every(t => it.all_tags.includes(t))
-          : includedTags.some(t => it.all_tags.includes(t)));
-      const excMatch = excludedTags.length === 0 ||
-        (excludeOperator === 'OR'
-          ? !excludedTags.some(t => it.all_tags.includes(t))
-          : !excludedTags.every(t => it.all_tags.includes(t)));
-      return incMatch && excMatch;
-    });
+  // 1) フィルター適用
+  let entries = getFilteredEntries();
 
+  // 2) ソート
   if (sortInfo.column) {
     entries.sort(([, a], [, b]) => {
       let A = a[sortInfo.column] ?? '';
@@ -436,13 +446,15 @@ function renderTable() {
     if (!sortInfo.ascending) entries.reverse();
   }
 
+  // 3) ページネーション
   const start = (currentPage - 1) * rowsPerPage;
   const page = rowsPerPage ? entries.slice(start, start + rowsPerPage) : entries;
 
+  // 4) 行レンダリング
   page.forEach(([key, it]) => {
     const tr = document.createElement('tr');
 
-    // 先頭チェックボックス
+    // チェックボックス
     const tdChk = document.createElement('td');
     tdChk.style.width = '3ch';
     const cb = document.createElement('input');
@@ -457,7 +469,7 @@ function renderTable() {
     tdChk.appendChild(cb);
     tr.appendChild(tdChk);
 
-    // データセル
+    // セルごとの描画
     const fixedTotal = fixedWidthMapping.serialization + fixedWidthMapping.type +
       fixedWidthMapping.create_date + fixedWidthMapping.update_date;
     const varTotal = variableWeightMapping.title + variableWeightMapping.author + variableWeightMapping.tags;
@@ -528,24 +540,21 @@ function renderTable() {
 -------------------------------------------------- */
 function updatePagination() {
   const pageInfo = document.getElementById('page-info');
-  const totalItems = Object.entries(tableData).filter(([, it]) => {
-    if (typeFilter !== 'all' && it.type !== typeFilter) return false;
-    if (hiddenAuthors.includes(it.author)) return false;
-    if (filteredAuthors.length && !filteredAuthors.includes(it.author_id || it.author)) return false;
-    if (it.all_tags) {
-      const inc = includedTags.every(t => it.all_tags.includes(t));
-      const exc = excludedTags.every(t => !it.all_tags.includes(t));
-      if (!(inc && exc)) return false;
-    }
-    return true;
-  }).length;
+  // ① フィルター済みデータの件数を取得
+  const totalItems = getFilteredEntries().length;
+  // ② 総ページ数を計算
   const totalPages = rowsPerPage ? Math.ceil(totalItems / rowsPerPage) : 1;
+  // ③ 現在ページが範囲外なら補正
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  // ④ 表示
   pageInfo.textContent = `${currentPage} / ${totalPages || 1}`;
 }
 
 function nextPage() {
-  updatePagination();
-  const totalPages = rowsPerPage ? Math.ceil(Object.entries(tableData).length / rowsPerPage) : 1;
+  const totalPages = rowsPerPage
+    ? Math.ceil(getFilteredEntries().length / rowsPerPage)
+    : 1;
   if (currentPage < totalPages) {
     currentPage++;
     saveSettings();

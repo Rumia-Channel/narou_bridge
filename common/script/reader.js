@@ -364,7 +364,7 @@ async function loadIndexWithCache(source) {
   let cachedObj = null;
   if (cachedResp) {
     try {
-      cachedObj = await cachedResp.clone().json(); // オブジェクト形式で取得
+      cachedObj = await cachedResp.clone().json();
     } catch {
       cachedObj = null;
     }
@@ -386,7 +386,7 @@ async function loadIndexWithCache(source) {
   try {
     resp = await fetch(url, {
       method: 'GET',
-      headers: headers,
+      headers,
       cache: 'no-store'
     });
   } catch (e) {
@@ -394,7 +394,8 @@ async function loadIndexWithCache(source) {
     if (cachedObj) {
       return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
     }
-    throw e;
+    console.warn(`Network error for ${url}:`, e);
+    return []; // ネットワークエラー時キャッシュも無ければ空でスキップ
   }
 
   // 4) 304 Not Modified：キャッシュが最新なのでキャッシュデータを返す
@@ -406,13 +407,14 @@ async function loadIndexWithCache(source) {
   if (resp.status === 200) {
     let freshObj;
     try {
-      freshObj = await resp.clone().json(); // オブジェクト形式で取得
+      freshObj = await resp.clone().json();
     } catch (e) {
       // JSON パースエラーでもキャッシュ版があればそれを返す
       if (cachedObj) {
         return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
       }
-      throw e;
+      console.warn(`JSON parse error for ${url}:`, e);
+      return []; // JSONエラーでキャッシュ無しは空配列
     }
 
     // Cache Storage に最新の index.json を保存
@@ -428,12 +430,18 @@ async function loadIndexWithCache(source) {
     return Object.entries(freshObj).map(([id, novel]) => ({ id, source, ...novel }));
   }
 
-  // 6) その他ステータス（404, 500, 304＋キャッシュ無し など）は、
-  //    キャッシュ版があればそれを返し、無ければ例外
+  if (resp.status === 404) {
+    console.warn(`index.json not found (404): ${url}`);
+    return []; // 404の場合はスキップして空の配列を返す
+  }
+
+  // その他のステータス
   if (cachedObj) {
     return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
   }
-  throw new Error(`index.json fetch failed: ${resp.status}`);
+
+  console.warn(`Unhandled response ${resp.status} for ${url}`);
+  return [];
 }
 
 
