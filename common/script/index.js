@@ -454,18 +454,33 @@ function renderTable() {
     entries.sort(([, a], [, b]) => {
       let A = a[sortInfo.column] ?? '';
       let B = b[sortInfo.column] ?? '';
-      if (!isNaN(A) && !isNaN(B)) { A = parseFloat(A); B = parseFloat(B); }
-      return A < B ? -1 : A > B ? 1 : 0;
+      if (!isNaN(A) && !isNaN(B)) {
+        A = parseFloat(A);
+        B = parseFloat(B);
+      }
+      return (A < B ? -1 : A > B ? 1 : 0) * (sortInfo.ascending ? 1 : -1);
     });
-    if (!sortInfo.ascending) entries.reverse();
   }
 
-  // 3) ページネーション
-  const start = (currentPage - 1) * rowsPerPage;
-  const page = rowsPerPage ? entries.slice(start, start + rowsPerPage) : entries;
+  // 3) 総ページ数計算・currentPage を clamp
+  const totalItems = entries.length;
+  const totalPages = rowsPerPage
+    ? Math.ceil(totalItems / rowsPerPage)
+    : 1;
+  currentPage = Math.min(Math.max(1, currentPage), totalPages);
 
-  // 4) 行レンダリング
-  page.forEach(([key, it]) => {
+  // 4) ページ情報表示
+  document.getElementById('page-info').textContent
+    = `${currentPage} / ${totalPages}`;
+
+  // 5) ページネーション（スライス）
+  const start = (currentPage - 1) * rowsPerPage;
+  const pageEntries = rowsPerPage
+    ? entries.slice(start, start + rowsPerPage)
+    : entries;
+
+  // 6) 行レンダリング
+  pageEntries.forEach(([key, it]) => {
     const tr = document.createElement('tr');
 
     // チェックボックス
@@ -483,10 +498,14 @@ function renderTable() {
     tdChk.appendChild(cb);
     tr.appendChild(tdChk);
 
-    // セルごとの描画
-    const fixedTotal = fixedWidthMapping.serialization + fixedWidthMapping.type +
-      fixedWidthMapping.create_date + fixedWidthMapping.update_date;
-    const varTotal = variableWeightMapping.title + variableWeightMapping.author + variableWeightMapping.tags;
+    // セル描画のための幅計算
+    const fixedTotal = fixedWidthMapping.serialization
+      + fixedWidthMapping.type
+      + fixedWidthMapping.create_date
+      + fixedWidthMapping.update_date;
+    const varTotal = variableWeightMapping.title
+      + variableWeightMapping.author
+      + variableWeightMapping.tags;
 
     columns.forEach(c => {
       const td = document.createElement('td');
@@ -494,8 +513,12 @@ function renderTable() {
         td.classList.add('hidden-column');
       } else {
         td.classList.add(`td-${c}`);
-        if (fixedWidthMapping[c]) td.style.width = fixedWidthMapping[c] + 'ch';
-        else td.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c] || 0) / varTotal})`;
+        if (fixedWidthMapping[c]) {
+          td.style.width = fixedWidthMapping[c] + 'ch';
+        } else {
+          td.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c] || 0) / varTotal
+            })`;
+        }
 
         switch (c) {
           case 'serialization':
@@ -547,6 +570,9 @@ function renderTable() {
 
     tbody.appendChild(tr);
   });
+
+  // 選択件数更新
+  updateSelectedCount();
 }
 
 /* --------------------------------------------------
@@ -561,8 +587,8 @@ function updatePagination() {
     'filteredCount=', totalItems,
     'rowsPerPage=', rowsPerPage
   );
-  const totalPages = rowsPerPage 
-    ? Math.ceil(totalItems / rowsPerPage) 
+  const totalPages = rowsPerPage
+    ? Math.ceil(totalItems / rowsPerPage)
     : 1;
   currentPage = Math.min(Math.max(1, currentPage), totalPages);
   pageInfo.textContent = `${currentPage} / ${totalPages}`;
@@ -570,24 +596,15 @@ function updatePagination() {
 
 
 function nextPage() {
-  const totalPages = rowsPerPage
-    ? Math.ceil(getFilteredEntries().length / rowsPerPage)
-    : 1;
-  if (currentPage < totalPages) {
-    currentPage++;
-    saveSettings();
-    renderTable();
-    updatePagination();
-  }
+  currentPage++;
+  renderTable();
+  saveSettings();
 }
 
 function prevPage() {
-  if (currentPage > 1) {
-    currentPage--;
-    saveSettings();
-    renderTable();
-    updatePagination();
-  }
+  currentPage--;
+  renderTable();
+  saveSettings();
 }
 
 /* --------------------------------------------------
