@@ -2,6 +2,7 @@ from datetime import datetime
 import os
 import re
 
+from crawler.common import safe_fromiso
 #ログを保存
 import logging
 
@@ -16,8 +17,18 @@ def write_index(f, data, key_data):
     for ep in data['episodes'].values():  # ソートせずにそのまま順番で処理
         episode_id = ep['id']
         episode_title = ep['title']
-        create_date = datetime.fromisoformat(ep['createDate']).strftime("%Y/%m/%d %H:%M")
-        update_date = datetime.fromisoformat(ep['updateDate']).strftime("%Y/%m/%d %H:%M")
+        # 安全に更新日や作成日を取得
+        create_date = safe_fromiso(ep['createDate'])
+        if create_date:
+            create_date = create_date.strftime("%Y/%m/%d %H:%M")
+        else:
+            create_date = "作成日を取得できませんでした。"
+        update_date = safe_fromiso(ep['updateDate'])
+        if update_date:
+            update_date = update_date.strftime("%Y/%m/%d %H:%M")
+        else:
+            update_date = "更新日を取得できませんでした。"
+
         if not ep['chapter'] == chapter:
             if ep['chapter']:
                 chapter = ep['chapter']
@@ -190,14 +201,16 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
     global img_link
     global a_link
 
-    site_name = nove_path.replace(data_folder, '').replace('/', os.sep).split(os.sep)[1]
+    site_name, nid = os.path.relpath(nove_path, data_folder).split(os.sep)[:2]
 
     img_link = '/images/'  # 画像ファイルが保存されているディレクトリのリンク
 
-    #目次ファイルの生成
-    if not data.get("serialization") == "短編":
-        link = host_name + nove_path.replace(data_folder, '').replace('\\', '/')
-        a_link = nove_path.replace(data_folder, '').replace('\\', '/')
+    # 目次ファイルの生成
+    if data.get("serialization") != "短編":
+        relpath = os.path.relpath(nove_path, data_folder).replace('\\', '/')
+        
+        link = f"{host_name}/{relpath}"
+        a_link = f"/{relpath}"
         index_path = os.path.join(nove_path, 'index.html')
         with open(index_path, 'w', encoding='utf-8') as f:
             f.write('<!DOCTYPE html>\n')
@@ -214,9 +227,9 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('<title>Index Pixiv</title>\n')
             f.write('</head>\n')
             f.write('<body>\n')
-            f.write(f'<a href="../{key_data}">戻る</a>\n')
-            f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
-            f.write(f'<a href="/reader/?site={site_name}&nid={data.get("nid")}">簡易リーダーで読む</a>\n')
+            f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
+            f.write(f'<a href="./info/{key_data}" class="header-link">作品情報</a>\n')
+            f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
             f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
             f.write('<div class="index_box">\n')
             write_index(f, data, key_data)  # 目次生成
@@ -224,6 +237,16 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('</body>\n')
             f.write('</html>\n')
     
+    formatted_create = (
+        safe_fromiso(data.get("createDate")).strftime("%Y年 %m月%d日 %H時%M分")
+        if safe_fromiso(data.get("createDate")) else ""
+    )
+
+    formatted_update = (
+        safe_fromiso(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")
+        if safe_fromiso(data.get("updateDate")) else ""
+    )
+
     #インフォメーションファイルの生成
     info_path = os.path.join(nove_path, 'info', 'index.html')
     with open(info_path, 'w', encoding='utf-8') as f:
@@ -241,8 +264,8 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('<title>Index Pixiv</title>\n')
         f.write('</head>\n')
         f.write('<body>\n')
-        f.write(f'<a href="../{key_data}">戻る</a>\n')
-        f.write(f'<a href="/reader/?site={site_name}&nid={data.get("nid")}">簡易リーダーで読む</a>\n')
+        f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
+        f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
         f.write(f'<h1><a href="{data.get("url")}" target="_blank">{data.get("title")}</a></h1>\n')
         if data.get("serialization") == "短編":
             f.write(f'<div><span id="noveltype">短編</span></div>\n')
@@ -256,7 +279,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>掲載日</th>\n')
-        f.write(f'<td>{datetime.fromisoformat(data.get("createDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
+        f.write(f'<td>{formatted_create}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         if data.get("serialization") == "短編":
@@ -265,7 +288,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             f.write('<th>最新掲載日</th>\n')
         elif data.get("serialization") == "完結済":
             f.write('<th>最終掲載日</th>\n')
-        f.write(f'<td>{datetime.fromisoformat(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")}</td>\n')
+        f.write(f'<td>{formatted_update}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>文字数</th>\n')
@@ -303,14 +326,14 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
                         </style>\n''')
             f.write('</head>\n')
             f.write('<body>\n')
-            f.write(f'<a href="../{key_data}">戻る</a>\n')
+            f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
             if data.get("serialization") == "短編":
-                f.write(f'<a href="./info/{key_data}">作品情報</a>\n')
-                f.write(f'<a href="/reader/?site={site_name}&nid={data.get("nid")}">簡易リーダーで読む</a>\n')
+                f.write(f'<a href="./info/{key_data}" class="header-link">作品情報</a>\n')
+                f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
                 f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
             else:
-                f.write(f'<a href="../info/{key_data}">作品情報</a>\n')
-                f.write(f'<a href="/reader/?site={site_name}&nid={data.get("nid")}&eid={ep["id"]}">簡易リーダーで読む</a>\n')
+                f.write(f'<a href="../info/{key_data}" class="header-link">作品情報</a>\n')
+                f.write(f'<a href="/reader/?site={site_name}&nid={nid}&eid={ep["id"]}" class="header-link">簡易リーダーで読む</a>\n')
                 f.write(f'<p class="novel_subtitle">{ep["title"]}</p>\n')
             write_preface(f, ep, key_data)  # 前書き生成
             write_main_text(f, ep, key_data) # 本文生成

@@ -32,18 +32,19 @@ function initNavOnReader(novelData, query) {
   const header = document.querySelector('header');
   if (!header || document.getElementById('btn-nav-reader')) return;
 
-  const btn = document.createElement('button');
-  btn.id = 'btn-nav-reader';
-
-  let label, href;
   const isShort = novelData.serialization === '短編';
   const hasEid = Boolean(query.eid);
 
+  // --- 目次 or 本文に戻るボタン ---
+  const btnBack = document.createElement('button');
+  btnBack.id = 'btn-nav-reader';
+
+  let label, href;
   if (isShort || hasEid) {
     // --- 本文表示中 ---
     if (isShort) {
       label = '本棚に戻る';
-      href = '/reader/';  // 本棚へのパス
+      href = '/reader/';
     } else {
       label = '目次に戻る';
       href = `?site=${novelData.source}&nid=${novelData.id}`;
@@ -54,118 +55,393 @@ function initNavOnReader(novelData, query) {
     href = '/reader/';
   }
 
-  btn.textContent = label;
-  btn.style.marginLeft = '1em';
-  btn.addEventListener('click', () => {
+  btnBack.textContent = label;
+  btnBack.style.marginLeft = '1em';
+  btnBack.addEventListener('click', () => {
     window.location.href = href;
   });
-  header.appendChild(btn);
+  header.appendChild(btnBack);
+
+  // --- 本文へ進むボタン ---
+  const h1 = header.querySelector('h1');
+  const btnToText = document.createElement('button');
+  btnToText.textContent = '本文へ進む';
+  btnToText.style.marginLeft = '1em';
+  btnToText.addEventListener('click', () => {
+    window.location.href = `/${novelData.source}/${novelData.id}/`;
+  });
+  if (h1) {
+    header.insertBefore(btnToText, h1);
+  } else {
+    header.appendChild(btnToText);
+  }
+}
+
+/**
+ * 同時接続数を制限しつつ preloadAndMapCover を呼び出す
+ * @param {Array}  novelsList     - 小説オブジェクトの配列
+ * @param {Cache}  coverCache     - Cache Storage オブジェクト
+ * @param {Function} onComplete   - 1 件ダウンロード完了ごとに呼ぶコールバック
+ * @param {number} concurrencyLimit - 同時に処理する coverDL の上限
+ */
+async function preloadAllCoversWithLimit(novelsList, coverCache, onComplete, concurrencyLimit) {
+  let i = 0;
+  const executing = [];
+
+  async function enqueue() {
+    if (i === novelsList.length) {
+      return Promise.resolve();
+    }
+
+    const novel = novelsList[i];
+    const taskPromise = preloadAndMapCover(novel, coverCache)
+      .then(() => {
+        executing.splice(executing.indexOf(taskPromise), 1);
+        onComplete();
+      })
+      .catch(() => {
+        executing.splice(executing.indexOf(taskPromise), 1);
+        onComplete();
+      });
+
+    executing.push(taskPromise);
+    i++;
+
+    let next = Promise.resolve();
+    if (executing.length >= concurrencyLimit) {
+      // いずれかのタスクが終わるまで待つ
+      next = Promise.race(executing);
+    }
+    return next.then(enqueue);
+  }
+
+  await enqueue();
 }
 
 
-document.addEventListener('DOMContentLoaded', async () => {
 
+document.addEventListener('DOMContentLoaded', async () => {
   const query = getQueryParams();
 
-  // --- キャッシュクリアボタンの設定 ---
+  // ──────────── 「同時ダウンロード数」入力フィールドの生成 ────────────
+  // header 要素を取得
+  const header = document.querySelector('header');
+  // wrapper <div> を作成し、横並び (inline-block) に設定
+  const wrapper = document.createElement('div');
+  wrapper.style.display = 'inline-block';
+  wrapper.style.marginRight = '1em';
+  wrapper.style.fontSize = '0.9em';
+
+  // ラベルを作成
+  const label = document.createElement('label');
+  label.htmlFor = 'concurrency-input';
+  label.textContent = '同時ダウンロード数：';
+
+  // 数値入力フィールドを作成
+  const input = document.createElement('input');
+  input.id = 'concurrency-input';
+  input.type = 'number';
+  input.min = '1';
+  input.max = '10';
+  input.step = '1';
+  input.style.width = '3em';
+  input.style.marginLeft = '0.5em';
+
+  // localStorage から前回値を復元（なければ「4」を初期値に）
+  const stored = parseInt(localStorage.getItem('concurrencyLimit'), 10);
+  if (!Number.isInteger(stored) || stored < 1) {
+    input.value = '4';
+  } else {
+    input.value = String(stored);
+  }
+
+  // 値が変わったら即座に localStorage に保存
+  input.addEventListener('change', () => {
+    let v = parseInt(input.value, 10);
+    if (!Number.isInteger(v) || v < 1) v = 1;
+    else if (v > 10) v = 10;
+    input.value = String(v);
+    localStorage.setItem('concurrencyLimit', String(v));
+  });
+
+  wrapper.appendChild(label);
+  wrapper.appendChild(input);
+
+  // ヘッダー内の最初の <button>（通常はキャッシュクリア）がある場所を取得
+  const h1 = header.querySelector('h1');
+  if (h1) {
+    header.insertBefore(wrapper, h1);
+  } else {
+    header.appendChild(wrapper);
+  }
+  // ──────────────────────────────────────────────────────────
+
+  // ───── 「キャッシュクリア」ボタンのクリック処理 ─────
   const btnClear = document.getElementById('btn-clear-cache');
   btnClear.addEventListener('click', async () => {
-    // 1) Cache Storage 削除
+    // (A) Cover 画像キャッシュを削除
     await caches.delete(CACHE_NAME);
 
-    // 2) localStorage からキャッシュ関連キーを削除
+    // (B) index.json 用の Cache Storage も削除
+    await caches.delete(INDEX_CACHE);
+
+    // (C) localStorage 中の coverFail_* をすべて削除
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('coverFail_')) {
         localStorage.removeItem(key);
       }
     });
 
-    //await caches.delete(INDEX_CACHE);
+    // (D) localStorage 中の indexETag_* をすべて削除
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith(INDEX_ETAG_KEY_PREFIX)) {
+        localStorage.removeItem(key);
+      }
+    });
 
-    // 3) メモリ上マップもクリア
+    // (E) メモリ上の Map もクリア
     coverUrlMap.clear();
     coverHashMap.clear();
 
     alert('キャッシュをクリアしました。ページを再読み込みします。');
     window.location.reload();
   });
+  // ────────────────────────────────────────────────────────
 
-  if (!(query.site && query.nid)) {
-    initNavOnLibrary();
+  // 「リーダー画面かどうか」を判定し、リーダーならそちらの処理へ
+  if (query.site && query.nid) {
+    initWidthSelector();
+    const pcReader = document.getElementById('progress-container');
+    if (pcReader) pcReader.style.display = 'none';
+    await renderReaderScreen(query);
+    return;
   }
 
+  // ─── ライブラリ画面フロー ───
+  initNavOnLibrary();
   const app = document.getElementById('app');
   const pc = document.getElementById('progress-container');
   const pb = document.getElementById('progress-bar');
   const pi = document.getElementById('progress-info');
 
-  // ------- リーダー画面なら幅セレクタをセットアップ -------
-  if (query.site && query.nid) {
-    initWidthSelector();
+  //
+  // (1) index.json 取得フェーズ
+  //
+  if (pc) pc.style.display = 'block';
+  let completedIndex = 0;
+  const totalIndex = sources.length;
+
+  function updateIndexBar() {
+    const pct = totalIndex > 0 ? (completedIndex / totalIndex * 100) : 0;
+    pb.style.width = pct + '%';
+    pi.textContent = `index.json を取得中: ${pct.toFixed(2)}% (${completedIndex}/${totalIndex})`;
+  }
+  updateIndexBar();
+
+  const indexPromises = sources.map(async (src) => {
+    const arr = await loadIndexWithCache(src);
+    completedIndex++;
+    updateIndexBar();
+    return arr.map(item => ({ ...item, source: src }));
+  });
+  const allArrays = await Promise.all(indexPromises);
+
+  // novelsList にまとめる
+  const novelsList = [];
+  allArrays.forEach(arr => novelsList.push(...arr));
+
+  //
+  // (2) 目次構築中フェーズ
+  //
+  // index.json 取得が終わったので、一度バーを 100% にして短時間表示
+  pi.textContent = '目次を読み込み中…';
+  pb.style.width = '100%';
+  await new Promise(r => setTimeout(r, 200));
+
+  //
+  // (3) カバーキャッシュチェック → キャッシュ済みは coverUrlMap に登録、未キャッシュは needFetchList へ
+  //
+  const coverCache = await caches.open(CACHE_NAME);
+  const needFetchList = [];
+
+  for (const novel of novelsList) {
+    const key = `${novel.source}_${novel.id}`;
+    const base = `../${novel.source}/${novel.id}/`;
+    let foundInCache = false;
+
+    // 「jpg → png → gif」の順でキャッシュを探し、見つかれば ObjectURL を生成して coverUrlMap に登録
+    for (const ext of ['jpg', 'png', 'gif']) {
+      const url = base + `cover.${ext}`;
+      const cachedRs = await coverCache.match(url);
+      if (cachedRs) {
+        const blob = await cachedRs.blob();
+        const objectURL = await dedupeBlob(blob);
+        coverUrlMap.set(key, objectURL);
+        foundInCache = true;
+        break;
+      }
+    }
+
+    // キャッシュが見つからなかった場合だけリストに追加
+    if (!foundInCache) {
+      needFetchList.push(novel);
+    }
+  }
+
+  // (4a) キャッシュミスがゼロなら、バーを隠して一度だけ目次を描画して終了
+  if (needFetchList.length === 0) {
     if (pc) pc.style.display = 'none';
-    await renderReaderScreen(query);
+    await renderLibraryWithProgress(app, novelsList);
     return;
   }
 
-  // 進捗バーの状態管理
-  let completed = 0, total = 0;
-  function setTotal(n) {
-    total = n;
-    completed = 0;
-    updateBar();
-  }
-  function increment() {
-    completed++;
-    updateBar();
-  }
-  function updateBar() {
-    const pct = total > 0 ? (completed / total * 100) : 0;
-    const pctText = pct.toFixed(2) + '%';
+  //
+  // (4b) キャッシュミス分のカバーDLフェーズ
+  //
+  let completedCover = 0;
+  const totalCover = needFetchList.length;
+
+  function updateCoverBar() {
+    const pct = totalCover > 0 ? (completedCover / totalCover * 100) : 0;
     pb.style.width = pct + '%';
-    pi.textContent = `${pctText} (${completed}/${total})`;
+    pi.textContent = `カバーをダウンロード中: ${pct.toFixed(2)}% (${completedCover}/${totalCover})`;
+  }
+  // フェーズ開始時にバーと文字を初期化
+  completedCover = 0;
+  updateCoverBar();
+
+  // まず localStorage に保存された同時ダウンロード数を取得
+  let concurrencyLimit = parseInt(localStorage.getItem('concurrencyLimit'), 10);
+
+  // localStorage に正しい値が入っていなければ、input.value を参照
+  if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1) {
+    concurrencyLimit = parseInt(input.value, 10);
+    if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1) {
+      concurrencyLimit = 1;
+    }
   }
 
-  // ② 本棚画面：index.json 読み込み
-  setTotal(sources.length);
-  const novelsList = [];
-  for (const src of sources) {
-    novelsList.push(...await loadIndexWithCache(src));
-    increment();
+  // 上限を設ける（例：最大 10）
+  if (concurrencyLimit > 10) {
+    concurrencyLimit = 10;
   }
 
-  // ③ カバーURL解決＋キャッシュ
-  setTotal(novelsList.length);
-  const coverCache = await caches.open(CACHE_NAME);
-  for (const novel of novelsList) {
-    await preloadAndMapCover(novel, coverCache);
-    increment();
-  }
+  // ここで preloadAllCoversWithLimit に渡す
+  await preloadAllCoversWithLimit(
+    needFetchList,
+    coverCache,
+    () => {
+      completedCover++;
+      updateCoverBar();
+    },
+    concurrencyLimit
+  );
 
-  // ④ プログレスバーを隠して本棚表示
-  pc.style.display = 'none';
-  await renderLibrary(app, novelsList);
+  // (5) カバーDL完了後、バーを隠して最終的に目次を描画
+  if (pc) pc.style.display = 'none';
+  await renderLibraryWithProgress(app, novelsList);
 });
 
 
+// index.json のソースリスト
+const INDEX_CACHE = 'index-json-cache';              // Cache Storage 名
+const INDEX_ETAG_KEY_PREFIX = 'indexETag_';          // localStorage に ETag を保存する際のキー接頭辞
 
-// キャッシュ付き index.json 読み込み
+/**
+ * キャッシュ付き index.json の読み込み（条件付き GET 版）
+ * ※ 「キャッシュが無いのに 304 が返ってくる」ケースを回避する
+ * @param {string} source - サイト名またはディレクトリ名
+ * @returns {Promise<Array>} - [{ id, source, ...novelObject }, …] の配列
+ */
 async function loadIndexWithCache(source) {
-  //  const cache = await caches.open(INDEX_CACHE);
   const url = new URL(`../${source}/index.json`, location.href).toString();
+  const cache = await caches.open(INDEX_CACHE);
+  const etagKey = `${INDEX_ETAG_KEY_PREFIX}${source}`;
+  let storedEtag = localStorage.getItem(etagKey);
 
-  //  const cachedResp = await cache.match(url);
-  //  if (cachedResp) {
-  //    const data = await cachedResp.json();
-  //    return Object.entries(data).map(([id, novel]) => ({ id, source, ...novel }));
-  //  }
+  // 1) Cache Storage からキャッシュ済みレスポンスを取得
+  const cachedResp = await cache.match(url);
+  let cachedObj = null;
+  if (cachedResp) {
+    try {
+      cachedObj = await cachedResp.clone().json();
+    } catch {
+      cachedObj = null;
+    }
+  }
 
-  // Cache API は使用せず、常に新鮮なデータを取得
-  const resp = await fetch(url, { cache: 'no-store' });
-  if (!resp.ok) throw new Error(`index.json fetch failed: ${resp.status}`);
-  //  cache.put(url, resp.clone());
+  // 2) 条件付き GET 用ヘッダーを準備
+  const headers = {};
+  // 「キャッシュ版（cachedObj）が存在するときだけ ETag を使う」
+  if (storedEtag && cachedObj) {
+    headers['If-None-Match'] = storedEtag;
+  } else {
+    // キャッシュが無いのに ETag が残っている→破棄して再取得させる
+    localStorage.removeItem(etagKey);
+    storedEtag = null;
+  }
 
-  const data = await resp.json();
-  return Object.entries(data).map(([id, novel]) => ({ id, source, ...novel }));
+  // 3) サーバーへ GET 要請（If-None-Match を付与するかどうか）
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'GET',
+      headers,
+      cache: 'no-store'
+    });
+  } catch (e) {
+    // ネットワークエラーなどで失敗したら、キャッシュ版があればそれを返す
+    if (cachedObj) {
+      return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
+    }
+    console.warn(`Network error for ${url}:`, e);
+    return []; // ネットワークエラー時キャッシュも無ければ空でスキップ
+  }
+
+  // 4) 304 Not Modified：キャッシュが最新なのでキャッシュデータを返す
+  if (resp.status === 304 && cachedObj) {
+    return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
+  }
+
+  // 5) 200 OK：更新があった → JSON をパースしてキャッシュを更新
+  if (resp.status === 200) {
+    let freshObj;
+    try {
+      freshObj = await resp.clone().json();
+    } catch (e) {
+      // JSON パースエラーでもキャッシュ版があればそれを返す
+      if (cachedObj) {
+        return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
+      }
+      console.warn(`JSON parse error for ${url}:`, e);
+      return []; // JSONエラーでキャッシュ無しは空配列
+    }
+
+    // Cache Storage に最新の index.json を保存
+    await cache.put(url, resp.clone());
+
+    // サーバーから返ってきた新しい ETag（または Last-Modified）を localStorage に保存
+    const newEtag = resp.headers.get('ETag') || resp.headers.get('Last-Modified');
+    if (newEtag) {
+      localStorage.setItem(etagKey, newEtag);
+    }
+
+    // オブジェクトを配列に変換して返す
+    return Object.entries(freshObj).map(([id, novel]) => ({ id, source, ...novel }));
+  }
+
+  if (resp.status === 404) {
+    console.warn(`index.json not found (404): ${url}`);
+    return []; // 404の場合はスキップして空の配列を返す
+  }
+
+  // その他のステータス
+  if (cachedObj) {
+    return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
+  }
+
+  console.warn(`Unhandled response ${resp.status} for ${url}`);
+  return [];
 }
 
 
@@ -334,134 +610,170 @@ async function dedupeBlob(blob) {
   return url;
 }
 
-async function renderLibrary(container, novelsList) {
+/**
+ * プログレスバーと文字表示を更新する共通関数
+ * @param {number} doneCount    - 現在完了している件数
+ * @param {number} totalCount   - 全体の件数
+ * @param {string} messageLabel - 「○○中:」などの先頭メッセージ
+ */
+function updateProgress(doneCount, totalCount, messageLabel) {
+  const pc = document.getElementById('progress-container');
+  const pb = document.getElementById('progress-bar');
+  const pi = document.getElementById('progress-info');
+  if (!pc || !pb || !pi) return;
+
+  pc.style.display = 'block';
+  const pct = totalCount > 0 ? (doneCount / totalCount * 100) : 0;
+  pb.style.width = pct + '%';
+  pi.textContent = `${messageLabel} ${pct.toFixed(2)}% (${doneCount}/${totalCount})`;
+}
+
+
+/**
+ * 進捗表示付きでライブラリ（目次）をレンダリングする
+ * @param {HTMLElement} container  - #app のような、小説カードを入れる要素
+ * @param {Array} novelsList      - 小説オブジェクトの配列
+ */
+async function renderLibraryWithProgress(container, novelsList) {
   container.innerHTML = '';
 
-  // LocalStorage から折りたたみ状態を取得
+  // LocalStorage から折りたたみ状態を取得（author_id をキーに保存します）
   const collapsed = JSON.parse(localStorage.getItem('collapsedAuthors') || '[]');
   const now = new Date();
 
-  // 作者でグループ化
-  const authors = {};
+  // author_id でグループ化
+  const authorsMap = {};
   novelsList.forEach(novel => {
-    if (!authors[novel.author]) authors[novel.author] = [];
-    authors[novel.author].push(novel);
+    const aid = novel.author_id;
+    if (!authorsMap[aid]) authorsMap[aid] = [];
+    authorsMap[aid].push(novel);
   });
 
-  // 作者内で更新日時順（新しい順）に並べ替え
-  for (const list of Object.values(authors)) {
+  // 各グループ内を更新日時順（新しい順）にソート
+  Object.values(authorsMap).forEach(list => {
     list.sort((a, b) => new Date(b.update_date) - new Date(a.update_date));
-  }
+  });
 
-  // 作者名順にソート（日本語ロケール対応）
-  const sortedAuthors = Object.keys(authors)
-    .sort((a, b) => a.localeCompare(b, 'ja'));
+  // グループごとに表示する作者名を最新作品から取得
+  const authorNameMap = {};
+  Object.entries(authorsMap).forEach(([aid, list]) => {
+    authorNameMap[aid] = list[0].author;
+  });
 
-  for (const author of sortedAuthors) {
+  // author_id のリストを表示名の五十音順でソート
+  const sortedAuthorIds = Object.keys(authorsMap).sort((a, b) => {
+    return authorNameMap[a].localeCompare(authorNameMap[b], 'ja');
+  });
+
+  // ここから「目次を読み込み中」フェーズ
+  const totalItems = novelsList.length;
+  let doneItems = 0;
+  updateProgress(doneItems, totalItems, '目次を読み込み中:');
+
+  // 少し待ってから描画開始（UI が固まるのを防ぐため）
+  await new Promise(r => setTimeout(r, 50));
+
+  for (const aid of sortedAuthorIds) {
+    // 作者グループ全体のコンテナを作成
     const group = document.createElement('div');
     group.className = 'author-group';
 
-    // ヘッダー
+    // ヘッダーに表示用作者名をセット
     const header = document.createElement('div');
     header.className = 'author-header';
-    header.textContent = author;
+    header.textContent = authorNameMap[aid];
 
-    // 【追加】作者ヘッダーにも NEW バッジ
-    const hasNew = authors[author].some(novel =>
+    // NEW バッジ（7日以内に更新があれば）
+    const hasNew = authorsMap[aid].some(novel =>
       (now - new Date(novel.update_date)) / (1000 * 3600 * 24) <= 7
     );
     if (hasNew) {
       const tag = document.createElement('span');
-      tag.className = 'new-tag';      // CSS は既存の .new-tag をそのまま使う
+      tag.className = 'new-tag';
       tag.textContent = 'NEW';
-      tag.style.marginLeft = '0.5em'; // お好みでスペース調整
+      tag.style.marginLeft = '0.5em';
       header.appendChild(tag);
     }
 
     // 折りたたみ状態復元
     const content = document.createElement('div');
     content.className = 'author-content';
-    content.style.display = collapsed.includes(author) ? 'none' : 'block';
+    content.style.display = collapsed.includes(aid) ? 'none' : 'block';
 
     header.addEventListener('click', () => {
       const isNow = content.style.display === 'block';
       content.style.display = isNow ? 'none' : 'block';
-      const idx = collapsed.indexOf(author);
+      const idx = collapsed.indexOf(aid);
       if (isNow) {
-        if (idx === -1) collapsed.push(author);
+        if (idx === -1) collapsed.push(aid);
       } else {
         if (idx !== -1) collapsed.splice(idx, 1);
       }
       localStorage.setItem('collapsedAuthors', JSON.stringify(collapsed));
     });
 
-    // 各小説カード
-    for (const novel of authors[author]) {
+    group.appendChild(header);
+    group.appendChild(content);
+    container.appendChild(group);
+
+    // カードを１つずつ作成
+    for (const novel of authorsMap[aid]) {
       const novelElem = document.createElement('div');
       novelElem.className = 'novel';
 
-      // カバー
+      // カバー画像
       const covCont = document.createElement('div');
       covCont.className = 'cover-container';
-
       const img = document.createElement('img');
       const key = `${novel.source}_${novel.id}`;
-      img.src = coverUrlMap.get(key);
+      img.src = coverUrlMap.get(key) || '/images/default_cover.png';
       covCont.appendChild(img);
 
-      // バッジ表示用のラッパー
+      // バッジ表示
       const badgeWrap = document.createElement('div');
       badgeWrap.className = 'cover-badges';
 
-      // 状態の計算
       const days = (now - new Date(novel.update_date)) / (1000 * 3600 * 24);
-      const readStatus = getReadStatus(novel); // ← localStorage を参照
-
-      // 1. NEW
+      const readStatus = getReadStatus(novel);
       badgeWrap.appendChild(makeBadge('NEW', days <= 7));
-
-      // 2. 読書状態
-      const statusLabel = readStatus === 'unread' ? '未読'
-        : readStatus === 'read' ? '既読'
-          : '完読';
+      const statusLabel = readStatus === 'unread' ? '未読' : readStatus === 'read' ? '既読' : '完読';
       badgeWrap.appendChild(makeBadge(statusLabel));
-
-      // 3. 連載状況（短編・完結済み・連載中）
       badgeWrap.appendChild(makeBadge(novel.serialization));
-
-      // 4. 種別（小説・漫画）
       badgeWrap.appendChild(makeBadge(novel.type === 'comic' ? '漫画' : '小説'));
-
       covCont.appendChild(badgeWrap);
 
-      // カバー全体にリンク挙動
       covCont.addEventListener('click', () => {
         window.location.href = createNovelURL(novel);
       });
-
       novelElem.appendChild(covCont);
 
-      // タイトル
+      // タイトル部分
       const title = document.createElement('div');
       title.className = 'novel-title';
-
       const titleText = document.createElement('div');
       titleText.className = 'title-text';
       titleText.textContent = novel.title;
-
       title.appendChild(titleText);
       novelElem.appendChild(title);
 
       content.appendChild(novelElem);
+
+      // １件レンダリングごとに進捗更新
+      doneItems++;
+      updateProgress(doneItems, totalItems, '目次を読み込み中:');
+
+      // 100件ごとに少しだけ待つ（UI 更新が詰まるのを防ぐ）
+      if (doneItems % 100 === 0) {
+        await new Promise(r => setTimeout(r, 10));
+      }
     }
-
-
-
-    group.appendChild(header);
-    group.appendChild(content);
-    container.appendChild(group);
   }
+
+  // レンダリング完了したらプログレスバーを非表示に
+  const pcEl = document.getElementById('progress-container');
+  if (pcEl) pcEl.style.display = 'none';
 }
+
 
 function makeBadge(label, active = true) {
   const span = document.createElement('span');
@@ -705,6 +1017,14 @@ async function renderEpisode(container, novel, episode, episodesArr) {
     prev.href = createEpisodeURL(novel, epId, currentPage - 1, totalPages);
     prev.textContent = '← 前のページ';
     nav.appendChild(prev);
+  } else {
+    // クリック不可・表示だけのダミー
+    const prev = document.createElement('span');
+    prev.className = 'nav-link nav-link--disabled';
+    prev.textContent = '← 前のページ';
+    prev.style.pointerEvents = 'none';
+    prev.style.opacity = '0.6';
+    nav.appendChild(prev);
   }
 
   const selector = document.createElement('select');
@@ -728,24 +1048,38 @@ async function renderEpisode(container, novel, episode, episodesArr) {
     next.href = createEpisodeURL(novel, epId, currentPage + 1, totalPages);
     next.textContent = '次のページ →';
     nav.appendChild(next);
+  } else {
+    // 非活性表示・クリック不可でレイアウト維持
+    const next = document.createElement('span');
+    next.className = 'nav-link nav-link--disabled';
+    next.textContent = '次のページ →';
+    next.style.pointerEvents = 'none';
+    next.style.opacity = '0.6';
+    nav.appendChild(next);
   }
+
 
   container.appendChild(nav);
 
   // --- エピソード間ナビ ---
   const epNav = document.createElement('div');
   epNav.className = 'episode-nav';
+
   const idx = episodesArr.findIndex(ep => String(ep.id) === String(epId));
 
+  // ← 前の話へ
+  const prevA = document.createElement('a');
+  prevA.className = 'nav-link';
+  prevA.textContent = '← 前の話へ';
   if (idx > 0) {
     const prevEp = episodesArr[idx - 1];
-    const a = document.createElement('a');
-    a.className = 'nav-link';
-    a.href = createEpisodeURL(novel, prevEp.id, 1);
-    a.textContent = '← 前の話へ';
-    epNav.appendChild(a);
+    prevA.href = createEpisodeURL(novel, prevEp.id, 1);
+  } else {
+    prevA.classList.add('nav-link--disabled');
   }
+  epNav.appendChild(prevA);
 
+  // 戻る
   const back = document.createElement('a');
   back.className = 'nav-link';
   if (novel.serialization === '短編') {
@@ -757,15 +1091,19 @@ async function renderEpisode(container, novel, episode, episodesArr) {
   }
   epNav.appendChild(back);
 
+  // 次の話へ →
+  const nextA = document.createElement('a');
+  nextA.className = 'nav-link';
+  nextA.textContent = '次の話へ →';
   if (idx < episodesArr.length - 1) {
     const nextEp = episodesArr[idx + 1];
-    const a = document.createElement('a');
-    a.className = 'nav-link';
-    a.href = createEpisodeURL(novel, nextEp.id, 1);
-    a.textContent = '次の話へ →';
-    epNav.appendChild(a);
+    nextA.href = createEpisodeURL(novel, nextEp.id, 1);
+  } else {
+    nextA.classList.add('nav-link--disabled');
   }
-  container.appendChild(epNav);
+  epNav.appendChild(nextA);
+
+  container.appendChild(epNav)
 
   // 画像サイズ調整
   requestAnimationFrame(adjustImages);

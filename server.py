@@ -30,30 +30,42 @@ class NoNewlineFormatter(logging.Formatter):
     """改行をスペースに置き換えるフォーマッター"""
     def format(self, record):
         message = super().format(record)
-        # 改行をスペースに置き換える
         return message.replace("\n", " ").replace("\r", " ")
 
 def setup_logging(log_path, save_log):
     """ログ設定を初期化"""
-    # 共通フォーマット
+    # フォーマットの定義
     common_format = '%(asctime)s - %(levelname)s - %(message)s'
     
-    # コンソールログ（改行そのまま）
+    # コンソールログ（そのまま改行あり）
     console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(logging.Formatter(common_format))
     
-    # 初期化するハンドラのリスト
     handlers = [console_handler]
     
     if save_log:
-        # ファイルログ（改行を除去）
-        file_handler = logging.FileHandler(os.path.join(log_path, 'server.log'), encoding='utf-8')
-        file_handler.setFormatter(NoNewlineFormatter(common_format))
-        handlers.append(file_handler)
+        # １）全レベルを出力する server.log
+        server_handler = logging.FileHandler(
+            os.path.join(log_path, 'server.log'),
+            encoding='utf-8'
+        )
+        server_handler.setLevel(logging.DEBUG)
+        server_handler.setFormatter(NoNewlineFormatter(common_format))
+        handlers.append(server_handler)
+        
+        # ２）ERROR 以上だけを出力する error.log
+        error_handler = logging.FileHandler(
+            os.path.join(log_path, 'error.log'),
+            encoding='utf-8'
+        )
+        error_handler.setLevel(logging.ERROR)
+        error_handler.setFormatter(NoNewlineFormatter(common_format))
+        handlers.append(error_handler)
     
-    # ログ設定
+    # ルートロガーにハンドラを登録
     logging.basicConfig(
-        level=logging.DEBUG,  # DEBUGレベル以上を記録
+        level=logging.DEBUG,
         handlers=handlers
     )
 
@@ -274,18 +286,19 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
             # ===== ここまで =====
 
     def load_queue_from_file(queue, lock):
-        """ファイルからキューを復元する"""
         if not os.path.exists(JOB_FILE_PATH):
             logging.info(f"No job file found at {JOB_FILE_PATH}. Starting with an empty queue.")
             return
         
-        with lock:  # ロックを取得してスレッドセーフに
+        with lock:
             with open(JOB_FILE_PATH, "rb") as f:
                 try:
-                    jobs = pickle.load(f)  # ファイルからリストを読み込む
+                    jobs = pickle.load(f)
+                    # 隣接リクエストをまとめる
+                    jobs = compact_requests_list(jobs)
                     for job in jobs:
-                        queue.put(job)  # キューに復元
-                    logging.info(f"Queue restored from {JOB_FILE_PATH} with {len(jobs)} items.")
+                        queue.put(job)
+                    logging.info(f"Queue restored and compacted from {JOB_FILE_PATH} with {len(jobs)} items.")
                 except Exception as e:
                     logging.error(f"Failed to load queue from file: {e}")
 
@@ -372,10 +385,90 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         response.status_code = 200
         return response
 
+    def are_requests_mergeable(req1, req2):
+        """request_id以外の全キーの値が一致するかチェック"""
+        keys = set(req1.keys()) | set(req2.keys())
+        for key in keys:
+            if key == "request_id":
+                continue
+            if req1.get(key) != req2.get(key):
+                return False
+        return True
+
+    def merge_requests(requests):
+        """複数リクエストをまとめる（代表のものを返すだけ）"""
+        return requests[0]
+
+    def compact_queue(request_queue, lock):
+        """キュー内の重複リクエストをすべてまとめてキューに戻す"""
+        with lock:
+            items = []
+            while True:
+                try:
+                    item = request_queue.get_nowait()
+                    if item is None:
+                        # Noneは終了フラグとして保持
+                        items.append(item)
+                        break
+                    items.append(item)
+                except queue.Empty:
+                    break
+
+            compacted = []
+            seen = {}
+
+            for req in items:
+                if req is None:
+                    # Noneはまとめてそのまま残す
+                    compacted.append(None)
+                    continue
+
+                # request_idを除くキー・値のペアをソートしてタプル化し、辞書のキーにする
+                key = tuple(sorted((k, v) for k, v in req.items() if k != "request_id"))
+                if key not in seen:
+                    seen[key] = [req]
+                else:
+                    seen[key].append(req)
+
+            # 各グループについてまとめる（merge_requestsは複数受け取って1つ返す関数）
+            for group in seen.values():
+                compacted.append(merge_requests(group))
+
+            # キューに戻す
+            for item in compacted:
+                request_queue.put(item)
+
+
+    def compact_requests_list(requests):
+        """リスト内の重複リクエストをすべてまとめる"""
+        if not requests:
+            return []
+
+        compacted = []
+        seen = {}
+
+        for req in requests:
+            if req is None:
+                compacted.append(None)
+                continue
+
+            key = tuple(sorted((k, v) for k, v in req.items() if k != "request_id"))
+            if key not in seen:
+                seen[key] = [req]
+            else:
+                seen[key].append(req)
+
+        for group in seen.values():
+            compacted.append(merge_requests(group))
+
+        return compacted
+
     def process_queue():
         """キューからリクエストを順番に取り出して処理するバックグラウンドスレッド"""
         global current_task   # グローバルを操作することを明示
         while True:
+            # 処理前にキューをまとめる
+            compact_queue(request_queue, lock)
             req_data = request_queue.get()  # キューからリクエストを取り出す
             if req_data is None:  # None が入った場合はスレッドを終了
                 break
@@ -479,6 +572,9 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
 
             request_queue.put(req_data)  # リクエストをキューに追加
 
+            # キューをまとめる（隣接重複を除去）
+            compact_queue(request_queue, lock)
+            
             # キューを保存
             save_queue_to_file(request_queue, lock)
 

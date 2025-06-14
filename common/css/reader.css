@@ -155,7 +155,8 @@ body.reader #app {
 .cover-container {
   position: relative;
   width: 100%;
-  height: 15em; /* 240px */
+  height: 15em;
+  /* 240px */
   overflow: hidden;
   border-radius: 0.3125em;
   background-color: rgba(0, 0, 0, 0.1);
@@ -338,6 +339,31 @@ body.reader .toc-container li {
   font-size: 1em;
 }
 
+.episode-nav {
+  text-align: center;
+  margin-top: 2em;
+  margin-bottom: 2em;
+}
+
+.episode-nav .nav-link {
+  margin: 0 1em;
+}
+
+.nav-link--disabled {
+  pointer-events: none;
+  /* クリックできなくする */
+  opacity: 0;
+  /* 完全に透明にする（必要なら0.3なども可） */
+  visibility: hidden;
+  /* 空白ではなく完全に消したい場合 */
+}
+
+.nav-link--disabled {
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+}
+
 /* バッジごとの色分け */
 .cover-badge[data-type="NEW"] {
   background-color: rgba(255, 80, 80, 0.9);
@@ -385,19 +411,27 @@ body.reader .toc-container li {
 .cover-badge.inactive {
   background-color: transparent !important;
   color: transparent !important;
-  border: 1px solid rgba(255, 255, 255, 0.2); /* オプション：位置保持用 */
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  /* オプション：位置保持用 */
   pointer-events: none;
 }
 
 /* 作者ヘッダーのNEWタグ専用スタイル */
 .author-header .new-tag {
   display: inline-block;
-  background-color: #ff5050;   /* 背景色 */
-  color: white;                /* 文字色 */
-  font-size: 0.75em;           /* サイズ調整 */
+  background-color: #ff5050;
+  /* 背景色 */
+  color: white;
+  /* 文字色 */
+  font-size: 0.75em;
+  /* サイズ調整 */
   font-weight: bold;
-  padding: 0.1em 0.4em;        /* 内側の余白 */
-  margin-left: 0.5em;          /* 作者名との間隔 */
-  border-radius: 0.25em;       /* 角丸 */
-  vertical-align: text-top;    /* 上寄せ */
+  padding: 0.1em 0.4em;
+  /* 内側の余白 */
+  margin-left: 0.5em;
+  /* 作者名との間隔 */
+  border-radius: 0.25em;
+  /* 角丸 */
+  vertical-align: text-top;
+  /* 上寄せ */
 }

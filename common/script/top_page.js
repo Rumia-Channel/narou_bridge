@@ -24,15 +24,24 @@ function debounce(func, delay) {
 
 // ページ上部に色付きメッセージを表示
 function showMessage(color, message) {
+  // 既存のメッセージを削除
   document.querySelectorAll(".response-message").forEach(function (msg) {
     msg.remove();
   });
+
+  // メッセージ要素を作成
   var div = document.createElement("div");
   div.style.color = color;
   div.className = "response-message";
   div.textContent = message;
   document.body.appendChild(div);
+
+  // 3秒後に削除
+  setTimeout(function () {
+    div.remove();
+  }, 3000);
 }
+
 
 // submit() を 1秒デバウンス
 var debouncedSubmit = debounce(submit, 1000);
@@ -56,6 +65,10 @@ function submit() {
     }
   };
   xhr.send("add=" + encodeURIComponent(input1) + "&request_id=" + requestId);
+  // 入力フィールドをクリア
+  document.getElementById("input1").value = "";
+  // フォーカスを戻す
+  document.getElementById("input1").focus();
 }
 
 // 更新用
@@ -147,4 +160,14 @@ function submitPdfData() {
     }
   };
   xhr.send(formData);
+
+  // 入力フィールドをクリア
+  document.getElementById("pdfFile").value = "";
+  document.getElementById("authorId").value = "";
+  document.getElementById("authorUrl").value = "";
+  document.getElementById("novelType").value = "novel";
+  document.getElementById("chapter").value = "";
+  // フォーカスを戻す
+  document.getElementById("pdfFile").focus();
+  
 }

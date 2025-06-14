@@ -34,15 +34,75 @@ let isExcludeTagsCollapsed = false;
 let isHiddenAuthorsCollapsed = false;
 
 /* --------------------------------------------------
-   データ取得
+   データ取得（ETagによるキャッシュ判定を導入）
 -------------------------------------------------- */
 async function fetchData() {
   const overlay = document.getElementById('loading-overlay');
   overlay.style.display = 'flex';
+
+  // 以前に保存したETagを取得（初回はnullになります）
+  const etagKey = 'indexJsonEtag_' + basePath;
+  const savedEtag = localStorage.getItem(etagKey);
+
   try {
-    const response = await fetch(basePath + 'index.json');
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    let response;
+    let newEtag = null;
+
+    if (savedEtag) {
+      // 1) サーバーにHEADリクエストを送り、最新のETagだけを取得する
+      try {
+        const headResp = await fetch(basePath + 'index.json', {
+          method: 'HEAD'
+        });
+        if (!headResp.ok) {
+          throw new Error(`HEADリクエストが失敗しました (${headResp.status})`);
+        }
+        newEtag = headResp.headers.get('ETag');
+      } catch (headErr) {
+        // HEADが失敗した場合は通常のGETにフォールバック
+        console.warn('HEADリクエスト失敗、GETで再取得します', headErr);
+        response = await fetch(basePath + 'index.json');
+      }
+
+      if (newEtag && newEtag === savedEtag) {
+        // 2) ETagが同じ → ブラウザのHTTPキャッシュ（Cache Storage）からのみ読み込む
+        try {
+          response = await fetch(basePath + 'index.json', {
+            method: 'GET',
+            cache: 'only-if-cached',
+            mode: 'same-origin'
+          });
+          if (!response || !response.ok) {
+            // キャッシュにない場合は通常のGETにフォールバック
+            throw new Error('only-if-cachedでの取得に失敗、GETで再取得します');
+          }
+        } catch (cacheErr) {
+          console.warn('キャッシュからの読み込み失敗、GETで再取得します', cacheErr);
+          response = await fetch(basePath + 'index.json');
+        }
+      } else {
+        // 3) ETagが異なる（またはHEADでETag取得に失敗）→ GETで再取得し、新しいETagを保存
+        response = await fetch(basePath + 'index.json');
+        newEtag = response.headers.get('ETag');
+      }
+    } else {
+      // savedEtagがない（初回ロード）→ 通常のGETで取得
+      response = await fetch(basePath + 'index.json');
+      newEtag = response.headers.get('ETag');
+    }
+
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    // JSONデータを取得
     tableData = await response.json();
+
+    // 新しいETagが取得できていたらlocalStorageに保存
+    if (newEtag) {
+      localStorage.setItem(etagKey, newEtag);
+    }
+
     loadSettings();
     buildUI();
   } catch (err) {
@@ -211,6 +271,39 @@ function renderTagFilters() {
   );
 }
 
+function getFilteredEntries() {
+  return Object.entries(tableData).filter(([, it]) => {
+    if (typeFilter !== 'all' && it.type !== typeFilter) return false;
+    if (hiddenAuthors.includes(it.author)) return false;
+    if (filteredAuthors.length && !filteredAuthors.includes(it.author_id || it.author)) return false;
+
+    const tags = it.all_tags || [];
+
+    // 含むタグ判定（includeOperatorに応じて）
+    let includeResult = true;
+    if (includedTags.length) {
+      if (includeOperator === 'AND') {
+        includeResult = includedTags.every(tag => tags.includes(tag));
+      } else {
+        includeResult = includedTags.some(tag => tags.includes(tag));
+      }
+    }
+
+    // 含まないタグ判定（excludeOperatorに応じて）
+    let excludeResult = true;
+    if (excludedTags.length) {
+      if (excludeOperator === 'AND') {
+        excludeResult = !excludedTags.every(tag => tags.includes(tag));
+      } else {
+        excludeResult = !excludedTags.some(tag => tags.includes(tag));
+      }
+    }
+
+    // 両方の条件を満たした場合のみ表示
+    return includeResult && excludeResult;
+  });
+}
+
 function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
   const root = document.getElementById(kind === 'include' ? 'include-tags' : 'exclude-tags');
   if (!root) return;
@@ -228,7 +321,6 @@ function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
   root.appendChild(head);
   if (collapsed) return;
 
-  // 条件セレクタ
   const sel = document.createElement('select');
   ['AND', 'OR'].forEach(op => {
     const o = document.createElement('option');
@@ -236,12 +328,16 @@ function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
     sel.appendChild(o);
   });
   sel.value = operator;
-  sel.addEventListener('change', () => { setOp(sel.value); saveSettings(); renderTable(); });
+  sel.addEventListener('change', () => {
+    setOp(sel.value);
+    saveSettings();
+    renderTable();
+    updatePagination();
+  });
   root.appendChild(document.createTextNode(' 条件: '));
   root.appendChild(sel);
   root.appendChild(document.createElement('br'));
 
-  // チェックボックス
   tagArr.forEach(tag => {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
@@ -251,6 +347,7 @@ function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
       saveSettings();
       renderTagFilters();
       renderTable();
+      updatePagination();
     });
     root.appendChild(cb);
     root.appendChild(document.createTextNode(' ' + tag));
@@ -349,40 +446,44 @@ function renderTable() {
   const tbody = document.getElementById('user-table-body');
   tbody.innerHTML = '';
 
-  let entries = Object.entries(tableData)
-    .filter(([, it]) => typeFilter === 'all' || it.type === typeFilter)
-    .filter(([, it]) => !hiddenAuthors.includes(it.author) &&
-      (filteredAuthors.length === 0 || filteredAuthors.includes(it.author_id || it.author)))
-    .filter(([, it]) => {
-      if (!it.all_tags) return true;
-      const incMatch = includedTags.length === 0 ||
-        (includeOperator === 'AND'
-          ? includedTags.every(t => it.all_tags.includes(t))
-          : includedTags.some(t => it.all_tags.includes(t)));
-      const excMatch = excludedTags.length === 0 ||
-        (excludeOperator === 'OR'
-          ? !excludedTags.some(t => it.all_tags.includes(t))
-          : !excludedTags.every(t => it.all_tags.includes(t)));
-      return incMatch && excMatch;
-    });
+  // 1) フィルター適用
+  let entries = getFilteredEntries();
 
+  // 2) ソート
   if (sortInfo.column) {
     entries.sort(([, a], [, b]) => {
       let A = a[sortInfo.column] ?? '';
       let B = b[sortInfo.column] ?? '';
-      if (!isNaN(A) && !isNaN(B)) { A = parseFloat(A); B = parseFloat(B); }
-      return A < B ? -1 : A > B ? 1 : 0;
+      if (!isNaN(A) && !isNaN(B)) {
+        A = parseFloat(A);
+        B = parseFloat(B);
+      }
+      return (A < B ? -1 : A > B ? 1 : 0) * (sortInfo.ascending ? 1 : -1);
     });
-    if (!sortInfo.ascending) entries.reverse();
   }
 
-  const start = (currentPage - 1) * rowsPerPage;
-  const page = rowsPerPage ? entries.slice(start, start + rowsPerPage) : entries;
+  // 3) 総ページ数計算・currentPage を clamp
+  const totalItems = entries.length;
+  const totalPages = rowsPerPage
+    ? Math.ceil(totalItems / rowsPerPage)
+    : 1;
+  currentPage = Math.min(Math.max(1, currentPage), totalPages);
 
-  page.forEach(([key, it]) => {
+  // 4) ページ情報表示
+  document.getElementById('page-info').textContent
+    = `${currentPage} / ${totalPages}`;
+
+  // 5) ページネーション（スライス）
+  const start = (currentPage - 1) * rowsPerPage;
+  const pageEntries = rowsPerPage
+    ? entries.slice(start, start + rowsPerPage)
+    : entries;
+
+  // 6) 行レンダリング
+  pageEntries.forEach(([key, it]) => {
     const tr = document.createElement('tr');
 
-    // 先頭チェックボックス
+    // チェックボックス
     const tdChk = document.createElement('td');
     tdChk.style.width = '3ch';
     const cb = document.createElement('input');
@@ -397,10 +498,14 @@ function renderTable() {
     tdChk.appendChild(cb);
     tr.appendChild(tdChk);
 
-    // データセル
-    const fixedTotal = fixedWidthMapping.serialization + fixedWidthMapping.type +
-      fixedWidthMapping.create_date + fixedWidthMapping.update_date;
-    const varTotal = variableWeightMapping.title + variableWeightMapping.author + variableWeightMapping.tags;
+    // セル描画のための幅計算
+    const fixedTotal = fixedWidthMapping.serialization
+      + fixedWidthMapping.type
+      + fixedWidthMapping.create_date
+      + fixedWidthMapping.update_date;
+    const varTotal = variableWeightMapping.title
+      + variableWeightMapping.author
+      + variableWeightMapping.tags;
 
     columns.forEach(c => {
       const td = document.createElement('td');
@@ -408,8 +513,12 @@ function renderTable() {
         td.classList.add('hidden-column');
       } else {
         td.classList.add(`td-${c}`);
-        if (fixedWidthMapping[c]) td.style.width = fixedWidthMapping[c] + 'ch';
-        else td.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c] || 0) / varTotal})`;
+        if (fixedWidthMapping[c]) {
+          td.style.width = fixedWidthMapping[c] + 'ch';
+        } else {
+          td.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c] || 0) / varTotal
+            })`;
+        }
 
         switch (c) {
           case 'serialization':
@@ -461,6 +570,9 @@ function renderTable() {
 
     tbody.appendChild(tr);
   });
+
+  // 選択件数更新
+  updateSelectedCount();
 }
 
 /* --------------------------------------------------
@@ -468,39 +580,31 @@ function renderTable() {
 -------------------------------------------------- */
 function updatePagination() {
   const pageInfo = document.getElementById('page-info');
-  const totalItems = Object.entries(tableData).filter(([, it]) => {
-    if (typeFilter !== 'all' && it.type !== typeFilter) return false;
-    if (hiddenAuthors.includes(it.author)) return false;
-    if (filteredAuthors.length && !filteredAuthors.includes(it.author_id || it.author)) return false;
-    if (it.all_tags) {
-      const inc = includedTags.every(t => it.all_tags.includes(t));
-      const exc = excludedTags.every(t => !it.all_tags.includes(t));
-      if (!(inc && exc)) return false;
-    }
-    return true;
-  }).length;
-  const totalPages = rowsPerPage ? Math.ceil(totalItems / rowsPerPage) : 1;
-  pageInfo.textContent = `${currentPage} / ${totalPages || 1}`;
+  const totalItems = getFilteredEntries().length;
+  console.log(
+    '≪DEBUG≫ includeOp=', includeOperator,
+    'includedTags=', includedTags,
+    'filteredCount=', totalItems,
+    'rowsPerPage=', rowsPerPage
+  );
+  const totalPages = rowsPerPage
+    ? Math.ceil(totalItems / rowsPerPage)
+    : 1;
+  currentPage = Math.min(Math.max(1, currentPage), totalPages);
+  pageInfo.textContent = `${currentPage} / ${totalPages}`;
 }
 
+
 function nextPage() {
-  updatePagination();
-  const totalPages = rowsPerPage ? Math.ceil(Object.entries(tableData).length / rowsPerPage) : 1;
-  if (currentPage < totalPages) {
-    currentPage++;
-    saveSettings();
-    renderTable();
-    updatePagination();
-  }
+  currentPage++;
+  renderTable();
+  saveSettings();
 }
 
 function prevPage() {
-  if (currentPage > 1) {
-    currentPage--;
-    saveSettings();
-    renderTable();
-    updatePagination();
-  }
+  currentPage--;
+  renderTable();
+  saveSettings();
 }
 
 /* --------------------------------------------------
