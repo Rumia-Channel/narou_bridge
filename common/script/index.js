@@ -272,22 +272,36 @@ function renderTagFilters() {
 }
 
 function getFilteredEntries() {
-  return Object.entries(tableData)
-    .filter(([, it]) => typeFilter === 'all' || it.type === typeFilter)
-    .filter(([, it]) => !hiddenAuthors.includes(it.author) &&
-      (filteredAuthors.length === 0 || filteredAuthors.includes(it.author_id || it.author)))
-    .filter(([, it]) => {
-      if (!it.all_tags) return true;
-      const incMatch = includedTags.length === 0 ||
-        (includeOperator === 'AND'
-          ? includedTags.every(t => it.all_tags.includes(t))
-          : includedTags.some(t => it.all_tags.includes(t)));
-      const excMatch = excludedTags.length === 0 ||
-        (excludeOperator === 'OR'
-          ? !excludedTags.some(t => it.all_tags.includes(t))
-          : !excludedTags.every(t => it.all_tags.includes(t)));
-      return incMatch && excMatch;
-    });
+  return Object.entries(tableData).filter(([, it]) => {
+    if (typeFilter !== 'all' && it.type !== typeFilter) return false;
+    if (hiddenAuthors.includes(it.author)) return false;
+    if (filteredAuthors.length && !filteredAuthors.includes(it.author_id || it.author)) return false;
+
+    const tags = it.all_tags || [];
+
+    // 含むタグ判定（includeOperatorに応じて）
+    let includeResult = true;
+    if (includedTags.length) {
+      if (includeOperator === 'AND') {
+        includeResult = includedTags.every(tag => tags.includes(tag));
+      } else {
+        includeResult = includedTags.some(tag => tags.includes(tag));
+      }
+    }
+
+    // 含まないタグ判定（excludeOperatorに応じて）
+    let excludeResult = true;
+    if (excludedTags.length) {
+      if (excludeOperator === 'AND') {
+        excludeResult = !excludedTags.every(tag => tags.includes(tag));
+      } else {
+        excludeResult = !excludedTags.some(tag => tags.includes(tag));
+      }
+    }
+
+    // 両方の条件を満たした場合のみ表示
+    return includeResult && excludeResult;
+  });
 }
 
 function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
