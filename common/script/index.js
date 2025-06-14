@@ -554,16 +554,20 @@ function renderTable() {
 -------------------------------------------------- */
 function updatePagination() {
   const pageInfo = document.getElementById('page-info');
-  // ① フィルター済みデータの件数を取得
   const totalItems = getFilteredEntries().length;
-  // ② 総ページ数を計算
-  const totalPages = rowsPerPage ? Math.ceil(totalItems / rowsPerPage) : 1;
-  // ③ 現在ページが範囲外なら補正
-  if (currentPage > totalPages) currentPage = totalPages;
-  if (currentPage < 1) currentPage = 1;
-  // ④ 表示
-  pageInfo.textContent = `${currentPage} / ${totalPages || 1}`;
+  console.log(
+    '≪DEBUG≫ includeOp=', includeOperator,
+    'includedTags=', includedTags,
+    'filteredCount=', totalItems,
+    'rowsPerPage=', rowsPerPage
+  );
+  const totalPages = rowsPerPage 
+    ? Math.ceil(totalItems / rowsPerPage) 
+    : 1;
+  currentPage = Math.min(Math.max(1, currentPage), totalPages);
+  pageInfo.textContent = `${currentPage} / ${totalPages}`;
 }
+
 
 function nextPage() {
   const totalPages = rowsPerPage
