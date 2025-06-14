@@ -271,7 +271,7 @@ def format_survey(survey):
 
 #ルビ形式の整形
 def format_ruby(data):
-    pattern = re.compile(r"\[\[rb:(.*?) > (.*?)\]\]")
+    pattern = re.compile(r"\[\[rb:(.*?)\s*>\s*(.*?)\]\]")
     return re.sub(pattern, lambda match: f'[ruby:<{match.group(1)}>({match.group(2)})]', data)
 
 #画像リンク形式の整形
