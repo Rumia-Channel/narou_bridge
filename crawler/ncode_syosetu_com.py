@@ -372,12 +372,15 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type,
     results['all_episodes'] = ""
     results['total_characters'] = ""
     results['all_characters'] = ""
+    results['tags'] = []
+    results['all_tags'] = []
+    results['type'] = 'novel'
     if novel_type == 0:
-        results['type'] = "連載中"
+        results['serialization'] = "連載中"
     elif novel_type == 1:
-        results['type'] = "完結済"
+        results['serialization'] = "完結済"
     elif novel_type == 2:
-        results['type'] = "短編"
+        results['serialization'] = "短編"
     results['createDate'] = gen_date
     results['updateDate'] = update_date
 
