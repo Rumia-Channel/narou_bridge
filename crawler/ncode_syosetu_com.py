@@ -257,6 +257,9 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type,
         # タイトルの結合
         title = ''.join(item['text'] for item in matching_x_items)
 
+        if re.match(r'^[ 　][^ 　]', title):
+            title = title[1:]
+
         if title.endswith('（前書き）'):
             introductions[tit] = {'title': title, 'page': page}
             continue
