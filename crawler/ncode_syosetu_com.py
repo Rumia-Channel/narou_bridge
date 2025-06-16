@@ -304,12 +304,22 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type,
         # txt_y_max_2: y の二番目に大きい値を取得
         txt_y_max_2 = unique_y_values[1] if len(unique_y_values) > 1 else None
 
+        # ループ前に行頭として扱いたい括弧リストを定義
+        openers = ['「', '（', '『', '【', '(', '[', '{']
+
         for item in tqdm.tqdm(filtered_texts, leave=False, desc="Processing", unit="texts"):
             if item.get('page') < title_pages[i]:
                 continue
 
             if i != len(title_pages)-1 and int(item.get('page')) == title_pages[i+1]:
                 break
+
+            if item.get('y') == txt_y_min and item['text'] in openers:
+                previous_txt += '\n' + item['text']
+                previous_page = int(item.get('page'))
+                previous_x    = item.get('x')
+                previous_y    = item.get('y')
+                continue
 
             if int(item.get('page')) != previous_page:
                 if item.get('x') != previous_x:
@@ -420,7 +430,7 @@ def process_text_details(file_path, gen_date, author_id, author_url, novel_type,
         else:
             results['episodes'][_key]['introduction'] = ""
         results['episodes'][_key]['title'] = value['title']
-        results['episodes'][_key]['text'] = full_texts[line_txt]
+        results['episodes'][_key]['text'] = cm.indent_paragraphs(full_texts[line_txt])
         results['episodes'][_key]['textCount'] = int(len(full_texts[line_txt].replace('\n', '')))
         all_str += len(full_texts[line_txt].replace('\n', ''))
         line_txt += 1
