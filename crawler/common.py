@@ -9,9 +9,33 @@ import time
 from datetime import datetime, timezone, timedelta
 import hashlib
 import base64
+import re
 
 #ログを保存
 import logging
+
+def indent_paragraphs(text: str) -> str:
+
+    # 字下げ省略対象の括弧類
+    _OMIT_CHARS = " 　「『（【〔〖〘〈《｛"
+    # キャプチャパターン: 文字列先頭または改行直後で、直後文字が半角/全角スペース・括弧類以外
+    _PATTERN = re.compile(r'(^|\n)(?![' + re.escape(_OMIT_CHARS) + '])')
+
+    """
+    テキストの先頭および改行直後に、
+    直後の文字が以下に該当しない場合に全角スペースを挿入して字下げを行います。
+
+    - 半角スペース（U+0020）
+    - 全角スペース（U+3000）
+    - 字下げを省略する括弧類: 「 『 （ 【 〔 〘 〈 《 ｛
+
+    Args:
+        text (str): 字下げ対象テキスト
+    Returns:
+        str: 字下げ済みテキスト
+    """
+    # (^|\n) のキャプチャを保持しつつ、その直後に全角スペースを挿入
+    return _PATTERN.sub(r"\1　", text)
 
 # 半角文字を全角文字に変換する関数
 def full_to_half(text):

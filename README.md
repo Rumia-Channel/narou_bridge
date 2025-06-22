@@ -56,12 +56,6 @@ narou=0
 [server]
 domain=example.tail0exam.ts.net
 port=8080
-job=server
-clustering=0
-key=0
-ssl=0
-ssl_crt=
-ssl_key=
 use_proxy=1
 proxy_port=443
 proxy_ssl=1
@@ -90,12 +84,6 @@ auto_update_interval=小説の自動アップデートをする際の間隔(秒�
 [server]
 domain=サーバーを公開するURL(localhostで内部にできる)
 port=サーバーを公開するポート番号
-job=現状無意味(デフォルトでOK)
-clustering=現状無意味(デフォルトでOK)
-key=現状無意味(デフォルトでOK)
-ssl=スクリプト単体でSSLサーバーを立てるかどうか(0でSSL無し, 1でSSLあり)
-ssl_crt=SSLを有効にする際のcrtファイルのパス
-ssl_key=SSLを有効にする際のkeyファイルのパス
 use_proxy=プロキシを利用するか否か(0で無効, 1で有効)
 proxy_port=プロキシが公開するポート(実際にユーザーがアクセスするポート)
 proxy_ssl=プロキシが公開する際にSSLを利用するか否か(0で無効, 1で有効)
