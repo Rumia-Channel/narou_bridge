@@ -203,7 +203,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
 
     site_name, nid = os.path.relpath(nove_path, data_folder).split(os.sep)[:2]
 
-    img_link = '/images/'  # 画像ファイルが保存されているディレクトリのリンク
+    img_link = f'{host_name}/images/'  # 画像ファイルが保存されているディレクトリのリンク
 
     # 目次ファイルの生成
     if data.get("serialization") != "短編":
