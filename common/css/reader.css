@@ -435,3 +435,76 @@ body.reader .toc-container li {
   vertical-align: text-top;
   /* 上寄せ */
 }
+
+@media screen and (max-width: 600px) {
+  :root {
+    --reader-width: 95%;
+    --reader-horizontal-padding: 0.5em;
+    --header-padding-vertical: 0.5em;
+    --header-padding-horizontal: 0.75em;
+    --button-padding-vertical: 0.25em;
+    --button-padding-horizontal: 0.5em;
+    --section-padding-vertical: 0.75em;
+    --page-padding: 1em;
+  }
+
+  header h1 {
+    font-size: 1em;
+  }
+
+  #btn-clear-cache {
+    font-size: 0.75em;
+    padding: var(--button-padding-vertical) var(--button-padding-horizontal);
+  }
+
+  .novel {
+    width: 45%;
+    margin: 0.25em;
+  }
+
+  .cover-container {
+    height: 10em;
+  }
+
+  .novel-title {
+    font-size: 0.75em;
+    min-height: calc(1.4em * 2);
+  }
+
+  .author-header {
+    font-size: 0.9em;
+    padding: 0.25em 0.5em;
+  }
+
+  .author-content {
+    padding: 0.5em;
+  }
+
+  .main-text {
+    font-size: 0.9em;
+    line-height: 1.6;
+  }
+
+  .page {
+    width: 100%;
+    padding: var(--page-padding);
+  }
+
+  .cover-badges {
+    height: 1.2em;
+  }
+
+  .cover-badge {
+    font-size: 0.4em;
+    padding: 0.1em 0.2em;
+  }
+
+  .nav-links, .episode-nav {
+    flex-direction: column;
+    gap: 0.5em;
+  }
+
+  .nav-link {
+    font-size: 0.9em;
+  }
+}
