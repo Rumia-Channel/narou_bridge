@@ -107,3 +107,58 @@ th {
     justify-content: center;
     z-index: 1000;
 }
+
+@media screen and (max-width: 600px) {
+  body {
+    font-size: 0.9em;
+  }
+
+  table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    font-size: 0.85em;
+  }
+
+  th, td {
+    padding: 4px;
+    word-break: break-word;
+    white-space: nowrap;
+  }
+
+  .pagination button {
+    padding: 4px 8px;
+    margin: 3px;
+    font-size: 0.85em;
+  }
+
+  .row-selector,
+  .column-selector,
+  .type-selector {
+    margin-bottom: 0.5em;
+    font-size: 0.9em;
+  }
+
+  .tag-item,
+  .hidden-author-tag {
+    font-size: 0.75em;
+    padding: 0.15em 0.4em;
+  }
+
+  .row-checkbox {
+    width: 1.5em;
+    height: 1.5em;
+    margin: 0.25ch;
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border-width: 6px;
+  }
+
+  #loading-overlay {
+    font-size: 0.9em;
+  }
+}
