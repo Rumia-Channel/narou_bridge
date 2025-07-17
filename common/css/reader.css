@@ -50,13 +50,22 @@ body {
 /* header */
 header {
   display: flex;
+  display: -webkit-flex;
+  display: -moz-flex;
+  display: -ms-flexbox;
   align-items: center;
+  -webkit-align-items: center;
+  -moz-align-items: center;
+  -ms-flex-align: center;
   padding: var(--header-padding-vertical) var(--header-padding-horizontal);
   position: relative;
 }
 
 header h1 {
   flex: 1;
+  -webkit-flex: 1;
+  -moz-flex: 1;
+  -ms-flex: 1;
   margin: 0;
   text-align: center;
 }
@@ -68,6 +77,10 @@ header h1 {
   border: none;
   padding: var(--button-padding-vertical) var(--button-padding-horizontal);
   border-radius: var(--button-radius);
+  -webkit-border-radius: var(--button-radius);
+  -moz-border-radius: var(--button-radius);
+  -ms-border-radius: var(--button-radius);
+  -o-border-radius: var(--button-radius);
   cursor: pointer;
 }
 
@@ -94,6 +107,10 @@ header h1 {
   height: 100%;
   background: var(--link-color);
   transition: width 0.2s ease;
+  -webkit-transition: width 0.2s ease;
+  -moz-transition: width 0.2s ease;
+  -ms-transition: width 0.2s ease;
+  -o-transition: width 0.2s ease;
 }
 
 #progress-info {
@@ -159,10 +176,23 @@ body.reader #app {
   /* 240px */
   overflow: hidden;
   border-radius: 0.3125em;
+  -webkit-border-radius: 0.3125em;
+  -moz-border-radius: 0.3125em;
+  -ms-border-radius: 0.3125em;
+  -o-border-radius: 0.3125em;
   background-color: rgba(0, 0, 0, 0.1);
   display: flex;
+  display: -webkit-flex;
+  display: -moz-flex;
+  display: -ms-flexbox;
   align-items: center;
+  -webkit-align-items: center;
+  -moz-align-items: center;
+  -ms-flex-align: center;
   justify-content: center;
+  -webkit-justify-content: center;
+  -moz-justify-content: center;
+  -ms-flex-pack: center;
 }
 
 
@@ -175,10 +205,17 @@ body.reader #app {
 
 .cover-badge {
   flex: 1;
+  -webkit-flex: 1;
+  -moz-flex: 1;
+  -ms-flex: 1;
   margin: 0 0.125em;
   font-size: 0.5em;
   padding: 0.125em 0.25em;
   border-radius: 0.1875em;
+  -webkit-border-radius: 0.1875em;
+  -moz-border-radius: 0.1875em;
+  -ms-border-radius: 0.1875em;
+  -o-border-radius: 0.1875em;
   color: #fff;
   text-align: center;
   white-space: nowrap;
@@ -186,6 +223,10 @@ body.reader #app {
   text-overflow: ellipsis;
   opacity: 1;
   transition: opacity 0.2s;
+  -webkit-transition: opacity 0.2s;
+  -moz-transition: opacity 0.2s;
+  -ms-transition: opacity 0.2s;
+  -o-transition: opacity 0.2s;
 }
 
 
@@ -200,8 +241,17 @@ body.reader #app {
   right: 0;
   height: 1.5em;
   display: flex;
+  display: -webkit-flex;
+  display: -moz-flex;
+  display: -ms-flexbox;
   justify-content: space-between;
+  -webkit-justify-content: space-between;
+  -moz-justify-content: space-between;
+  -ms-flex-pack: justify;
   align-items: center;
+  -webkit-align-items: center;
+  -moz-align-items: center;
+  -ms-flex-align: center;
   padding: 0 0.25em;
   box-sizing: border-box;
   pointer-events: none;
@@ -215,8 +265,17 @@ body.reader #app {
   min-height: calc(1.4em * 3);
   /* ← 4 → 3 に変更 */
   display: flex;
+  display: -webkit-flex;
+  display: -moz-flex;
+  display: -ms-flexbox;
   flex-direction: column;
+  -webkit-flex-direction: column;
+  -moz-flex-direction: column;
+  -ms-flex-direction: column;
   justify-content: space-between;
+  -webkit-justify-content: space-between;
+  -moz-justify-content: space-between;
+  -ms-flex-pack: justify;
   overflow: hidden;
 }
 
@@ -266,6 +325,10 @@ body.reader #app .postscript {
   /* 背景色・丸角はそのまま維持 */
   background-color: rgba(100, 100, 100, 0.1);
   border-radius: 0.3125em;
+  -webkit-border-radius: 0.3125em;
+  -moz-border-radius: 0.3125em;
+  -ms-border-radius: 0.3125em;
+  -o-border-radius: 0.3125em;
 
   /* max-width 制約を解除 */
   max-width: none !important;
@@ -284,7 +347,13 @@ body.reader #app .postscript {
 /* ナビリンク */
 .nav-links {
   display: flex;
+  display: -webkit-flex;
+  display: -moz-flex;
+  display: -ms-flexbox;
   justify-content: center;
+  -webkit-justify-content: center;
+  -moz-justify-content: center;
+  -ms-flex-pack: center;
   gap: 1em;
   margin: 1.5em 0;
   /* 24px */
@@ -432,6 +501,10 @@ body.reader .toc-container li {
   /* 作者名との間隔 */
   border-radius: 0.25em;
   /* 角丸 */
+  -webkit-border-radius: 0.25em;
+  -moz-border-radius: 0.25em;
+  -ms-border-radius: 0.25em;
+  -o-border-radius: 0.25em;
   vertical-align: text-top;
   /* 上寄せ */
 }
@@ -501,6 +574,9 @@ body.reader .toc-container li {
 
   .nav-links, .episode-nav {
     flex-direction: column;
+    -webkit-flex-direction: column;
+    -moz-flex-direction: column;
+    -ms-flex-direction: column;
     gap: 0.5em;
   }
 
