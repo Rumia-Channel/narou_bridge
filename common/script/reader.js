@@ -1,11 +1,73 @@
+// WebKit compatibility: Map polyfill
+if (typeof Map === 'undefined') {
+  window.Map = function() {
+    this.data = {};
+  };
+  window.Map.prototype.set = function(key, value) {
+    this.data[key] = value;
+    return this;
+  };
+  window.Map.prototype.get = function(key) {
+    return this.data[key];
+  };
+  window.Map.prototype.has = function(key) {
+    return key in this.data;
+  };
+  window.Map.prototype.delete = function(key) {
+    delete this.data[key];
+  };
+  window.Map.prototype.clear = function() {
+    this.data = {};
+  };
+}
+
+// WebKit compatibility: URLSearchParams polyfill
+if (typeof URLSearchParams === 'undefined') {
+  window.URLSearchParams = function(search) {
+    this.params = {};
+    if (search) {
+      var pairs = search.substring(1).split('&');
+      for (var i = 0; i < pairs.length; i++) {
+        var pair = pairs[i].split('=');
+        if (pair.length === 2) {
+          this.params[decodeURIComponent(pair[0])] = decodeURIComponent(pair[1]);
+        }
+      }
+    }
+  };
+  window.URLSearchParams.prototype.get = function(name) {
+    return this.params[name] || null;
+  };
+}
+
+// WebKit compatibility: requestAnimationFrame polyfill
+if (!window.requestAnimationFrame) {
+  window.requestAnimationFrame = function(callback) {
+    return setTimeout(callback, 1000 / 60);
+  };
+}
+
+// WebKit compatibility: Object.entries polyfill
+if (!Object.entries) {
+  Object.entries = function(obj) {
+    var entries = [];
+    for (var key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        entries.push([key, obj[key]]);
+      }
+    }
+    return entries;
+  };
+}
+
 // スクリプト冒頭で Map を用意
-const coverUrlMap = new Map();
+var coverUrlMap = new Map();
 // BlobのSHA-256ハッシュ → ObjectURL の共有マップ
-const coverHashMap = new Map();
+var coverHashMap = new Map();
 
 // Cache Storage 名
-const CACHE_NAME = 'cover-images';
-//const INDEX_CACHE = 'index-json-cache';
+var CACHE_NAME = 'cover-images';
+//var INDEX_CACHE = 'index-json-cache';
 
 /**
  * 本棚画面用：ヘッダーに「トップページに戻る」ボタンを追加
@@ -344,8 +406,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
 // index.json のソースリスト
-const INDEX_CACHE = 'index-json-cache';              // Cache Storage 名
-const INDEX_ETAG_KEY_PREFIX = 'indexETag_';          // localStorage に ETag を保存する際のキー接頭辞
+var INDEX_CACHE = 'index-json-cache';              // Cache Storage 名
+var INDEX_ETAG_KEY_PREFIX = 'indexETag_';          // localStorage に ETag を保存する際のキー接頭辞
 
 /**
  * キャッシュ付き index.json の読み込み（条件付き GET 版）
