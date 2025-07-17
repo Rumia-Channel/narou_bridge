@@ -283,6 +283,9 @@ def format_ruby(data):
 @suppress_errors()
 def format_image(id, episode, novel, series, data, json_data, folder_path):
     global g_count
+    # [pixivimage:数字] → [pixivimage:数字-1] に変換
+    data = re.sub(r'\[pixivimage:(\d+)\]', r'[pixivimage:\1-1]', data)
+
     #pixivimage: で始まるリンクの抽出
     links = re.findall(r"\[pixivimage:(\d+)-(\d+)\]", data)
     link_dict = {}
@@ -302,7 +305,6 @@ def format_image(id, episode, novel, series, data, json_data, folder_path):
             episode_path = os.path.join(folder_path, f'c{id}', str(episode))
         else:
             episode_path = os.path.join(folder_path, f'a{id}')
-
 
     for i in links:
         art_id = i[0]
