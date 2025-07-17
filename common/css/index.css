@@ -45,24 +45,32 @@ th {
 
 /* ── タグ表示 ─────────────────── */
 .tag-item {
-    display: inline-block;
-    padding: 0.2em 0.5em;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    margin-right: 0.3em;
-    margin-bottom: 0.3em;
-    background-color: #f8f8f8;
+  display: inline-block;
+  padding: 0.2em 0.5em;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  -webkit-border-radius: 3px;
+  -moz-border-radius: 3px;
+  -ms-border-radius: 3px;
+  -o-border-radius: 3px;
+  margin-right: 0.3em;
+  margin-bottom: 0.3em;
+  background-color: #f8f8f8;
 }
 
 .hidden-author-tag {
-    display: inline-block;
-    padding: 0.2em 0.5em;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    margin-right: 0.3em;
-    margin-bottom: 0.3em;
-    background-color: #ffecec;
-    cursor: pointer;
+  display: inline-block;
+  padding: 0.2em 0.5em;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  -webkit-border-radius: 3px;
+  -moz-border-radius: 3px;
+  -ms-border-radius: 3px;
+  -o-border-radius: 3px;
+  margin-right: 0.3em;
+  margin-bottom: 0.3em;
+  background-color: #ffecec;
+  cursor: pointer;
 }
 
 /* ── 行チェックボックス ─────────────────── */
@@ -75,13 +83,21 @@ th {
 
 /* ── ローディングスピナー ─────────────────── */
 .spinner {
-    border: 8px solid #f3f3f3;
-    border-top: 8px solid #3498db;
-    border-radius: 50%;
-    width: 60px;
-    height: 60px;
-    animation: spin 1s linear infinite;
-    margin: auto;
+  border: 8px solid #f3f3f3;
+  border-top: 8px solid #3498db;
+  border-radius: 50%;
+  -webkit-border-radius: 50%;
+  -moz-border-radius: 50%;
+  -ms-border-radius: 50%;
+  -o-border-radius: 50%;
+  width: 60px;
+  height: 60px;
+  animation: spin 1s linear infinite;
+  -webkit-animation: spin 1s linear infinite;
+  -moz-animation: spin 1s linear infinite;
+  -ms-animation: spin 1s linear infinite;
+  -o-animation: spin 1s linear infinite;
+  margin: auto;
 }
 
 @keyframes spin {
@@ -89,23 +105,72 @@ th {
         transform: rotate(0deg);
     }
 
-    100% {
-        transform: rotate(360deg);
-    }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@-webkit-keyframes spin {
+  0% {
+    -webkit-transform: rotate(0deg);
+  }
+
+  100% {
+    -webkit-transform: rotate(360deg);
+  }
+}
+
+@-moz-keyframes spin {
+  0% {
+    -moz-transform: rotate(0deg);
+  }
+
+  100% {
+    -moz-transform: rotate(360deg);
+  }
+}
+
+@-ms-keyframes spin {
+  0% {
+    -ms-transform: rotate(0deg);
+  }
+
+  100% {
+    -ms-transform: rotate(360deg);
+  }
+}
+
+@-o-keyframes spin {
+  0% {
+    -o-transform: rotate(0deg);
+  }
+
+  100% {
+    -o-transform: rotate(360deg);
+  }
 }
 
 /* ── フルスクリーンのローディングオーバーレイ ─────────────────── */
 #loading-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(255, 255, 255, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  display: -webkit-flex;
+  display: -moz-flex;
+  display: -ms-flexbox;
+  align-items: center;
+  -webkit-align-items: center;
+  -moz-align-items: center;
+  -ms-flex-align: center;
+  justify-content: center;
+  -webkit-justify-content: center;
+  -moz-justify-content: center;
+  -ms-flex-pack: center;
+  z-index: 1000;
 }
 
 /* iPadサイズ以下で表示を詰める */
