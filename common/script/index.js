@@ -1,11 +1,81 @@
 // index.js — 完全版
 // HTML ファイルの場所を基準に index.json を読み込みます
-const basePath = window.location.pathname.replace(/\/[^/]*$/, '/');
+
+// WebKit compatibility: Polyfills
+if (!Array.prototype.forEach) {
+  Array.prototype.forEach = function(callback, thisArg) {
+    var T, k;
+    if (this == null) {
+      throw new TypeError('this is null or not defined');
+    }
+    var O = Object(this);
+    var len = parseInt(O.length) || 0;
+    if (typeof callback !== "function") {
+      throw new TypeError(callback + ' is not a function');
+    }
+    if (arguments.length > 1) {
+      T = thisArg;
+    }
+    k = 0;
+    while (k < len) {
+      var kValue;
+      if (k in O) {
+        kValue = O[k];
+        callback.call(T, kValue, k, O);
+      }
+      k++;
+    }
+  };
+}
+
+// WebKit compatibility: Set polyfill
+if (typeof Set === 'undefined') {
+  window.Set = function() {
+    this.data = [];
+  };
+  window.Set.prototype.add = function(value) {
+    if (this.data.indexOf(value) === -1) {
+      this.data.push(value);
+    }
+    return this;
+  };
+  window.Set.prototype.has = function(value) {
+    return this.data.indexOf(value) !== -1;
+  };
+  window.Set.prototype.delete = function(value) {
+    var index = this.data.indexOf(value);
+    if (index !== -1) {
+      this.data.splice(index, 1);
+      return true;
+    }
+    return false;
+  };
+  window.Set.prototype.clear = function() {
+    this.data = [];
+  };
+  Object.defineProperty(window.Set.prototype, 'size', {
+    get: function() {
+      return this.data.length;
+    }
+  });
+}
+
+// WebKit compatibility: Promise polyfill check
+if (typeof Promise === 'undefined') {
+  console.warn('Promise is not supported in this browser. Some features may not work.');
+}
+
+// WebKit compatibility: fetch polyfill check
+if (typeof fetch === 'undefined') {
+  console.warn('fetch is not supported in this browser. XMLHttpRequest will be used instead.');
+}
+
+var basePath = window.location.pathname.replace(/\/[^/]*$/, '/');
 
 /* --------------------------------------------------
    グローバル変数・初期設定
 -------------------------------------------------- */
-const columns = [
+var columns = [
   'serialization',
   'title',
   'author',
@@ -14,44 +84,44 @@ const columns = [
   'create_date',
   'update_date'
 ];
-let tableData = {};
-let currentPage = 1;
-let rowsPerPage = 10;
-let hiddenCols = [];
-let filteredAuthors = [];
-let hiddenAuthors = [];
-let typeFilter = 'all';
-let includedTags = [];
-let excludedTags = [];
-let includeOperator = 'AND';
-let excludeOperator = 'AND';
-let selectedRows = new Set();
-const fixedWidthMapping = { serialization: 6, type: 3, create_date: 14, update_date: 14 };
-const variableWeightMapping = { title: 50, author: 20, tags: 30 };
-let sortInfo = { column: null, ascending: true };
-let isIncludeTagsCollapsed = false;
-let isExcludeTagsCollapsed = false;
-let isHiddenAuthorsCollapsed = false;
+var tableData = {};
+var currentPage = 1;
+var rowsPerPage = 10;
+var hiddenCols = [];
+var filteredAuthors = [];
+var hiddenAuthors = [];
+var typeFilter = 'all';
+var includedTags = [];
+var excludedTags = [];
+var includeOperator = 'AND';
+var excludeOperator = 'AND';
+var selectedRows = new Set();
+var fixedWidthMapping = { serialization: 6, type: 3, create_date: 14, update_date: 14 };
+var variableWeightMapping = { title: 50, author: 20, tags: 30 };
+var sortInfo = { column: null, ascending: true };
+var isIncludeTagsCollapsed = false;
+var isExcludeTagsCollapsed = false;
+var isHiddenAuthorsCollapsed = false;
 
 /* --------------------------------------------------
    データ取得（ETagによるキャッシュ判定を導入）
 -------------------------------------------------- */
 async function fetchData() {
-  const overlay = document.getElementById('loading-overlay');
+  var overlay = document.getElementById('loading-overlay');
   overlay.style.display = 'flex';
 
   // 以前に保存したETagを取得（初回はnullになります）
-  const etagKey = 'indexJsonEtag_' + basePath;
-  const savedEtag = localStorage.getItem(etagKey);
+  var etagKey = 'indexJsonEtag_' + basePath;
+  var savedEtag = localStorage.getItem(etagKey);
 
   try {
-    let response;
-    let newEtag = null;
+    var response;
+    var newEtag = null;
 
     if (savedEtag) {
       // 1) サーバーにHEADリクエストを送り、最新のETagだけを取得する
       try {
-        const headResp = await fetch(basePath + 'index.json', {
+        var headResp = await fetch(basePath + 'index.json', {
           method: 'HEAD'
         });
         if (!headResp.ok) {
@@ -116,7 +186,7 @@ async function fetchData() {
    ローカルストレージ（設定の保存・読込）
 -------------------------------------------------- */
 function loadSettings() {
-  const s = JSON.parse(localStorage.getItem('tableSettings')) || {};
+  var s = JSON.parse(localStorage.getItem('tableSettings')) || {};
   rowsPerPage = typeof s.rowsPerPage === 'number' ? s.rowsPerPage : 10;
   hiddenCols = s.hiddenCols || [];
   currentPage = s.currentPage || 1;
@@ -134,21 +204,21 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  const s = {
-    rowsPerPage,
-    hiddenCols,
-    currentPage,
-    typeFilter,
-    filteredAuthors,
-    hiddenAuthors,
-    sortInfo,
-    includedTags,
-    excludedTags,
-    includeOperator,
-    excludeOperator,
-    isIncludeTagsCollapsed,
-    isExcludeTagsCollapsed,
-    isHiddenAuthorsCollapsed
+  var s = {
+    rowsPerPage: rowsPerPage,
+    hiddenCols: hiddenCols,
+    currentPage: currentPage,
+    typeFilter: typeFilter,
+    filteredAuthors: filteredAuthors,
+    hiddenAuthors: hiddenAuthors,
+    sortInfo: sortInfo,
+    includedTags: includedTags,
+    excludedTags: excludedTags,
+    includeOperator: includeOperator,
+    excludeOperator: excludeOperator,
+    isIncludeTagsCollapsed: isIncludeTagsCollapsed,
+    isExcludeTagsCollapsed: isExcludeTagsCollapsed,
+    isHiddenAuthorsCollapsed: isHiddenAuthorsCollapsed
   };
   localStorage.setItem('tableSettings', JSON.stringify(s));
 }
@@ -180,25 +250,35 @@ function applySettingsToUI() {
    作者関連
 -------------------------------------------------- */
 function updateAuthorDropdownOptions() {
-  const dd = document.getElementById('author-filter-dropdown');
+  var dd = document.getElementById('author-filter-dropdown');
   if (!dd) return;
   while (dd.options.length > 1) dd.remove(1);
-  const map = {};
-  Object.values(tableData).forEach(it => {
-    const id = it.author_id || it.author;
-    const time = new Date(it.update_date).getTime();
-    if (!map[id] || time > map[id].time) map[id] = { name: it.author, time };
+  var map = {};
+  
+  // WebKit compatibility: avoid Object.values
+  var keys = Object.keys(tableData);
+  for (var i = 0; i < keys.length; i++) {
+    var it = tableData[keys[i]];
+    var id = it.author_id || it.author;
+    var time = new Date(it.update_date).getTime();
+    if (!map[id] || time > map[id].time) map[id] = { name: it.author, time: time };
+  }
+  
+  var sortedIds = Object.keys(map).sort(function(a, b) {
+    return map[a].name.localeCompare(map[b].name);
   });
-  Object.keys(map)
-    .sort((a, b) => map[a].name.localeCompare(map[b].name))
-    .forEach(id => {
-      const o = document.createElement('option');
-      o.value = id; o.textContent = map[id].name; dd.appendChild(o);
-    });
+  
+  for (var i = 0; i < sortedIds.length; i++) {
+    var id = sortedIds[i];
+    var o = document.createElement('option');
+    o.value = id;
+    o.textContent = map[id].name;
+    dd.appendChild(o);
+  }
 }
 
 function updateAuthorDropdownValue() {
-  const dd = document.getElementById('author-filter-dropdown');
+  var dd = document.getElementById('author-filter-dropdown');
   if (dd) dd.value = filteredAuthors[0] || '';
 }
 
@@ -443,17 +523,19 @@ function updateAuthorFilter(id) {
 }
 
 function renderTable() {
-  const tbody = document.getElementById('user-table-body');
+  var tbody = document.getElementById('user-table-body');
   tbody.innerHTML = '';
 
   // 1) フィルター適用
-  let entries = getFilteredEntries();
+  var entries = getFilteredEntries();
 
   // 2) ソート
   if (sortInfo.column) {
-    entries.sort(([, a], [, b]) => {
-      let A = a[sortInfo.column] ?? '';
-      let B = b[sortInfo.column] ?? '';
+    entries.sort(function(a, b) {
+      var entryA = a[1];
+      var entryB = b[1];
+      var A = entryA[sortInfo.column] || '';
+      var B = entryB[sortInfo.column] || '';
       if (!isNaN(A) && !isNaN(B)) {
         A = parseFloat(A);
         B = parseFloat(B);
@@ -463,30 +545,31 @@ function renderTable() {
   }
 
   // 3) 総ページ数計算・currentPage を clamp
-  const totalItems = entries.length;
-  const totalPages = rowsPerPage
+  var totalItems = entries.length;
+  var totalPages = rowsPerPage
     ? Math.ceil(totalItems / rowsPerPage)
     : 1;
   currentPage = Math.min(Math.max(1, currentPage), totalPages);
 
   // 4) ページ情報表示
-  document.getElementById('page-info').textContent
-    = `${currentPage} / ${totalPages}`;
+  document.getElementById('page-info').textContent = currentPage + ' / ' + totalPages;
 
   // 5) ページネーション（スライス）
-  const start = (currentPage - 1) * rowsPerPage;
-  const pageEntries = rowsPerPage
+  var start = (currentPage - 1) * rowsPerPage;
+  var pageEntries = rowsPerPage
     ? entries.slice(start, start + rowsPerPage)
     : entries;
 
   // 6) 行レンダリング
-  pageEntries.forEach(([key, it]) => {
-    const tr = document.createElement('tr');
+  for (var i = 0; i < pageEntries.length; i++) {
+    var key = pageEntries[i][0];
+    var it = pageEntries[i][1];
+    var tr = document.createElement('tr');
 
     // チェックボックス
-    const tdChk = document.createElement('td');
+    var tdChk = document.createElement('td');
     tdChk.style.width = '3ch';
-    const cb = document.createElement('input');
+    var cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.classList.add('row-checkbox');
     cb.dataset.key = key;
@@ -499,44 +582,44 @@ function renderTable() {
     tr.appendChild(tdChk);
 
     // セル描画のための幅計算
-    const fixedTotal = fixedWidthMapping.serialization
+    var fixedTotal = fixedWidthMapping.serialization
       + fixedWidthMapping.type
       + fixedWidthMapping.create_date
       + fixedWidthMapping.update_date;
-    const varTotal = variableWeightMapping.title
+    var varTotal = variableWeightMapping.title
       + variableWeightMapping.author
       + variableWeightMapping.tags;
 
-    columns.forEach(c => {
-      const td = document.createElement('td');
+    for (var j = 0; j < columns.length; j++) {
+      var c = columns[j];
+      var td = document.createElement('td');
       if (hiddenCols.includes(c)) {
         td.classList.add('hidden-column');
       } else {
-        td.classList.add(`td-${c}`);
+        td.classList.add('td-' + c);
         if (fixedWidthMapping[c]) {
           td.style.width = fixedWidthMapping[c] + 'ch';
         } else {
-          td.style.width = `calc((100% - ${fixedTotal}ch) * ${(variableWeightMapping[c] || 0) / varTotal
-            })`;
+          td.style.width = 'calc((100% - ' + fixedTotal + 'ch) * ' + ((variableWeightMapping[c] || 0) / varTotal) + ')';
         }
 
         switch (c) {
           case 'serialization':
-            td.textContent = it.serialization ?? '';
+            td.textContent = it.serialization || '';
             break;
           case 'title': {
-            const a = document.createElement('a');
-            a.href = `./${key}/`;
+            var a = document.createElement('a');
+            a.href = './' + key + '/';
             a.textContent = it.title;
             td.appendChild(a);
             break;
           }
           case 'author': {
-            const a = document.createElement('a');
+            var a = document.createElement('a');
             a.href = it.author_url;
             a.target = '_blank';
             a.textContent = it.author;
-            a.addEventListener('click', e => {
+            a.addEventListener('click', function(e) {
               if (e.ctrlKey) handleAuthorFiltering(it.author, it.author_id || it.author, e);
             });
             td.appendChild(a);
@@ -547,29 +630,32 @@ function renderTable() {
             break;
           case 'tags':
             if (Array.isArray(it.all_tags)) {
-              it.all_tags.forEach(t => {
-                const s = document.createElement('span');
+              for (var k = 0; k < it.all_tags.length; k++) {
+                var t = it.all_tags[k];
+                var s = document.createElement('span');
                 s.textContent = t;
                 s.classList.add('tag-item');
                 s.style.cursor = 'pointer';
-                s.addEventListener('click', () => tagFilterClick(t));
+                s.addEventListener('click', function() {
+                  tagFilterClick(t);
+                });
                 td.appendChild(s);
-              });
+              }
             }
             break;
           case 'create_date':
           case 'update_date':
-            td.textContent = formatDateTime(it[c] ?? '');
+            td.textContent = formatDateTime(it[c] || '');
             break;
           default:
-            td.textContent = it[c] ?? '';
+            td.textContent = it[c] || '';
         }
       }
       tr.appendChild(td);
-    });
+    }
 
     tbody.appendChild(tr);
-  });
+  }
 
   // 選択件数更新
   updateSelectedCount();
@@ -637,33 +723,63 @@ function filterByType() {
 }
 
 function updateSelectedCount() {
-  document.getElementById('selected-count').textContent = `選択された件数: ${selectedRows.size}`;
+  document.getElementById('selected-count').textContent = '選択された件数: ' + selectedRows.size;
 }
 
 function showCopyPopup(titles) {
-  const overlay = document.createElement('div');
+  var overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';
-  const box = document.createElement('div');
+  var box = document.createElement('div');
   box.style.cssText = 'background:#fff;padding:1em;border-radius:5px;max-width:80%;max-height:80%;overflow:auto;';
-  box.innerHTML = `<strong>リンク先をコピーしました</strong><br><br>${titles.join('<br>')}<br><br><button id="close-copy-popup">閉じる</button>`;
+  
+  // WebKit compatibility: avoid template literals
+  var content = '<strong>リンク先をコピーしました</strong><br><br>' + titles.join('<br>') + '<br><br><button id="close-copy-popup">閉じる</button>';
+  box.innerHTML = content;
+  
   overlay.appendChild(box);
   document.body.appendChild(overlay);
-  document.getElementById('close-copy-popup').addEventListener('click', () => document.body.removeChild(overlay));
+  document.getElementById('close-copy-popup').addEventListener('click', function() {
+    document.body.removeChild(overlay);
+  });
 }
 
 function copySelected() {
-  const links = [];
-  const titles = [];
-  document.querySelectorAll('.row-checkbox').forEach(cb => {
+  var links = [];
+  var titles = [];
+  var checkboxes = document.querySelectorAll('.row-checkbox');
+  
+  // WebKit compatibility: use for loop instead of forEach
+  for (var i = 0; i < checkboxes.length; i++) {
+    var cb = checkboxes[i];
     if (cb.checked) {
-      const row = cb.closest('tr');
-      const a = row.querySelector('.td-title a');
-      if (a) { links.push(a.href); titles.push(a.textContent); }
+      var row = cb.closest('tr');
+      var a = row.querySelector('.td-title a');
+      if (a) { 
+        links.push(a.href); 
+        titles.push(a.textContent); 
+      }
     }
-  });
-  navigator.clipboard.writeText(links.join('\n'))
-    .then(() => showCopyPopup(titles))
-    .catch(err => alert('コピーに失敗しました: ' + err));
+  }
+  
+  // WebKit compatibility: check if clipboard API is available
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(links.join('\n'))
+      .then(function() { showCopyPopup(titles); })
+      .catch(function(err) { alert('コピーに失敗しました: ' + err); });
+  } else {
+    // Fallback for older browsers
+    var textarea = document.createElement('textarea');
+    textarea.value = links.join('\n');
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      showCopyPopup(titles);
+    } catch (err) {
+      alert('コピーに失敗しました: ' + err);
+    }
+    document.body.removeChild(textarea);
+  }
 }
 
 /* --------------------------------------------------
@@ -721,7 +837,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* --------------------------------------------------
    キーボードショートカット
 -------------------------------------------------- */
-document.addEventListener('keydown', event => {
+document.addEventListener('keydown', function(event) {
   if (event.key === 'Escape') {
     event.preventDefault();
     selectedRows.clear();
@@ -732,13 +848,18 @@ document.addEventListener('keydown', event => {
     event.preventDefault();
     if (event.shiftKey && !event.ctrlKey) {
       // すべてのフィルタ後データを選択
-      Object.keys(tableData).forEach(k => selectedRows.add(k));
+      var keys = Object.keys(tableData);
+      for (var i = 0; i < keys.length; i++) {
+        selectedRows.add(keys[i]);
+      }
     } else if (event.ctrlKey && !event.shiftKey) {
       // 表示中の行だけ選択
-      document.querySelectorAll('#user-table-body .row-checkbox').forEach(cb => {
+      var checkboxes = document.querySelectorAll('#user-table-body .row-checkbox');
+      for (var i = 0; i < checkboxes.length; i++) {
+        var cb = checkboxes[i];
         cb.checked = true;
         selectedRows.add(cb.dataset.key);
-      });
+      }
     }
     updateSelectedCount();
     renderTable();

@@ -25,9 +25,13 @@ function debounce(func, delay) {
 // ページ上部に色付きメッセージを表示
 function showMessage(color, message) {
   // 既存のメッセージを削除
-  document.querySelectorAll(".response-message").forEach(function (msg) {
-    msg.remove();
-  });
+  var existingMessages = document.querySelectorAll(".response-message");
+  for (var i = 0; i < existingMessages.length; i++) {
+    var msg = existingMessages[i];
+    if (msg.parentNode) {
+      msg.parentNode.removeChild(msg);
+    }
+  }
 
   // メッセージ要素を作成
   var div = document.createElement("div");
@@ -38,7 +42,9 @@ function showMessage(color, message) {
 
   // 3秒後に削除
   setTimeout(function () {
-    div.remove();
+    if (div.parentNode) {
+      div.parentNode.removeChild(div);
+    }
   }, 3000);
 }
 
@@ -51,7 +57,9 @@ function submit() {
   var input1 = document.getElementById("input1").value;
   var requestId = generateRequestId();
   var url = POST_URL + "?add=" + encodeURIComponent(input1);
-  var keyParam = new URL(location.href).searchParams.get("key");
+  
+  // WebKit compatibility: use alternative to URL().searchParams
+  var keyParam = getUrlParameter("key");
   if (keyParam) url += "&key=" + encodeURIComponent(keyParam);
 
   var xhr = new XMLHttpRequest();
@@ -69,6 +77,19 @@ function submit() {
   document.getElementById("input1").value = "";
   // フォーカスを戻す
   document.getElementById("input1").focus();
+}
+
+// WebKit compatibility: URL parameter extraction helper
+function getUrlParameter(name) {
+  var query = window.location.search.substring(1);
+  var params = query.split("&");
+  for (var i = 0; i < params.length; i++) {
+    var param = params[i].split("=");
+    if (param[0] === name) {
+      return decodeURIComponent(param[1]);
+    }
+  }
+  return null;
 }
 
 // 更新用
