@@ -108,7 +108,30 @@ th {
     z-index: 1000;
 }
 
-@media screen and (max-width: 600px) {
+/* iPadサイズ以下で表示を詰める */
+@media screen and (max-width: 1024px) {
+  table {
+    table-layout: fixed;
+    width: 100%;
+    font-size: 0.93em; /* 少しだけ小さく */
+  }
+  th, td {
+    padding: 4px 3px;
+    font-size: 0.93em;
+    word-break: break-all; /* 長い英単語も折り返す */
+    white-space: normal;   /* 折り返しを許可 */
+    max-width: 120px;      /* 必要に応じてカラム幅制限 */
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hidden-column {
+    display: none;
+  }
+  /* もし列数多い場合、特定カラムは .hidden-column 付与で非表示推奨 */
+}
+
+/* スマホ 400px以下用：タグを折り返して全表示できるようにする */
+@media screen and (max-width: 500px) {
   body {
     font-size: 0.9em;
   }
