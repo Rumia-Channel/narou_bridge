@@ -94,4 +94,4 @@ l: |-
 # tag キーワード
 tags: |-
   <th>キーワード</th>
-  <td class="p-infotop-data__value">(?<tag>.+?)</td>
+  <td>(?<tag>.+?)</td>
