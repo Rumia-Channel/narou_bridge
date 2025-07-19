@@ -636,9 +636,12 @@ function renderTable() {
                 s.textContent = t;
                 s.classList.add('tag-item');
                 s.style.cursor = 'pointer';
-                s.addEventListener('click', function() {
-                  tagFilterClick(t);
-                });
+                // Use IIFE to capture the tag value properly
+                s.addEventListener('click', (function(tagValue) {
+                  return function() {
+                    tagFilterClick(tagValue);
+                  };
+                })(t));
                 td.appendChild(s);
               }
             }
