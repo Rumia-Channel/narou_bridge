@@ -90,3 +90,8 @@ w: |-
 l: |-
   <th>文字数</th>
   <td>(?<length>.+?)文字</td>
+
+# tag キーワード
+tags: |-
+  <th>キーワード</th>
+  <td class="p-infotop-data__value">(?<tag>.+?)</td>
