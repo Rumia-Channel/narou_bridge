@@ -279,7 +279,7 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>キーワード</th>\n')
-        f.write(f'<td>{" ".join(data.get("all_tags", [])).strip() if data.get("all_tags") else "キーワードが設定されていません"}</td>\n')
+        f.write(f'<td>{" ".join(data.get("all_tags", [])).strip() if data.get("all_tags") else "\n<span>キーワードが設定されていません</span>\n"}</td>\n')
         f.write('</tr>\n')
         f.write('<tr>\n')
         f.write('<th>掲載日</th>\n')
