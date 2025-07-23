@@ -1812,7 +1812,8 @@ def convert(folder_path, key_data, data_path, host_name):
     folder_names = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
 
     for q in folder_names:
-        if os.path.exists(os.path.join(folder_path, q, 'raw', 'raw.json')) and os.path.exists(os.path.join(folder_path, q, 'info', 'index.html')):
+        #if os.path.exists(os.path.join(folder_path, q, 'raw', 'raw.json')) and os.path.exists(os.path.join(folder_path, q, 'info', 'index.html')):
+        if os.path.exists(os.path.join(folder_path, q, 'raw', 'raw.json')):
             with open(os.path.join(folder_path, q, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
                 raw_json_data = json.load(f)
             cn.narou_gen(raw_json_data, os.path.join(folder_path, q), key_data, data_folder, host)

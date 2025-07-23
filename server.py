@@ -310,6 +310,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         request_id = req_data.get("request_id")
         pdf_path = req_data.get("pdf_path")
         pdf_name = req_data.get("pdf_name")
+        zip_name = req_data.get("zip_name")
         author_id = req_data.get("author_id")
         author_url = req_data.get("author_url")
         novel_type = req_data.get("novel_type")
@@ -357,6 +358,13 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                 
             elif pdf_name:
                 add_return = util.pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, folder_path, data_path, key_data, host_name)
+                if add_return == 400:
+                    return create_error_response(400, "Invalid add_param value")
+                else:
+                    return create_success_response("Download Complete")
+            
+            elif zip_name:
+                add_return = util.zip_to_text(pdf_path, zip_name, data_path, host_name)
                 if add_return == 400:
                     return create_error_response(400, "Invalid add_param value")
                 else:
@@ -504,6 +512,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
         convert_param = request.form.get("convert")
         re_download_param = request.form.get("re_download")
         pdf_file = request.files.get('pdf')
+        zip_file = request.files.get('zip')
         author_id = request.form.get('author_id')
         author_url = request.form.get('author_url')
         novel_type = request.form.get("novel_type")
@@ -521,6 +530,12 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
             pdf_file.save(os.path.join(pdf_path, pdf_file_name))
         else:
             pdf_file_name = None
+
+        if zip_file:
+            zip_file_name = str(request_id) + '.zip'
+            zip_file.save(os.path.join(pdf_path, zip_file_name))
+        else:
+            zip_file_name = None
 
         with lock:
 
@@ -541,6 +556,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                     "re_download": re_download_param,
                     "pdf_path": pdf_path,
                     "pdf_name": pdf_file_name,
+                    "zip_name": zip_file_name,
                     "author_id": author_id,
                     "author_url": author_url,
                     "novel_type": novel_type,
@@ -562,6 +578,7 @@ def create_app(config, reload_time, auto_update, save_log, interval, auto_update
                 "re_download": re_download_param,
                 "pdf_path": pdf_path,
                 "pdf_name": pdf_file_name,
+                "zip_name": zip_file_name,
                 "author_id": author_id,
                 "author_url": author_url,
                 "novel_type": novel_type,
