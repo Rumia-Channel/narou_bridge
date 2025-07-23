@@ -5,8 +5,12 @@ import importlib
 import configparser
 from datetime import datetime
 
+import crawler.convert_narou as cn
+import crawler.common as cm
+
 #ログを保存
 import logging
+import zipfile
 
 #utilで使うモジュールのインポート
 def init_import(site_dic):
@@ -78,6 +82,14 @@ def create_index(data_path, config, post_path=''):
         f.write('</select>\n')
         f.write('<br>\n')
         f.write('<button onclick="submitPdfData()">送信</button>\n')
+
+        # zipファイル選択ボタン
+        f.write('<br><br>\n')
+        f.write('<label for="zipFile">ZIPファイル選択:</label>\n')
+        f.write('<input type="file" id="zipFile" accept="application/zip">\n')
+        f.write('<br>\n')
+        f.write('<br>\n')
+        f.write('<button onclick="submitZipData()">送信</button>\n')
 
         f.write('<br><br><br>\n')
 
@@ -475,6 +487,77 @@ def pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, 
     site = 'narou'
     logging.info(f'Genelate HTML from PDF: {site}')
     globals()[site].gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, folder_path[site], key_data, data_path, host_name)
+
+#ZIPファイルからテキストファイルへの変換
+def zip_to_text(pdf_path, zip_name, data_path, host_name):
+    # ZIPファイルの読み込み
+    zip_file_path = os.path.join(pdf_path, zip_name)
+    data_json_content = None
+
+    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+        if 'data.json' in zip_ref.namelist():
+            with zip_ref.open('data.json') as f:
+                data_json_content = f.read().decode('utf-8')
+        else:
+            logging.error('data.json not found in the zip file.')
+            return
+
+        json_data = json.loads(data_json_content)
+        sitename = json_data.get("site_name")
+
+        if "images" in json_data and isinstance(json_data["images"], dict):
+            if not json_data["images"]:
+                # imagesが空の場合は何もしない
+                pass
+            else:
+                # imagesに中身がある場合の処理
+                images_dir = os.path.join(data_path, "images")
+                db_json_path = os.path.join(images_dir, "database.json")
+                # 既存のdatabase.jsonを読み込む（なければ空dict）
+                if os.path.exists(db_json_path):
+                    with open(db_json_path, "r", encoding="utf-8") as dbf:
+                        try:
+                            db_data = json.load(dbf)
+                        except Exception:
+                            db_data = {}
+                else:
+                    db_data = {}
+
+                # 画像データを追加・上書き
+                for image_name, image_data in json_data["images"].items():
+                    db_data[image_name] = image_data
+
+                # database.jsonに書き戻す
+                os.makedirs(images_dir, exist_ok=True)
+                with open(db_json_path, "w", encoding="utf-8") as dbf:
+                    json.dump(db_data, dbf, ensure_ascii=False, indent=2)
+                
+                # zip内のimages/フォルダをdata_path/imagesに上書きコピー
+                images_dir_in_zip = f"{sitename}/images/"
+                images_dest_dir = os.path.join(data_path, "images")
+                for member in zip_ref.namelist():
+                    if member.startswith(images_dir_in_zip) and not member.endswith('/'):
+                        # 画像ファイルの相対パス
+                        rel_path = os.path.relpath(member, images_dir_in_zip)
+                        dest_path = os.path.join(images_dest_dir, rel_path)
+                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                        with zip_ref.open(member) as src, open(dest_path, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+        
+        if not os.path.exists(os.path.join(data_path, sitename)):
+            os.makedirs(os.path.join(data_path, sitename))
+        
+        # zip内のsitenameフォルダをdata_path/sitenameに構造を保ったままコピー
+        if sitename:
+            for member in zip_ref.namelist():
+                if member.startswith(f"{sitename}/"):
+                    zip_ref.extract(member, data_path)
+
+    # zipファイルを削除
+    try:
+        os.remove(zip_file_path)
+    except Exception as e:
+        logging.error(f"Failed to remove zip file: {zip_file_path} ({e})")
 
 #リクエストIDの削除
 def cleanup_expired_requests(requests_dict, expiration_time):

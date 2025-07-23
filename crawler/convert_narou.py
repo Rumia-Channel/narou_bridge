@@ -248,6 +248,8 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
     )
 
     #インフォメーションファイルの生成
+    if not os.path.exists(os.path.join(nove_path, 'info')):
+        os.makedirs(os.path.join(nove_path, 'info'))
     info_path = os.path.join(nove_path, 'info', 'index.html')
     with open(info_path, 'w', encoding='utf-8') as f:
         f.write('<!DOCTYPE html>\n')
@@ -308,7 +310,10 @@ def narou_gen(data, nove_path, key_data, data_folder, host_name):
             ep_path = os.path.join(nove_path, 'index.html')
         else:
             ep_path = os.path.join(nove_path, f'{ep["id"]}', 'index.html')
-        
+
+        if not os.path.exists(os.path.dirname(ep_path)):
+            os.makedirs(os.path.dirname(ep_path))
+
         link = host_name + ep_path.replace('index.html', '').replace(data_folder, '').replace('\\', '/')
         with open(ep_path, 'w', encoding='utf-8') as f:
             f.write('<!DOCTYPE html>\n')

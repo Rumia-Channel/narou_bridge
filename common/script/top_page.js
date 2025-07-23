@@ -192,3 +192,32 @@ function submitPdfData() {
   document.getElementById("pdfFile").focus();
   
 }
+
+// ZIP 送信用
+function submitZipData() {
+  var zipFile = document.getElementById("zipFile").files[0];
+
+  if (!zipFile) {
+    alert("ZIPファイルを選択してください。");
+    return;
+  }
+
+  var formData = new FormData();
+  formData.append("zip", zipFile);
+  formData.append("request_id", generateRequestId());
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", POST_URL, true);
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState === 4) {
+      var res = JSON.parse(xhr.responseText);
+      if (xhr.status === 200) showMessage("green", res.message || "ZIP送信成功");
+      else showMessage("red", res.message || "ZIP送信失敗");
+    }
+  };
+  xhr.send(formData);
+
+  // 入力フィールドをクリア
+  document.getElementById("zipFile").value = "";
+  
+}
