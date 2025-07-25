@@ -3,7 +3,7 @@
 
 // WebKit compatibility: Polyfills
 if (!Array.prototype.forEach) {
-  Array.prototype.forEach = function(callback, thisArg) {
+  Array.prototype.forEach = function (callback, thisArg) {
     var T, k;
     if (this == null) {
       throw new TypeError('this is null or not defined');
@@ -30,19 +30,19 @@ if (!Array.prototype.forEach) {
 
 // WebKit compatibility: Set polyfill
 if (typeof Set === 'undefined') {
-  window.Set = function() {
+  window.Set = function () {
     this.data = [];
   };
-  window.Set.prototype.add = function(value) {
+  window.Set.prototype.add = function (value) {
     if (this.data.indexOf(value) === -1) {
       this.data.push(value);
     }
     return this;
   };
-  window.Set.prototype.has = function(value) {
+  window.Set.prototype.has = function (value) {
     return this.data.indexOf(value) !== -1;
   };
-  window.Set.prototype.delete = function(value) {
+  window.Set.prototype.delete = function (value) {
     var index = this.data.indexOf(value);
     if (index !== -1) {
       this.data.splice(index, 1);
@@ -50,11 +50,11 @@ if (typeof Set === 'undefined') {
     }
     return false;
   };
-  window.Set.prototype.clear = function() {
+  window.Set.prototype.clear = function () {
     this.data = [];
   };
   Object.defineProperty(window.Set.prototype, 'size', {
-    get: function() {
+    get: function () {
       return this.data.length;
     }
   });
@@ -254,7 +254,7 @@ function updateAuthorDropdownOptions() {
   if (!dd) return;
   while (dd.options.length > 1) dd.remove(1);
   var map = {};
-  
+
   // WebKit compatibility: avoid Object.values
   var keys = Object.keys(tableData);
   for (var i = 0; i < keys.length; i++) {
@@ -263,11 +263,11 @@ function updateAuthorDropdownOptions() {
     var time = new Date(it.update_date).getTime();
     if (!map[id] || time > map[id].time) map[id] = { name: it.author, time: time };
   }
-  
-  var sortedIds = Object.keys(map).sort(function(a, b) {
+
+  var sortedIds = Object.keys(map).sort(function (a, b) {
     return map[a].name.localeCompare(map[b].name);
   });
-  
+
   for (var i = 0; i < sortedIds.length; i++) {
     var id = sortedIds[i];
     var o = document.createElement('option');
@@ -531,7 +531,7 @@ function renderTable() {
 
   // 2) ソート
   if (sortInfo.column) {
-    entries.sort(function(a, b) {
+    entries.sort(function (a, b) {
       var entryA = a[1];
       var entryB = b[1];
       var A = entryA[sortInfo.column] || '';
@@ -574,10 +574,12 @@ function renderTable() {
     cb.classList.add('row-checkbox');
     cb.dataset.key = key;
     cb.checked = selectedRows.has(key);
-    cb.addEventListener('change', function () {
-      this.checked ? selectedRows.add(key) : selectedRows.delete(key);
-      updateSelectedCount();
-    });
+    cb.addEventListener('change', (function (k) {
+      return function () {
+        this.checked ? selectedRows.add(k) : selectedRows.delete(k);
+        updateSelectedCount();
+      };
+    })(key));
     tdChk.appendChild(cb);
     tr.appendChild(tdChk);
 
@@ -619,7 +621,7 @@ function renderTable() {
             a.href = it.author_url;
             a.target = '_blank';
             a.textContent = it.author;
-            a.addEventListener('click', function(e) {
+            a.addEventListener('click', function (e) {
               if (e.ctrlKey) handleAuthorFiltering(it.author, it.author_id || it.author, e);
             });
             td.appendChild(a);
@@ -637,8 +639,8 @@ function renderTable() {
                 s.classList.add('tag-item');
                 s.style.cursor = 'pointer';
                 // Use IIFE to capture the tag value properly
-                s.addEventListener('click', (function(tagValue) {
-                  return function() {
+                s.addEventListener('click', (function (tagValue) {
+                  return function () {
                     tagFilterClick(tagValue);
                   };
                 })(t));
@@ -731,17 +733,20 @@ function updateSelectedCount() {
 
 function showCopyPopup(titles) {
   var overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';
+  overlay.className = 'copy-popup-overlay';
+
   var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;padding:1em;border-radius:5px;max-width:80%;max-height:80%;overflow:auto;';
-  
-  // WebKit compatibility: avoid template literals
-  var content = '<strong>リンク先をコピーしました</strong><br><br>' + titles.join('<br>') + '<br><br><button id="close-copy-popup">閉じる</button>';
+  box.className = 'copy-popup-box';
+
+  var content = '<strong>リンク先をコピーしました</strong><br><br>' +
+    titles.join('<br>') +
+    '<br><br><button id="close-copy-popup" class="copy-popup-close">閉じる</button>';
   box.innerHTML = content;
-  
+
   overlay.appendChild(box);
   document.body.appendChild(overlay);
-  document.getElementById('close-copy-popup').addEventListener('click', function() {
+
+  document.getElementById('close-copy-popup').addEventListener('click', function () {
     document.body.removeChild(overlay);
   });
 }
@@ -749,26 +754,20 @@ function showCopyPopup(titles) {
 function copySelected() {
   var links = [];
   var titles = [];
-  var checkboxes = document.querySelectorAll('.row-checkbox');
-  
-  // WebKit compatibility: use for loop instead of forEach
-  for (var i = 0; i < checkboxes.length; i++) {
-    var cb = checkboxes[i];
-    if (cb.checked) {
-      var row = cb.closest('tr');
-      var a = row.querySelector('.td-title a');
-      if (a) { 
-        links.push(a.href); 
-        titles.push(a.textContent); 
-      }
+
+  selectedRows.forEach(function (key) {
+    var item = tableData[key];
+    if (item) {
+      links.push('./' + key + '/');
+      titles.push(item.title);
     }
-  }
-  
+  });
+
   // WebKit compatibility: check if clipboard API is available
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(links.join('\n'))
-      .then(function() { showCopyPopup(titles); })
-      .catch(function(err) { alert('コピーに失敗しました: ' + err); });
+      .then(function () { showCopyPopup(titles); })
+      .catch(function (err) { alert('コピーに失敗しました: ' + err); });
   } else {
     // Fallback for older browsers
     var textarea = document.createElement('textarea');
@@ -840,7 +839,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* --------------------------------------------------
    キーボードショートカット
 -------------------------------------------------- */
-document.addEventListener('keydown', function(event) {
+document.addEventListener('keydown', function (event) {
   if (event.key === 'Escape') {
     event.preventDefault();
     selectedRows.clear();
