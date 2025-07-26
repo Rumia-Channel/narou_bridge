@@ -570,10 +570,23 @@ def dl_series(series_id, folder_path, key_data, update):
             ep_update = False
             if update and os.path.isfile(raw_path):
                 with open(raw_path, 'r', encoding='utf-8') as f:
-                    old_eps = json.load(f).get('episodes', {})
-                # ここで old_eps を使い、entry['id'] の更新日を比較して ep_update を True に設定
-                # （省略）
-
+                    old_data = json.load(f)
+                old_eps = old_data.get('episodes', {})
+                # entry['id']で一致するエピソードを取得
+                old_episode = old_eps.get(str(ep_id), {})
+                # 更新日比較
+                old_update = safe_fromiso(old_episode.get('updateDate')) if old_episode else None
+                new_update = safe_fromiso(entry.get('updateDate')) if entry.get('updateDate') else None
+                if old_update == new_update and old_update is not None:
+                    ep_update = True
+                    # 差分データをそのまま利用
+                    introduction = old_episode.get('introduction', '')
+                    postscript   = old_episode.get('postscript', '')
+                    text         = old_episode.get('text', '')
+                    createdate   = old_episode.get('createDate', '')
+                    updatedate   = old_episode.get('updateDate', '')
+                    tags         = old_episode.get('tags', [])
+                    text_count   = old_episode.get('textCount', 0)
             if ep_update:
                 # 差分データから読み込む処理
                 # introduction, postscript, text, createdate, updatedate, tags, text_count を設定
