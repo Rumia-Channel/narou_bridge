@@ -32,6 +32,31 @@ import crawler.convert_narou as cn
 mv = 5
 
 
+def format_tags(tags):
+    """
+    タグ文字列を「#」で分割し、各要素の先頭#を除去して、きれいなタグリストにする
+    """
+    result = []
+    seen = set()
+    for t in tags:
+        if not t:
+            continue
+        # 辞書型対応
+        if isinstance(t, dict):
+            t = t.get('tag', '')
+        # #で分割
+        for tag in t.split('#'):
+            tag = tag.strip()
+            if not tag:
+                continue
+            if tag.startswith('#'):
+                tag = tag[1:]
+            if tag and tag not in seen:
+                result.append(tag)
+                seen.add(tag)
+    return result
+
+
 def suppress_errors(default=None):
     """
     関数実行中に例外が起きたらログだけ残して握りつぶし、
@@ -508,7 +533,7 @@ def dl_series(series_id, folder_path, key_data, update):
     series_author_id = s_detail.get('userId')
     series_episodes = s_detail.get('total')
     series_chara = s_detail.get('publishedTotalCharacterCount')
-    series_tags = list(s_detail.get('tags'))
+    series_tags = format_tags(list(s_detail.get('tags')))
     series_caption_data = cm.find_key_recursively(s_detail, 'caption')
     series_create_day = safe_fromiso(s_detail.get('createDate'))
     series_update_day = safe_fromiso(s_detail.get('updateDate'))
@@ -585,7 +610,7 @@ def dl_series(series_id, folder_path, key_data, update):
                     text         = old_episode.get('text', '')
                     createdate   = old_episode.get('createDate', '')
                     updatedate   = old_episode.get('updateDate', '')
-                    tags         = old_episode.get('tags', [])
+                    tags         = format_tags(old_episode.get('tags', []))
                     text_count   = old_episode.get('textCount', 0)
             if ep_update:
                 # 差分データから読み込む処理
@@ -629,8 +654,8 @@ def dl_series(series_id, folder_path, key_data, update):
                                 .get('characterCount', 0))
 
                 # タグを更新
-                tags = [t.get('tag', '') for t in json_data['body']['tags']['tags']]
-                all_tags = list(dict.fromkeys(all_tags + tags))
+                tags = format_tags([t.get('tag', '') for t in json_data['body']['tags']['tags']])
+                all_tags = format_tags(list(dict.fromkeys(all_tags + tags)))
 
             # 重複フォルダがあれば削除
             dup = os.path.join(folder_path, f'n{ep_id}')
@@ -718,7 +743,7 @@ def dl_novel(json_data, novel_id, folder_path, key_data):
         novel_postscript = format_survey(novel_postscript)
     else:
         novel_postscript = ''
-    novel_tags = [tag.get('tag', '') for tag in novel_data.get('tags', {}).get('tags', [])]
+    novel_tags = format_tags([tag.get('tag', '') for tag in novel_data.get('tags', {}).get('tags', [])])
     novel_create_day = safe_fromiso(novel_data.get('createDate'))
     novel_update_day = safe_fromiso(novel_data.get('uploadDate'))
     logging.info(f"Novel ID: {novel_id}")
@@ -875,7 +900,7 @@ def dl_art(art_id, folder_path, key_data):
 
                 shutil.rmtree(temp_path)
         
-    art_tags = [tag.get('tag', '') for tag in a_detail.get('tags', {}).get('tags', [])]
+    art_tags = format_tags([tag.get('tag', '') for tag in a_detail.get('tags', {}).get('tags', [])])
     logging.info(f"Art Title: {art_title}")
     logging.info(f"Art Author: {art_author}")
     logging.info(f"Art Author ID: {art_author_id}")
@@ -974,7 +999,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
     ).group(1)
     c_caption_data = c_detail['extraData']['meta']['description']
     c_caption    = c_caption_data.replace('<br />','\n').replace('jump.php?','') if c_caption_data else ''
-    comic_tag    = list(c_detail.get('tagTranslation', {}).keys())
+    comic_tag    = format_tags(list(c_detail.get('tagTranslation', {}).keys()))
     all_tags     = comic_tag
 
     # 作成・更新日
@@ -1037,7 +1062,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
                 postscript   = old.get('postscript', '')
                 createdate   = old.get('createDate', '')
                 updatedate   = old.get('updateDate', '')
-                tags         = old.get('tags', [])
+                tags         = format_tags(old.get('tags', []))
                 text_count   = 0
             else:
                 # BAN対策
@@ -1081,7 +1106,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
                 introduction = body.get('description','').replace('<br />','\n')
                 poll_data    = cm.find_key_recursively(body, 'pollData')
                 postscript   = format_survey(poll_data) if poll_data else ''
-                tags         = [t.get('tag','') for t in body.get('tags',{}).get('tags',[])]
+                tags         = format_tags([t.get('tag','') for t in body.get('tags',{}).get('tags',[])])
 
                 # 日付
                 createdate = str(safe_fromiso(body.get('createDate'))
@@ -1091,7 +1116,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
                 text_count = 0
 
                 # タグ統合
-                all_tags = list(dict.fromkeys(all_tags + tags))
+                all_tags = format_tags(list(dict.fromkeys(all_tags + tags)))
 
             # 重複アート削除
             dup = os.path.join(folder_path, f'a{work_id}')
@@ -1822,8 +1847,41 @@ def convert(folder_path, key_data, data_path, host_name):
     for q in folder_names:
         #if os.path.exists(os.path.join(folder_path, q, 'raw', 'raw.json')) and os.path.exists(os.path.join(folder_path, q, 'info', 'index.html')):
         if os.path.exists(os.path.join(folder_path, q, 'raw', 'raw.json')):
-            with open(os.path.join(folder_path, q, 'raw', 'raw.json'), 'r', encoding='utf-8') as f:
+            raw_json_path = os.path.join(folder_path, q, 'raw', 'raw.json')
+            with open(raw_json_path, 'r', encoding='utf-8') as f:
                 raw_json_data = json.load(f)
+            
+            # タグをフォーマット
+            tags_updated = False
+            if 'tags' in raw_json_data:
+                old_tags = raw_json_data['tags']
+                new_tags = format_tags(old_tags)
+                if old_tags != new_tags:
+                    raw_json_data['tags'] = new_tags
+                    tags_updated = True
+            
+            if 'all_tags' in raw_json_data:
+                old_all_tags = raw_json_data['all_tags']
+                new_all_tags = format_tags(old_all_tags)
+                if old_all_tags != new_all_tags:
+                    raw_json_data['all_tags'] = new_all_tags
+                    tags_updated = True
+            
+            # エピソードのタグもフォーマット
+            if 'episodes' in raw_json_data:
+                for episode_key, episode_data in raw_json_data['episodes'].items():
+                    if 'tags' in episode_data:
+                        old_episode_tags = episode_data['tags']
+                        new_episode_tags = format_tags(old_episode_tags)
+                        if old_episode_tags != new_episode_tags:
+                            raw_json_data['episodes'][episode_key]['tags'] = new_episode_tags
+                            tags_updated = True
+            
+            # タグが更新された場合、raw.jsonを上書き保存
+            if tags_updated:
+                with open(raw_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(raw_json_data, f, ensure_ascii=False, indent=4)
+            
             cn.narou_gen(raw_json_data, os.path.join(folder_path, q), key_data, data_folder, host)
 
     cm.gen_site_index(folder_path, key_data, 'Pixiv')
