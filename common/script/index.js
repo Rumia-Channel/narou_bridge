@@ -758,7 +758,7 @@ function copySelected() {
   selectedRows.forEach(function (key) {
     var item = tableData[key];
     if (item) {
-      links.push('./' + key + '/');
+      links.push(window.location.origin + basePath + key + '/');
       titles.push(item.title);
     }
   });
