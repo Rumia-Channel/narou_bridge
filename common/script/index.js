@@ -617,12 +617,14 @@ function renderTable() {
             break;
           }
           case 'author': {
-            var a = document.createElement('a');
+            const authorName = it.author;
+            const authorId = it.author_id || it.author;
+            const a = document.createElement('a');
             a.href = it.author_url;
             a.target = '_blank';
-            a.textContent = it.author;
-            a.addEventListener('click', function (e) {
-              if (e.ctrlKey) handleAuthorFiltering(it.author, it.author_id || it.author, e);
+            a.textContent = authorName;
+            a.addEventListener('click', (e) => {
+              if (e.ctrlKey) handleAuthorFiltering(authorName, authorId, e);
             });
             td.appendChild(a);
             break;
