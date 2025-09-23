@@ -28,6 +28,8 @@ from tqdm import tqdm
 import crawler.common as cm
 import crawler.convert_narou as cn
 
+import tempfile
+
 #ファイルのバージョン
 mv = 5
 
@@ -35,6 +37,44 @@ def _hash_ids(ids):
     import hashlib
     joined = ",".join(sorted(map(str, ids or [])))
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+# --- per-user illust snapshot helpers ---------------------------------
+def _snapshot_dir(folder_path):
+    p = os.path.join(folder_path, "snapshots", "illust_ids")
+    os.makedirs(p, exist_ok=True)
+    return p
+
+def _snapshot_path(folder_path, user_id):
+    return os.path.join(_snapshot_dir(folder_path), f"{user_id}.json")
+
+def _load_illust_snapshot(folder_path, user_id, fallback_list):
+    """ユーザー別スナップショットを読み込む。なければ user.json の値（fallback）を返す。"""
+    path = _snapshot_path(folder_path, user_id)
+    try:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f) or []
+    except Exception:
+        logging.exception(f"[snapshot] load failed: {path}")
+    return fallback_list or []
+
+def _save_illust_snapshot(folder_path, user_id, ids_list):
+    """ユーザー別スナップショットを安全に保存（アトミック）"""
+    path = _snapshot_path(folder_path, user_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmpfd, tmppath = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp_", suffix=".json")
+    try:
+        with os.fdopen(tmpfd, "w", encoding="utf-8") as f:
+            json.dump(list(map(str, sorted(set(map(int, ids_list))))), f, ensure_ascii=False)
+        os.replace(tmppath, path)   # POSIXならアトミック
+    except Exception:
+        logging.exception(f"[snapshot] save failed: {path}")
+        try:
+            if os.path.exists(tmppath):
+                os.remove(tmppath)
+        except Exception:
+            pass
+
 
 
 
@@ -112,8 +152,20 @@ def init(cookie_path, data_path, is_login, interval):
             )
             page = context.new_page()
             context.add_cookies(cookie_list)
-            page.goto("https://www.pixiv.net/dashboard", timeout=15000)
-            if page.url.startswith("https://www.pixiv.net/dashboard"):
+
+            # ★ダッシュボード遷移でなく自己ステータスの HTTP 200 を根拠に判定
+            page.goto("https://www.pixiv.net/", timeout=15000)
+            status_code = page.evaluate("""
+                async () => {
+                    try {
+                        const r = await fetch("https://www.pixiv.net/ajax/user/self/status", {credentials: "include"});
+                        return r.status;
+                    } catch (e) {
+                        return 0;
+                    }
+                }
+            """)
+            if status_code == 200:
                 logging.info("既存クッキーで認証済みと判定し、ログインを省略します")
                 context.close()
                 browser.close()
@@ -164,20 +216,43 @@ def init(cookie_path, data_path, is_login, interval):
         def wait_for_redirects(page, ignore_2fa=False, timeout=60):
             deadline = time.time() + timeout
             while time.time() < deadline:
-                page.wait_for_load_state("load", timeout=1000)
+                try:
+                    page.wait_for_load_state("load", timeout=1000)
+                except TimeoutError:
+                    pass
+
                 url = page.url
                 parsed = urlparse(url)
                 host, path = parsed.netloc, parsed.path
 
                 # --- 2FA ページ検出 ---
                 if host == "accounts.pixiv.net" and "two-factor-authentication" in path:
-                    if ignore_2fa:            # ２回目呼び出し時は無視して待機を続ける
+                    if ignore_2fa:
                         time.sleep(0.5)
                         continue
                     return "2fa"
 
-                # --- 成功判定 (www.pixiv.net ドメイン) ---
-                if host == "www.pixiv.net" and not path.startswith("/login"):
+                # --- セキュリティリマインダ（2FA後に来がち） ---
+                if host == "accounts.pixiv.net" and "security-setting/reminder" in path:
+                    try:
+                        btn = (
+                            page.query_selector('button[value="confirmed"]')
+                            or page.query_selector('button:has-text("確認した")')
+                            or page.query_selector('button:has-text("確認しました")')
+                            or page.query_selector('[data-variant="Primary"][type="button"]')
+                        )
+                        if btn:
+                            btn.click()
+                            logging.info("Reminder page detected → 『確認した』ボタンをクリックしました")
+                            time.sleep(1)
+                            continue
+                    except Exception as e:
+                        logging.warning(f"Reminder page handling failed: {e}")
+                        time.sleep(0.5)
+                        continue
+
+                # --- 成功判定（/en などパス不問で本体到達ならOK） ---
+                if host in ("www.pixiv.net", "m.pixiv.net"):
                     return "success"
 
                 # --- まだログインフォームの場合 ---
@@ -185,7 +260,9 @@ def init(cookie_path, data_path, is_login, interval):
                     time.sleep(0.5)
                     continue
 
-                return "failure"             # 想定外 URL
+                # 想定外URLでも少し様子を見る
+                time.sleep(0.5)
+
             return "timeout"
 
 
@@ -240,12 +317,29 @@ def init(cookie_path, data_path, is_login, interval):
         pixiv_cookie, ua = cm.load_cookies_and_ua(cookie_path)
 
     if is_login:
+        # cookie の有無とログイン状態を安全に確認（リダイレクト追従で判定しない）
+        need_login = not os.path.isfile(cookie_path)
 
-        # cookieの有無とログイン状態を確認
-        if not os.path.isfile(cookie_path) or bool(requests.get('https://www.pixiv.net/dashboard', cookies=pixiv_cookie, headers={'User-Agent': str(ua)}).history):
+        if not need_login:
+            try:
+                resp = requests.get(
+                    "https://www.pixiv.net/ajax/user/self/status",
+                    cookies=pixiv_cookie,
+                    headers={"User-Agent": str(ua)},
+                    timeout=10,
+                    allow_redirects=False,  # ★重要: リダイレクトを追わない
+                )
+                # 200 = ログイン継続中／それ以外は未ログイン扱い
+                need_login = (resp.status_code != 200)
+            except requests.RequestException as e:
+                logging.warning(f"login check failed: {e}")
+                need_login = True
+
+        if need_login:
             with sync_playwright() as playwright:
-                login(playwright)      
+                login(playwright)
 
+        # 最終的な cookie/UA を再読込
         pixiv_cookie, ua = cm.load_cookies_and_ua(cookie_path)
 
     else:
@@ -599,12 +693,11 @@ def dl_series(series_id, folder_path, key_data, update):
                 continue
 
             ep_id = entry['id']
-            ep_folder = os.path.join(series_path, ep_id)
+            ep_folder = os.path.join(series_path, str(ep_id))
             os.makedirs(ep_folder, exist_ok=True)
 
             # 更新判定
             ep_update = False
-            title_str = ""  # ← ここで初期化しておく
             if update and os.path.isfile(raw_path):
                 with open(raw_path, 'r', encoding='utf-8') as f:
                     old_data = json.load(f)
@@ -625,9 +718,7 @@ def dl_series(series_id, folder_path, key_data, update):
                     tags         = format_tags(old_episode.get('tags', []))
                     text_count   = old_episode.get('textCount', 0)
             if ep_update:
-                # 差分データから読み込む処理
-                # introduction, postscript, text, createdate, updatedate, tags, text_count を設定
-                # （省略）
+                # 差分データから読み込む
                 pass
             else:
                 # BAN対策のインターバル
@@ -727,7 +818,6 @@ def dl_series(series_id, folder_path, key_data, update):
     #小説データの差分を保存
     cm.save_raw_diff(raw_path, series_path, novel)
         
-
     #生データの書き出し
     with open(raw_path, 'w', encoding='utf-8') as f:
         json.dump(novel, f, ensure_ascii=False, indent=4)
@@ -925,8 +1015,8 @@ def dl_art(art_id, folder_path, key_data):
     raw_path = os.path.join(art_path, 'raw', 'raw.json')
     #挿絵リンクへの置き換え
     art_text = format_image(art_id, art_id, False, False, art_text, a_toc.json(), folder_path)
-    #表紙のダウンロード
-    if not os.path.isfile(os.path.join(art_path, f'cover{os.path.splitext(a_detail.get('urls').get('original'))[1]}')):
+    #表紙のダウンロード（★クォート修正）
+    if not os.path.isfile(os.path.join(art_path, f"cover{os.path.splitext(a_detail.get('urls').get('original'))[1]}")):
         get_cover(a_detail.get('urls').get('original'), art_path)
     else:
         logging.info(f"Cover image already exists: {a_detail.get('urls').get('original')}")
@@ -1017,7 +1107,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
     # 作成・更新日
     c_create_day = c_update_day = None
     for j in c_detail['illustSeries']:
-        if j['id'] == comic_id:
+        if j['id'] == int(comic_id):  # ← 型を合わせる
             c_create_day = safe_fromiso(j['createDate'])
             c_update_day = safe_fromiso(j['updateDate'])
             break
@@ -1051,12 +1141,21 @@ def dl_comic(comic_id, folder_path, key_data, update):
     ):
         try:
             # フォルダ作成
-            ep_folder = os.path.join(comic_path, work_id)
+            ep_folder = os.path.join(comic_path, str(work_id))
             os.makedirs(ep_folder, exist_ok=True)
 
             # 更新判定
             ep_update = False
-            title_str = ""  # ← ここで初期化しておく
+            # 分岐前に安全に初期化
+            episode_title = ""
+            introduction = ""
+            text = ""
+            postscript = ""
+            createdate = ""
+            updatedate = ""
+            tags = []
+            text_count = 0
+
             if is_update:
                 old = old_episode_update_dates.get(str(idx), {})
                 if old:
@@ -1070,13 +1169,14 @@ def dl_comic(comic_id, folder_path, key_data, update):
 
             if ep_update:
                 # 差分から読み込み
-                introduction = old.get('introduction', '')
-                text         = old.get('text', '')
-                postscript   = old.get('postscript', '')
-                createdate   = old.get('createDate', '')
-                updatedate   = old.get('updateDate', '')
-                tags         = format_tags(old.get('tags', []))
-                text_count   = 0
+                episode_title = old.get('title', '')
+                introduction  = old.get('introduction', '')
+                text          = old.get('text', '')
+                postscript    = old.get('postscript', '')
+                createdate    = old.get('createDate', '')
+                updatedate    = old.get('updateDate', '')
+                tags          = format_tags(old.get('tags', []))
+                text_count    = 0
             else:
                 # BAN対策
                 if g_count >= 10:
@@ -1092,6 +1192,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
                     logging.error(f"Failed to download episode {work_id}")
                     continue
                 body = episode_data['body']
+                episode_title = body.get('title', '')
 
                 # ページ一覧→テキスト
                 pages = cm.get_with_cookie(
@@ -1140,7 +1241,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
             episode[idx] = {
                 'id': work_id,
                 'chapter': None,
-                'title': body.get('title',''),
+                'title': episode_title,
                 'textCount': text_count,
                 'tags': tags,
                 'introduction': unquote(introduction),
@@ -1189,53 +1290,8 @@ def dl_comic(comic_id, folder_path, key_data, update):
         json.dump(novel, f, ensure_ascii=False, indent=4)
     cn.narou_gen(novel, comic_path, key_data, data_folder, host)
     cm.gen_site_index(folder_path, key_data, 'Pixiv')
-
-
-
-
-    # 作成日で並び替え
-    sorted_episode = dict(sorted(episode.items(), key=lambda x: x[1]['createDate']))
-
-    # インデックスを再設定
-    episode = {i + 1: entry for i, (key, entry) in enumerate(sorted_episode.items())}
-
-    novel = {
-        'version': mv,
-        'get_date': str(datetime.now().astimezone(timezone(timedelta(hours=9)))),
-        'title': c_title,
-        'id': comic_id,
-        'nid': 'c'+str(comic_id),
-        'url': f"https://www.pixiv.net/user/{c_author_id}/series/{comic_id}",
-        'author': c_author,
-        'author_id': c_author_id,
-        'author_url': f"https://www.pixiv.net/users/{c_author_id}",
-        'caption': c_caption,
-        'total_episodes': len(episode),
-        'all_episodes': len(episode),
-        'total_characters': 0,
-        'all_characters': 0,
-        'type': 'comic',
-        'serialization': '連載中',
-        'tags': comic_tag,
-        'all_tags': all_tags,
-        'createDate': str(c_create_day.astimezone(timezone(timedelta(hours=9)))),
-        'updateDate': str(c_update_day.astimezone(timezone(timedelta(hours=9)))),
-        'episodes': episode
-    }
-
-    #小説データの差分を保存
-    cm.save_raw_diff(raw_path, comic_path, novel)
-
-    #生データの書き出し
-    with open(raw_path, 'w', encoding='utf-8') as f:
-        json.dump(novel, f, ensure_ascii=False, indent=4)
-    
-    cn.narou_gen(novel, comic_path, key_data, data_folder, host)
     print("")
-    #仕上げ処理(indexファイルの更新)
-    cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
-#ユーザーページからのダウンロード
 # ユーザーページからのダウンロード（修正版）
 @suppress_errors()
 def dl_user(user_id, folder_path, key_data, update):
@@ -1264,8 +1320,8 @@ def dl_user(user_id, folder_path, key_data, update):
     in_novel_series   = []
     in_manga_series   = []
     user_novels = []
-    user_mangas = []   # ← 単発漫画（artworks）用
-    user_illusts = []  # ← 単発イラスト用（今回：新規IDのみDL対象）
+    user_mangas = []   # 単発漫画（artworks）
+    user_illusts = []  # 単発イラスト
 
     logging.info(f"User Name: {user_name}")
 
@@ -1283,13 +1339,13 @@ def dl_user(user_id, folder_path, key_data, update):
         data[user_id] = {}
         data[user_id]["novel"]  = "enable"
         data[user_id]["comic"]  = "enable"
-        data[user_id]["illust_ids_snapshot"] = []  # ★ イラスト用スナップショット
+        data[user_id]["illust_ids_snapshot"] = []  # ★ イラスト用スナップショット（互換用）
     else:
         data[user_id].setdefault("novel", "enable")
         data[user_id].setdefault("comic", "enable")
         data[user_id].setdefault("illust_ids_snapshot", [])
 
-    # 即時保存（途中で例外が出ても整合が保たれるように）
+    # 即時保存
     with open(user_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
@@ -1311,9 +1367,7 @@ def dl_user(user_id, folder_path, key_data, update):
     if user_all_illusts:
         user_illusts = list(user_all_illusts.keys())
 
-    # ─────────────────────────────────────────────
     # シリーズ重複（短編との重複）を除去：小説シリーズ
-    # ─────────────────────────────────────────────
     for i in user_novel_series:
         time.sleep(interval_sec)
         toc = cm.get_with_cookie(
@@ -1336,9 +1390,7 @@ def dl_user(user_id, folder_path, key_data, update):
             time.sleep(interval_sec)
             g_count += 1
 
-    # ─────────────────────────────────────────────
     # シリーズ重複（短編との重複）を除去：漫画シリーズ
-    # ─────────────────────────────────────────────
     for i in user_manga_series:
         # イラストリンクの取得
         cache = cm.find_key_recursively(json.loads(cm.get_with_cookie(
@@ -1377,7 +1429,7 @@ def dl_user(user_id, folder_path, key_data, update):
     logging.info(f"User Illusts: {len(user_illusts)}")
 
     # ─────────────────────────────────────────────
-    # 小説：シリーズ／短編（従来通り）
+    # 小説：シリーズ／短編
     # ─────────────────────────────────────────────
     if data[user_id]["novel"] == "enable":
         logging.info("Novel Series Download Start")
@@ -1456,7 +1508,7 @@ def dl_user(user_id, folder_path, key_data, update):
         logging.info("Novel and Novel Series Download Skipped")
 
     # ─────────────────────────────────────────────
-    # 漫画シリーズ：従来通り更新判定で処理
+    # 漫画シリーズ／単発漫画／イラスト（スナップショット対応）
     # ─────────────────────────────────────────────
     if data[user_id]["comic"] == "enable":
         logging.info("Comic Series Download Start")
@@ -1506,9 +1558,7 @@ def dl_user(user_id, folder_path, key_data, update):
                 logging.error(f"[dl_user] series comic {comic_id} の処理中に例外: {e}", exc_info=True)
                 continue
 
-        # ─────────────────────────────────────────
-        # 単発漫画（artworks）：従来の更新日比較のまま
-        # ─────────────────────────────────────────
+        # 単発漫画（artworks）
         logging.info("Standalone Manga (artworks) Download Start")
         for art_id in user_mangas:
             try:
@@ -1545,16 +1595,18 @@ def dl_user(user_id, folder_path, key_data, update):
                 logging.error(f"[dl_user] art {art_id} の処理中に例外: {e}", exc_info=True)
                 continue
 
-        # ─────────────────────────────────────────
-        # イラスト：★新規IDのみDL★
-        # ─────────────────────────────────────────
+        # イラスト：★新規IDのみDL★（per-userスナップショット）
         logging.info("Illust Download Start (NEW IDs only)")
-        prev_snapshot = set(map(int, data[user_id].get("illust_ids_snapshot", [])))
+
+        # user.json を fallback にしつつ、あれば per-user スナップショットを優先
+        prev_snapshot_list = _load_illust_snapshot(folder_path, user_id, data[user_id].get("illust_ids_snapshot", []))
+        prev_snapshot = set(map(int, prev_snapshot_list))
         curr_snapshot = set(map(int, user_illusts))
+
         if update:
             new_illust_ids = list(map(str, sorted(curr_snapshot - prev_snapshot)))
         else:
-            # 初回または強制全取得時は全部取得
+            # 初回または強制時は全取得
             new_illust_ids = list(map(str, sorted(curr_snapshot)))
 
         logging.info(f"User {user_id} illusts total={len(user_illusts)} / NEW={len(new_illust_ids)}")
@@ -1572,11 +1624,13 @@ def dl_user(user_id, folder_path, key_data, update):
                 logging.error(f"[dl_user] illust {art_id} の処理中に例外: {e}", exc_info=True)
                 continue
 
-        # スナップショット更新（常に最新に）
-        data[user_id]["illust_ids_snapshot"] = list(map(str, sorted(curr_snapshot)))
+        # スナップショットは per-user ファイルへ保存（user.json には書かない）
+        _save_illust_snapshot(folder_path, user_id, curr_snapshot)
+
+        # ついでに user.json は軽量メタだけ更新（任意）
+        data[user_id]["illust_ids_snapshot_hash"] = _hash_ids(curr_snapshot)
         with open(user_json, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
-
 
 #ダウンロード処理
 @suppress_errors()
@@ -1763,7 +1817,7 @@ def update(folder_path, key_data, data_path, host_name):
             elif index_data.get("serialization") in ["連載中", "完結"] and index_data.get("type") == "comic":
                 comic_id = folder_name.lstrip('c')
                 resp = cm.get_with_cookie(
-                    f'https://www.pixiv.net/user/{index_data.get('author_id')}/series/{comic_id}',
+                    f'https://www.pixiv.net/user/{index_data.get("author_id")}/series/{comic_id}',
                     pixiv_cookie, pixiv_header
                 )
                 if resp.status_code == 404:
