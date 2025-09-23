@@ -154,18 +154,8 @@ def init(cookie_path, data_path, is_login, interval):
             context.add_cookies(cookie_list)
 
             # ★ダッシュボード遷移でなく自己ステータスの HTTP 200 を根拠に判定
-            page.goto("https://www.pixiv.net/", timeout=15000)
-            status_code = page.evaluate("""
-                async () => {
-                    try {
-                        const r = await fetch("https://www.pixiv.net/ajax/user/self/status", {credentials: "include"});
-                        return r.status;
-                    } catch (e) {
-                        return 0;
-                    }
-                }
-            """)
-            if status_code == 200:
+            page.goto("https://www.pixiv.net/dashboard", timeout=15000)
+            if page.url.startswith("https://www.pixiv.net/dashboard"):
                 logging.info("既存クッキーで認証済みと判定し、ログインを省略します")
                 context.close(); browser.close()
                 return
@@ -297,7 +287,9 @@ def init(cookie_path, data_path, is_login, interval):
         if status == "success":
             logging.info(f"Login successful. Final URL: {page.url}")
             cookies = context.cookies()
-            cm.save_cookies_and_ua(cookie_path, cookies, user_agent)
+            # ★ Playwrightのリスト→requests用のdictへ正規化して保存
+            cookies_dict = {c["name"]: c["value"] for c in cookies if c.get("name") and c.get("value")}
+            cm.save_cookies_and_ua(cookie_path, cookies_dict, user_agent)
         else:
             logging.error(f"Login failed (status={status}). URL: {page.url}")
 
@@ -317,15 +309,22 @@ def init(cookie_path, data_path, is_login, interval):
 
         if not need_login:
             try:
+                # ★ダッシュボードで判定：200=ログイン継続、リダイレクト=未ログイン
                 resp = requests.get(
-                    "https://www.pixiv.net/ajax/user/self/status",
+                    "https://www.pixiv.net/dashboard",
                     cookies=pixiv_cookie,
                     headers={"User-Agent": str(ua)},
                     timeout=10,
-                    allow_redirects=False,  # ★重要: リダイレクトを追わない
+                    allow_redirects=False,  # 追従しない＝ループ回避
                 )
-                # 200 = ログイン継続中／それ以外は未ログイン扱い
-                need_login = (resp.status_code != 200)
+                if resp.status_code == 200:
+                    need_login = False
+                elif 300 <= resp.status_code < 400:
+                    # /login などへリダイレクトされる＝未ログイン扱い
+                    need_login = True
+                else:
+                    # それ以外の異常系も未ログイン扱いに寄せる
+                    need_login = True
             except requests.RequestException as e:
                 logging.warning(f"login check failed: {e}")
                 need_login = True
