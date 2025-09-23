@@ -599,6 +599,7 @@ def dl_series(series_id, folder_path, key_data, update):
 
             # 更新判定
             ep_update = False
+            title_str = ""  # ← ここで初期化しておく
             if update and os.path.isfile(raw_path):
                 with open(raw_path, 'r', encoding='utf-8') as f:
                     old_data = json.load(f)
@@ -1050,6 +1051,7 @@ def dl_comic(comic_id, folder_path, key_data, update):
 
             # 更新判定
             ep_update = False
+            title_str = ""  # ← ここで初期化しておく
             if is_update:
                 old = old_episode_update_dates.get(str(idx), {})
                 if old:
