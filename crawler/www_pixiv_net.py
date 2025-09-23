@@ -1572,9 +1572,6 @@ def dl_user(user_id, folder_path, key_data, update):
         with open(user_json, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
 
-    else:
-        logging.info("Comic and Comic Series Download Skipped")
-
 
 #ダウンロード処理
 @suppress_errors()
