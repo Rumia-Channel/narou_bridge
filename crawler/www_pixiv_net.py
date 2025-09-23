@@ -1557,60 +1557,32 @@ def dl_user(user_id, folder_path, key_data, update):
                 logging.error(f"[dl_user] series comic {comic_id} の処理中に例外: {e}", exc_info=True)
                 continue
 
-        # 単発漫画（artworks）
-        logging.info("Standalone Manga (artworks) Download Start")
-        for art_id in user_mangas:
-            try:
-                raw_path = os.path.join(folder_path, f"a{art_id}", "raw", "raw.json")
-                if update and os.path.isfile(raw_path):
-                    detail = return_comic_content_json(art_id)
-                    if not detail:
-                        logging.warning(f"Failed to download episode {art_id}")
-                        continue
-                    art_update_date = safe_fromiso(detail.get("body", {}).get("uploadDate"))
-                    with open(raw_path, "r", encoding="utf-8") as f:
-                        old = json.load(f)
-                    art_old_update_date = safe_fromiso(old.get("updateDate"))
-                    if art_update_date == art_old_update_date:
-                        logging.info(f"{old.get('title')} に更新はありません。")
-                        if g_count >= 10:
-                            time.sleep(random.uniform(interval_sec*5, interval_sec*10))
-                            g_count = 1
-                        else:
-                            time.sleep(interval_sec)
-                            g_count += 1
-                        continue
-                else:
-                    if g_count >= 10:
-                        time.sleep(random.uniform(interval_sec*5, interval_sec*10))
-                        g_count = 1
-                    else:
-                        time.sleep(interval_sec)
-                        g_count += 1
+        # 画像系（イラスト＋単発漫画）— スナップショット連動で NEW だけDL
+        logging.info("Images (illusts + standalone mangas) Download Start (NEW IDs only)")
 
-                dl_art(art_id, folder_path, key_data)
-
-            except Exception as e:
-                logging.error(f"[dl_user] art {art_id} の処理中に例外: {e}", exc_info=True)
-                continue
-
-        # イラスト：★新規IDのみDL★（per-userスナップショット）
-        logging.info("Illust Download Start (NEW IDs only)")
-
-        # user.json を fallback にしつつ、あれば per-user スナップショットを優先
-        prev_snapshot_list = _load_illust_snapshot(folder_path, user_id, data[user_id].get("illust_ids_snapshot", []))
+        # 以前のスナップショット（illust_ids）を読み込み（user.json の互換項目を fallback として使用）
+        prev_snapshot_list = _load_illust_snapshot(
+            folder_path,
+            user_id,
+            data[user_id].get("illust_ids_snapshot", [])
+        )
         prev_snapshot = set(map(int, prev_snapshot_list))
-        curr_snapshot = set(map(int, user_illusts))
+
+        # 現在のID集合 = イラスト + 単発漫画（どちらも /ajax/illust/{id} で扱えるため統一）
+        curr_snapshot = set(map(int, (user_illusts or []) + (user_mangas or [])))
 
         if update:
-            new_illust_ids = list(map(str, sorted(curr_snapshot - prev_snapshot)))
+            new_ids = list(map(str, sorted(curr_snapshot - prev_snapshot)))
         else:
-            # 初回または強制時は全取得
-            new_illust_ids = list(map(str, sorted(curr_snapshot)))
+            # 初回や強制時は全部
+            new_ids = list(map(str, sorted(curr_snapshot)))
 
-        logging.info(f"User {user_id} illusts total={len(user_illusts)} / NEW={len(new_illust_ids)}")
+        logging.info(f"User {user_id} images total={len(curr_snapshot)} / NEW={len(new_ids)}")
 
-        for art_id in new_illust_ids:
+        if not new_ids:
+            logging.info(f"[images] 追加のダウンロード対象はありません（スナップショット一致）。")
+
+        for art_id in new_ids:
             try:
                 if g_count >= 10:
                     time.sleep(random.uniform(interval_sec*5, interval_sec*10))
@@ -1620,13 +1592,17 @@ def dl_user(user_id, folder_path, key_data, update):
                     g_count += 1
                 dl_art(art_id, folder_path, key_data)
             except Exception as e:
-                logging.error(f"[dl_user] illust {art_id} の処理中に例外: {e}", exc_info=True)
+                logging.error(f"[dl_user] image/artwork {art_id} の処理中に例外: {e}", exc_info=True)
                 continue
 
-        # スナップショットは per-user ファイルへ保存（user.json には書かない）
+        # スナップショット保存（illust_ids に統合）
         _save_illust_snapshot(folder_path, user_id, curr_snapshot)
+        logging.info(
+            f"[snapshot] saved images snapshot (illusts+artworks) → "
+            f"{_snapshot_path(folder_path, user_id)} (count={len(curr_snapshot)})"
+        )
 
-        # ついでに user.json は軽量メタだけ更新（任意）
+        # ついでに user.json は軽量メタだけ更新（ハッシュ）
         data[user_id]["illust_ids_snapshot_hash"] = _hash_ids(curr_snapshot)
         with open(user_json, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
