@@ -31,6 +31,12 @@ import crawler.convert_narou as cn
 #ファイルのバージョン
 mv = 5
 
+def _hash_ids(ids):
+    import hashlib
+    joined = ",".join(sorted(map(str, ids or [])))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
 
 def format_tags(tags):
     """
@@ -1223,141 +1229,166 @@ def dl_comic(comic_id, folder_path, key_data, update):
     cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
 #ユーザーページからのダウンロード
+# ユーザーページからのダウンロード（修正版）
 @suppress_errors()
 def dl_user(user_id, folder_path, key_data, update):
     global g_count
-    logging.info(f'User ID: {user_id}')
-    user_data = cm.get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all", pixiv_cookie, pixiv_header).json()
-    user_name = cm.get_with_cookie(f"https://www.pixiv.net/ajax/user/{user_id}", pixiv_cookie, pixiv_header).json().get('body').get('name')
-    user_all_novels = user_data.get('body').get('novels')
-    user_all_illusts = user_data.get('body').get('illusts')
-    user_all_mangas = user_data.get('body').get('manga')
-    user_all_novel_series = user_data.get('body').get('novelSeries')
-    user_all_manga_series = user_data.get('body').get('mangaSeries')
+    logging.info(f"User ID: {user_id}")
+
+    # ユーザー集約情報
+    user_data = cm.get_with_cookie(
+        f"https://www.pixiv.net/ajax/user/{user_id}/profile/all",
+        pixiv_cookie, pixiv_header
+    ).json()
+    user_name = cm.get_with_cookie(
+        f"https://www.pixiv.net/ajax/user/{user_id}",
+        pixiv_cookie, pixiv_header
+    ).json().get("body", {}).get("name")
+
+    body = user_data.get("body", {})
+    user_all_novels       = body.get("novels")
+    user_all_illusts      = body.get("illusts")
+    user_all_mangas       = body.get("manga")
+    user_all_novel_series = body.get("novelSeries")
+    user_all_manga_series = body.get("mangaSeries")
+
     user_novel_series = []
     user_manga_series = []
-    in_novel_series = []
-    in_manga_series = []
+    in_novel_series   = []
+    in_manga_series   = []
     user_novels = []
-    user_mangas = []
-    user_arts = []
-    logging.info(f'User Name: {user_name}')
+    user_mangas = []   # ← 単発漫画（artworks）用
+    user_illusts = []  # ← 単発イラスト用（今回：新規IDのみDL対象）
 
-    user_json = os.path.join(folder_path, 'user.json')
+    logging.info(f"User Name: {user_name}")
 
-    # user.jsonファイルが存在するかどうか確認
+    # user.json 読み込み／初期化
+    user_json = os.path.join(folder_path, "user.json")
     if os.path.exists(user_json):
-        # 既存のデータを読み込む
-        with open(user_json, 'r', encoding='utf-8') as f:
+        with open(user_json, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
-        # ファイルがない場合、空のデータを初期化
         data = {}
 
-    # user_id が JSON のキーとして存在するか確認
+    # エントリの後方互換初期化
     if user_id not in data:
-        # user_id が存在しなければ "enable" を値として追加
         data["version"] = 3
         data[user_id] = {}
-        data[user_id]['novel'] = "enable"
-        data[user_id]['comic'] = "enable"
+        data[user_id]["novel"]  = "enable"
+        data[user_id]["comic"]  = "enable"
+        data[user_id]["illust_ids_snapshot"] = []  # ★ イラスト用スナップショット
+    else:
+        data[user_id].setdefault("novel", "enable")
+        data[user_id].setdefault("comic", "enable")
+        data[user_id].setdefault("illust_ids_snapshot", [])
 
-    # 更新されたデータを再び user.json に書き込む
-    with open(user_json, 'w', encoding='utf-8') as f:
+    # 即時保存（途中で例外が出ても整合が保たれるように）
+    with open(user_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-    #小説シリーズIDの取得
-    for ns in user_all_novel_series:
-        user_novel_series.append(ns.get('id'))
+    # 各ID抽出
+    if user_all_novel_series:
+        for ns in user_all_novel_series:
+            user_novel_series.append(ns.get("id"))
 
-    #漫画シリーズIDの取得
-    for ms in user_all_manga_series:
-        user_manga_series.append(ms.get('id'))
+    if user_all_manga_series:
+        for ms in user_all_manga_series:
+            user_manga_series.append(ms.get("id"))
 
-    #小説IDの取得
     if user_all_novels:
         user_novels = list(user_all_novels.keys())
 
-    #漫画IDの取得
     if user_all_mangas:
         user_mangas = list(user_all_mangas.keys())
 
-    #イラストIDの取得
     if user_all_illusts:
-        user_arts = list(user_all_illusts.keys())
+        user_illusts = list(user_all_illusts.keys())
 
-    #小説シリーズとの重複を除去
+    # ─────────────────────────────────────────────
+    # シリーズ重複（短編との重複）を除去：小説シリーズ
+    # ─────────────────────────────────────────────
     for i in user_novel_series:
         time.sleep(interval_sec)
-        for nid in cm.get_with_cookie(f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles", pixiv_cookie, pixiv_header).json().get('body'):
-            in_novel_series.append(nid.get('id'))
-            if os.path.exists(os.path.join(folder_path, f'n{nid.get('id')}')):
-                shutil.rmtree(os.path.join(folder_path, f'n{nid.get('id')}'))
-                logging.info(f"Remove duplicated novel folder: n{nid.get('id')}")
+        toc = cm.get_with_cookie(
+            f"https://www.pixiv.net/ajax/novel/series/{i}/content_titles",
+            pixiv_cookie, pixiv_header
+        ).json().get("body", [])
+        for nid in toc:
+            ep_id = nid.get("id")
+            in_novel_series.append(ep_id)
+            dup_path = os.path.join(folder_path, f"n{ep_id}")
+            if os.path.exists(dup_path):
+                shutil.rmtree(dup_path)
+                logging.info(f"Remove duplicated novel folder: n{ep_id}")
 
+        # BAN対策
         if g_count >= 10:
-            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+            time.sleep(random.uniform(interval_sec*5, interval_sec*10))
             g_count = 1
         else:
             time.sleep(interval_sec)
             g_count += 1
 
-    #漫画シリーズとの重複を除去
+    # ─────────────────────────────────────────────
+    # シリーズ重複（短編との重複）を除去：漫画シリーズ
+    # ─────────────────────────────────────────────
     for i in user_manga_series:
-        arts = {}
-        #イラストリンクの取得
-        cache = cm.find_key_recursively(json.loads(cm.get_with_cookie(f"https://www.pixiv.net/ajax/series/{i}?p=1&lang=ja", pixiv_cookie, pixiv_header).text), "body")
+        # イラストリンクの取得
+        cache = cm.find_key_recursively(json.loads(cm.get_with_cookie(
+            f"https://www.pixiv.net/ajax/series/{i}?p=1&lang=ja", pixiv_cookie, pixiv_header
+        ).text), "body")
         arts = get_comic_link(cache, i)
         if not arts:
             logging.error(f"Comic ID: {i} is not available.")
             continue
         arts = dict(sorted(arts.items()))
-
-        for j, art_id in arts.items():
+        for _, art_id in arts.items():
             in_manga_series.append(art_id)
-            if os.path.exists(os.path.join(folder_path, f'a{art_id}')):
-                shutil.rmtree(os.path.join(folder_path, f'a{art_id}'))
+            dup_path = os.path.join(folder_path, f"a{art_id}")
+            if os.path.exists(dup_path):
+                shutil.rmtree(dup_path)
                 logging.info(f"Remove duplicated art folder: a{art_id}")
-        
+
+        # BAN対策
         if g_count >= 10:
-            time.sleep(random.uniform(interval_sec*5,interval_sec*10))
+            time.sleep(random.uniform(interval_sec*5, interval_sec*10))
             g_count = 1
         else:
             time.sleep(interval_sec)
             g_count += 1
-        
-    user_mangas = user_mangas + user_arts
 
+    # シリーズに含まれている短編は除外（イラストは除外しない）
     if user_all_novels:
         user_novels = [n for n in user_novels if n not in in_novel_series]
     if user_all_mangas:
         user_mangas = [m for m in user_mangas if m not in in_manga_series]
-    logging.info(f'User Novels: {len(user_novels)}')
-    logging.info(f'User Novel Series: {len(user_novel_series)}')
-    logging.info(f'User Mangas: {len(user_mangas)}')
-    logging.info(f'User Manga Series: {len(user_manga_series)}')
 
-    #小説のダウンロード
-    if data[user_id]['novel'] == "enable":
+    logging.info(f"User Novels: {len(user_novels)}")
+    logging.info(f"User Novel Series: {len(user_novel_series)}")
+    logging.info(f"User Standalone Mangas(artworks): {len(user_mangas)}")
+    logging.info(f"User Manga Series: {len(user_manga_series)}")
+    logging.info(f"User Illusts: {len(user_illusts)}")
+
+    # ─────────────────────────────────────────────
+    # 小説：シリーズ／短編（従来通り）
+    # ─────────────────────────────────────────────
+    if data[user_id]["novel"] == "enable":
         logging.info("Novel Series Download Start")
         for series_id in user_novel_series:
             try:
-                # 更新版か新規かで分岐
-                raw_path = os.path.join(folder_path, f's{series_id}', 'raw', 'raw.json')
+                raw_path = os.path.join(folder_path, f"s{series_id}", "raw", "raw.json")
                 if update and os.path.isfile(raw_path):
-                    # 既存データの更新日チェック
                     resp = cm.get_with_cookie(
                         f"https://www.pixiv.net/ajax/novel/series/{series_id}",
                         pixiv_cookie, pixiv_header
                     )
-                    body = resp.json().get('body', {})
-                    series_update_date = safe_fromiso(body.get('updateDate'))
-                    with open(raw_path, 'r', encoding='utf-8') as f:
+                    body = resp.json().get("body", {})
+                    series_update_date = safe_fromiso(body.get("updateDate"))
+                    with open(raw_path, "r", encoding="utf-8") as f:
                         old = json.load(f)
-                    series_old_update_date = safe_fromiso(old.get('updateDate'))
+                    series_old_update_date = safe_fromiso(old.get("updateDate"))
                     if series_update_date == series_old_update_date:
                         logging.info(f"{old.get('title')} に更新はありません。")
-                        # BAN対策スリープ
                         if g_count >= 10:
                             time.sleep(random.uniform(interval_sec*5, interval_sec*10))
                             g_count = 1
@@ -1365,13 +1396,11 @@ def dl_user(user_id, folder_path, key_data, update):
                             time.sleep(interval_sec)
                             g_count += 1
                         continue
-                    # 更新あり
                     dl_series(series_id, folder_path, key_data, True)
                 else:
-                    # 新規ダウンロード
                     dl_series(series_id, folder_path, key_data, False)
 
-                # ダウンロード間インターバル
+                # 間隔
                 if g_count >= 10:
                     time.sleep(random.uniform(interval_sec*5, interval_sec*10))
                     g_count = 1
@@ -1386,14 +1415,13 @@ def dl_user(user_id, folder_path, key_data, update):
         logging.info("Novel Download Start")
         for novel_id in user_novels:
             try:
-                raw_path = os.path.join(folder_path, f'n{novel_id}', 'raw', 'raw.json')
+                raw_path = os.path.join(folder_path, f"n{novel_id}", "raw", "raw.json")
                 if update and os.path.isfile(raw_path):
-                    # 既存データの更新日チェック
-                    upload = return_content_json(novel_id).get('body', {}).get('uploadDate')
+                    upload = return_content_json(novel_id).get("body", {}).get("uploadDate")
                     novel_update_date = safe_fromiso(upload)
-                    with open(raw_path, 'r', encoding='utf-8') as f:
+                    with open(raw_path, "r", encoding="utf-8") as f:
                         old = json.load(f)
-                    novel_old_update_date = safe_fromiso(old.get('updateDate'))
+                    novel_old_update_date = safe_fromiso(old.get("updateDate"))
                     if novel_update_date == novel_old_update_date:
                         logging.info(f"{old.get('title')} に更新はありません。")
                         if g_count >= 10:
@@ -1403,10 +1431,8 @@ def dl_user(user_id, folder_path, key_data, update):
                             time.sleep(interval_sec)
                             g_count += 1
                         continue
-                    # 更新あり
                     dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
                 else:
-                    # 新規ダウンロード
                     dl_novel(return_content_json(novel_id), novel_id, folder_path, key_data)
 
                 if g_count >= 10:
@@ -1419,38 +1445,35 @@ def dl_user(user_id, folder_path, key_data, update):
             except Exception as e:
                 logging.error(f"[dl_user] novel {novel_id} の処理中に例外: {e}", exc_info=True)
                 continue
-
     else:
         logging.info("Novel and Novel Series Download Skipped")
 
-    #漫画のダウンロード
-    if data[user_id]['comic'] == "enable":
+    # ─────────────────────────────────────────────
+    # 漫画シリーズ：従来通り更新判定で処理
+    # ─────────────────────────────────────────────
+    if data[user_id]["comic"] == "enable":
         logging.info("Comic Series Download Start")
         for comic_id in user_manga_series:
             try:
-                raw_path = os.path.join(folder_path, f'c{comic_id}', 'raw', 'raw.json')
+                raw_path = os.path.join(folder_path, f"c{comic_id}", "raw", "raw.json")
                 if update and os.path.isfile(raw_path):
-                    # 既存データの更新日チェック
                     resp = cm.get_with_cookie(
                         f"https://www.pixiv.net/ajax/series/{comic_id}?p=1&lang=ja",
                         pixiv_cookie, pixiv_header
                     )
                     detail = cm.find_key_recursively(resp.json(), "body")
-                    # シリーズ内該当IDの更新日取得
-                    for j in detail.get('illustSeries', []):
-                        if j.get('id') == comic_id:
-                            comic_update_date = safe_fromiso(j.get('updateDate'))
+                    for j in detail.get("illustSeries", []):
+                        if j.get("id") == comic_id:
+                            comic_update_date = safe_fromiso(j.get("updateDate"))
                             break
                     else:
-                        # 万が一見つからなければ今を設定
                         comic_update_date = datetime.now().astimezone(timezone(timedelta(hours=9)))
 
-                    with open(raw_path, 'r', encoding='utf-8') as f:
+                    with open(raw_path, "r", encoding="utf-8") as f:
                         old = json.load(f)
-                    comic_old_update_date = safe_fromiso(old.get('updateDate'))
+                    comic_old_update_date = safe_fromiso(old.get("updateDate"))
                     if comic_update_date == comic_old_update_date:
                         logging.info(f"{old.get('title')} に更新はありません。")
-                        # BAN対策スリープ
                         if g_count >= 10:
                             time.sleep(random.uniform(interval_sec*5, interval_sec*10))
                             g_count = 1
@@ -1459,17 +1482,12 @@ def dl_user(user_id, folder_path, key_data, update):
                             g_count += 1
                         continue
 
-                    # 更新あり
                     dl_comic(comic_id, folder_path, key_data, True)
-
                 else:
-                    # 新規ダウンロード
-                    # 過度なスリープを避けつつ一度長めに
                     time.sleep(random.uniform(interval_sec*5, interval_sec*10))
                     g_count = 1
                     dl_comic(comic_id, folder_path, key_data, False)
 
-                # ダウンロード間インターバル
                 if g_count >= 10:
                     time.sleep(random.uniform(interval_sec*5, interval_sec*10))
                     g_count = 1
@@ -1481,19 +1499,22 @@ def dl_user(user_id, folder_path, key_data, update):
                 logging.error(f"[dl_user] series comic {comic_id} の処理中に例外: {e}", exc_info=True)
                 continue
 
-        logging.info("Comic Download Start")
+        # ─────────────────────────────────────────
+        # 単発漫画（artworks）：従来の更新日比較のまま
+        # ─────────────────────────────────────────
+        logging.info("Standalone Manga (artworks) Download Start")
         for art_id in user_mangas:
             try:
-                raw_path = os.path.join(folder_path, f'a{art_id}', 'raw', 'raw.json')
+                raw_path = os.path.join(folder_path, f"a{art_id}", "raw", "raw.json")
                 if update and os.path.isfile(raw_path):
                     detail = return_comic_content_json(art_id)
                     if not detail:
                         logging.warning(f"Failed to download episode {art_id}")
                         continue
-                    art_update_date = safe_fromiso(detail.get('body', {}).get('uploadDate'))
-                    with open(raw_path, 'r', encoding='utf-8') as f:
+                    art_update_date = safe_fromiso(detail.get("body", {}).get("uploadDate"))
+                    with open(raw_path, "r", encoding="utf-8") as f:
                         old = json.load(f)
-                    art_old_update_date = safe_fromiso(old.get('updateDate'))
+                    art_old_update_date = safe_fromiso(old.get("updateDate"))
                     if art_update_date == art_old_update_date:
                         logging.info(f"{old.get('title')} に更新はありません。")
                         if g_count >= 10:
@@ -1516,6 +1537,38 @@ def dl_user(user_id, folder_path, key_data, update):
             except Exception as e:
                 logging.error(f"[dl_user] art {art_id} の処理中に例外: {e}", exc_info=True)
                 continue
+
+        # ─────────────────────────────────────────
+        # イラスト：★新規IDのみDL★
+        # ─────────────────────────────────────────
+        logging.info("Illust Download Start (NEW IDs only)")
+        prev_snapshot = set(map(int, data[user_id].get("illust_ids_snapshot", [])))
+        curr_snapshot = set(map(int, user_illusts))
+        if update:
+            new_illust_ids = list(map(str, sorted(curr_snapshot - prev_snapshot)))
+        else:
+            # 初回または強制全取得時は全部取得
+            new_illust_ids = list(map(str, sorted(curr_snapshot)))
+
+        logging.info(f"User {user_id} illusts total={len(user_illusts)} / NEW={len(new_illust_ids)}")
+
+        for art_id in new_illust_ids:
+            try:
+                if g_count >= 10:
+                    time.sleep(random.uniform(interval_sec*5, interval_sec*10))
+                    g_count = 1
+                else:
+                    time.sleep(interval_sec)
+                    g_count += 1
+                dl_art(art_id, folder_path, key_data)
+            except Exception as e:
+                logging.error(f"[dl_user] illust {art_id} の処理中に例外: {e}", exc_info=True)
+                continue
+
+        # スナップショット更新（常に最新に）
+        data[user_id]["illust_ids_snapshot"] = list(map(str, sorted(curr_snapshot)))
+        with open(user_json, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
 
     else:
         logging.info("Comic and Comic Series Download Skipped")
@@ -1698,7 +1751,7 @@ def update(folder_path, key_data, data_path, host_name):
                 with open(os.path.join(folder_path, folder_name, 'raw', 'raw.json'), 'r', encoding='utf-8') as onf:
                     old = json.load(onf)
                 if safe_fromiso(json_data['body']['uploadDate']) != safe_fromiso(old['updateDate']):
-                    dl_novel(json_data, art_id, folder_path, key_data)
+                    dl_art(art_id, folder_path, key_data)
                 else:
                     logging.info(f"{index_data.get('title')} に更新はありません。")
 
