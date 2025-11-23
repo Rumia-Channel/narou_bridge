@@ -21,7 +21,6 @@ dependencies = [
     "pymupdf>=1.25.1",
     "apng>=0.3.4",
     "pillow>=11.1.0",
-    "duckdb>=1.4.2",
 ]
 readme = "README.md"
 requires-python = ">= 3.12"
