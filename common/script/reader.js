@@ -1,29 +1,29 @@
 // WebKit compatibility: Map polyfill
 if (typeof Map === 'undefined') {
-  window.Map = function() {
+  window.Map = function () {
     this.data = {};
   };
-  window.Map.prototype.set = function(key, value) {
+  window.Map.prototype.set = function (key, value) {
     this.data[key] = value;
     return this;
   };
-  window.Map.prototype.get = function(key) {
+  window.Map.prototype.get = function (key) {
     return this.data[key];
   };
-  window.Map.prototype.has = function(key) {
+  window.Map.prototype.has = function (key) {
     return key in this.data;
   };
-  window.Map.prototype.delete = function(key) {
+  window.Map.prototype.delete = function (key) {
     delete this.data[key];
   };
-  window.Map.prototype.clear = function() {
+  window.Map.prototype.clear = function () {
     this.data = {};
   };
 }
 
 // WebKit compatibility: URLSearchParams polyfill
 if (typeof URLSearchParams === 'undefined') {
-  window.URLSearchParams = function(search) {
+  window.URLSearchParams = function (search) {
     this.params = {};
     if (search) {
       var pairs = search.substring(1).split('&');
@@ -35,21 +35,21 @@ if (typeof URLSearchParams === 'undefined') {
       }
     }
   };
-  window.URLSearchParams.prototype.get = function(name) {
+  window.URLSearchParams.prototype.get = function (name) {
     return this.params[name] || null;
   };
 }
 
 // WebKit compatibility: requestAnimationFrame polyfill
 if (!window.requestAnimationFrame) {
-  window.requestAnimationFrame = function(callback) {
+  window.requestAnimationFrame = function (callback) {
     return setTimeout(callback, 1000 / 60);
   };
 }
 
 // WebKit compatibility: Object.entries polyfill
 if (!Object.entries) {
-  Object.entries = function(obj) {
+  Object.entries = function (obj) {
     var entries = [];
     for (var key in obj) {
       if (obj.hasOwnProperty(key)) {
@@ -68,6 +68,9 @@ var coverHashMap = new Map();
 // Cache Storage 名
 var CACHE_NAME = 'cover-images';
 //var INDEX_CACHE = 'index-json-cache';
+
+// cover.json のデータを保持するグローバル変数
+var globalCoverJson = null;
 
 /**
  * 本棚画面用：ヘッダーに「トップページに戻る」ボタンを追加
@@ -184,6 +187,19 @@ async function preloadAllCoversWithLimit(novelsList, coverCache, onComplete, con
 
 document.addEventListener('DOMContentLoaded', async () => {
   const query = getQueryParams();
+
+  // --------------------------------------------------------
+  // cover.json を先行して読み込む
+  try {
+    // キャッシュ対策でタイムスタンプを付けるか、あるいは fetch の cache: 'no-cache' を推奨
+    const res = await fetch('/images/cover.json', { cache: 'no-store' });
+    if (res.ok) {
+      globalCoverJson = await res.json();
+    }
+  } catch (e) {
+    console.warn('cover.json could not be loaded:', e);
+  }
+  // --------------------------------------------------------
 
   // ──────────── 「同時ダウンロード数」入力フィールドの生成 ────────────
   // header 要素を取得
@@ -513,28 +529,78 @@ async function loadJSON(path) {
 }
 
 /**
- * 低解像度化＋重複チェック＋失敗回数管理＋
- * default_cover.png も Blob→ObjectURL で利用するプリロード関数
+ * 優先順位: cover.json (Hash) -> Local Files -> Default
+ * 低解像度化＋重複チェック＋失敗回数管理
  */
 async function preloadAndMapCover(novel, coverCache) {
   const key = `${novel.source}_${novel.id}`;
-  const base = `../${novel.source}/${novel.id}/`;
-  // 絶対パスで指定
   const defaultUrl = `${window.location.origin}/images/default_cover.png`;
 
-  // ローカルストレージで失敗回数を管理
+  // 失敗回数チェック（3回以上なら即デフォルト）
   const failKey = `coverFail_${novel.source}_${novel.id}`;
   let failCount = parseInt(localStorage.getItem(failKey)) || 0;
-
-  // 3回以上失敗していれば即デフォルトを返す
   if (failCount >= 3) {
     coverUrlMap.set(key, await getDefaultCoverObjectURL(coverCache, defaultUrl));
     return;
   }
 
-  // 1) キャッシュ済みの cover.jpg/png/gif を探す
+  // ■ 優先度1: cover.json からハッシュを探す
+  // キー形式: "サイト名_ID_cover.拡張子" (例: pixiv_a133664320_cover.jpg)
+  let targetUrl = null;
+
+  if (globalCoverJson) {
+    const baseJsonInfo = `${novel.source}_${novel.id}_cover`;
+    const extensions = ['jpg', 'png', 'gif', 'webp'];
+    
+    for (const ext of extensions) {
+      const jsonKey = `${baseJsonInfo}.${ext}`;
+      const hash = globalCoverJson[jsonKey];
+      if (hash) {
+        // ハッシュが見つかった場合、画像パスは "/images/ハッシュ.拡張子"
+        targetUrl = `/images/${hash}.${ext}`;
+        break; // 見つかったらループ終了
+      }
+    }
+  }
+
+  // ターゲットが決まった場合の処理（Hash画像を取得）
+  if (targetUrl) {
+    // 1-A. キャッシュ確認
+    const cachedResp = await coverCache.match(targetUrl);
+    if (cachedResp) {
+      const blob = await cachedResp.blob();
+      coverUrlMap.set(key, await dedupeBlob(blob));
+      return;
+    }
+
+    // 1-B. フェッチ＆縮小＆キャッシュ保存
+    try {
+      const resp = await fetch(targetUrl);
+      if (resp.ok) {
+        const origBlob = await resp.blob();
+        // ★ここでも shrinkBlob を通すことで、サーバー上の元画像が大きくてもクライアント負荷を軽減
+        const smallBlob = await shrinkBlob(origBlob, 400, 0.75);
+        
+        // キャッシュに保存
+        await coverCache.put(targetUrl, new Response(smallBlob));
+        // マップに登録
+        coverUrlMap.set(key, await dedupeBlob(smallBlob));
+        return; // 成功したらここで終了
+      }
+    } catch (e) {
+      console.warn(`Hash image fetch failed for ${targetUrl}`, e);
+      // 失敗した場合は、次の「旧ローカルファイル探索」へ進む（フォールバック）
+    }
+  }
+
+
+  // ■ 優先度2: 既存のローカルファイル探索 (../source/id/cover.ext)
+  // ※ cover.json に無かった、または取得に失敗した場合にここに来る
+  const baseLocal = `../${novel.source}/${novel.id}/`;
+
+  // 2-A. キャッシュ確認
   for (const ext of ['jpg', 'png', 'gif']) {
-    const url = base + `cover.${ext}`;
+    const url = baseLocal + `cover.${ext}`;
     const cachedResp = await coverCache.match(url);
     if (cachedResp) {
       const blob = await cachedResp.blob();
@@ -543,27 +609,26 @@ async function preloadAndMapCover(novel, coverCache) {
     }
   }
 
-  // 2) HEAD → fetch → 低解像度化 → キャッシュ登録
+  // 2-B. HEAD → Fetch → 縮小
   for (const ext of ['jpg', 'png', 'gif']) {
-    const url = base + `cover.${ext}`;
+    const url = baseLocal + `cover.${ext}`;
     try {
       const head = await fetch(url, { method: 'HEAD' });
       if (!head.ok) continue;
 
       const origBlob = await (await fetch(url)).blob();
       const smallBlob = await shrinkBlob(origBlob, 400, 0.75);
-      const objectURL = await dedupeBlob(smallBlob);
-
-      // キャッシュにも登録
+      
       await coverCache.put(url, new Response(smallBlob));
-      coverUrlMap.set(key, objectURL);
+      coverUrlMap.set(key, await dedupeBlob(smallBlob));
       return;
     } catch {
       // 次の拡張子へ
     }
   }
 
-  // 3) 全滅 → 失敗カウントアップ＆デフォルトを返す
+
+  // ■ 優先度3: 全滅 → デフォルト画像
   failCount++;
   localStorage.setItem(failKey, String(failCount));
   coverUrlMap.set(key, await getDefaultCoverObjectURL(coverCache, defaultUrl));
@@ -638,22 +703,42 @@ function getReadStatus(novel) {
   return 'read';
 }
 
-/** 
- * Blob を canvas で縮小して JPEG Blob にするユーティリティ 
- */
+/** * Blob を ImageBitmap と OffscreenCanvas (または canvas) で高速に縮小して JPEG Blob にする*/
 async function shrinkBlob(blob, maxWidth, quality) {
-  const img = await new Promise(res => {
-    const i = new Image();
-    i.onload = () => res(i);
-    i.src = URL.createObjectURL(blob);
-  });
-  const scale = Math.min(1, maxWidth / img.width);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(img.width * scale);
-  canvas.height = Math.round(img.height * scale);
+  // 1. DOMの<img>タグを作らず、生データからビットマップを作成（高速・低負荷）
+  const bitmap = await createImageBitmap(blob);
+
+  // 2. サイズ計算
+  const scale = Math.min(1, maxWidth / bitmap.width);
+  const width = Math.round(bitmap.width * scale);
+  const height = Math.round(bitmap.height * scale);
+
+  // 3. OffscreenCanvas が使えるなら使う（メインスレッドの描画をブロックしない）
+  let canvas;
+  if (typeof OffscreenCanvas !== 'undefined') {
+    canvas = new OffscreenCanvas(width, height);
+  } else {
+    // 非対応ブラウザ用のフォールバック
+    canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  // 4. 描画
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality));
+  ctx.drawImage(bitmap, 0, 0, width, height);
+
+  // 5. メモリ解放（重要）
+  bitmap.close();
+
+  // 6. Blobに変換して返す
+  if (canvas.convertToBlob) {
+    // OffscreenCanvas用
+    return await canvas.convertToBlob({ type: 'image/jpeg', quality });
+  } else {
+    // 通常のCanvas用
+    return await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+  }
 }
 
 /**

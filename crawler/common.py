@@ -131,27 +131,70 @@ def safe_fromiso(date_str, tzinfo=JST):
         return None
 
 #画像ファイルのハッシュをチェック
-def check_image_hash(img_path, file_data, file_name):
-    if not os.path.exists(os.path.join(img_path, 'database.json')):
-        with open(os.path.join(img_path, 'database.json'), 'w', encoding='utf-8') as f:
+def check_image_hash(img_path, file_data, file_name, is_cover=False):
+    db_path = os.path.join(img_path, 'database.json')
+    cover_path = os.path.join(img_path, 'cover.json')
+
+    # database.json が無ければ作る
+    if not os.path.exists(db_path):
+        with open(db_path, 'w', encoding='utf-8') as f:
             json.dump({}, f, ensure_ascii=False, indent=4)
 
-    with open(os.path.join(img_path, 'database.json'), 'r', encoding='utf-8') as f:
+    # メインDB読み込み
+    with open(db_path, 'r', encoding='utf-8') as f:
         database = json.load(f)
 
-    image_hash = base64.urlsafe_b64encode(hashlib.sha3_256(file_data).digest()).rstrip(b'=').decode('utf-8')
+    # cover用DBの準備（カバーの時だけ）
+    cover_db = None
+    if is_cover:
+        if not os.path.exists(cover_path):
+            with open(cover_path, 'w', encoding='utf-8') as f:
+                json.dump({}, f, ensure_ascii=False, indent=4)
+
+        with open(cover_path, 'r', encoding='utf-8') as f:
+            cover_db = json.load(f)
+
+        # cover.json にすでに登録されているなら、それを返す
+        if file_name in cover_db:
+            image_hash = cover_db[file_name]
+
+            # database.json にも同期しておく
+            if database.get(file_name) != image_hash:
+                database[file_name] = image_hash
+                with open(db_path, 'w', encoding='utf-8') as f:
+                    json.dump(database, f, ensure_ascii=False, indent=4)
+
+            return image_hash
+
+    # ここまで来たら新規 or 未登録なのでハッシュ計算
+    image_hash = base64.urlsafe_b64encode(
+        hashlib.sha3_256(file_data).digest()
+    ).rstrip(b'=').decode('utf-8')
+
+    # database.json 内でハッシュ重複チェック
     for key, value in database.items():
         if value == image_hash:
-            database[file_name] = str(image_hash)
-
-            with open(os.path.join(img_path, 'database.json'), 'w', encoding='utf-8') as f:
+            # 同じ画像なので別名として登録
+            database[file_name] = value
+            with open(db_path, 'w', encoding='utf-8') as f:
                 json.dump(database, f, ensure_ascii=False, indent=4)
 
+            if is_cover:
+                cover_db[file_name] = value
+                with open(cover_path, 'w', encoding='utf-8') as f:
+                    json.dump(cover_db, f, ensure_ascii=False, indent=4)
+
             return value
-    
-    with open(os.path.join(img_path, 'database.json'), 'w', encoding='utf-8') as f:
-        database[file_name] = str(image_hash)
+
+    # 完全に新しい画像 → 新規登録
+    database[file_name] = image_hash
+    with open(db_path, 'w', encoding='utf-8') as f:
         json.dump(database, f, ensure_ascii=False, indent=4)
+
+    if is_cover:
+        cover_db[file_name] = image_hash
+        with open(cover_path, 'w', encoding='utf-8') as f:
+            json.dump(cover_db, f, ensure_ascii=False, indent=4)
 
     return image_hash
 
