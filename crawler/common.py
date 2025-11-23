@@ -51,14 +51,40 @@ def full_to_half(text):
 
 # Cookie とユーザーエージェントを返す
 def load_cookies_and_ua(input_file):
-    
+    """
+    cookieファイルを読み込み、
+    - cookies: 旧フォーマット([{"name": ..., "value": ...}, ...])
+    - cookies: 新フォーマット({"name": "value", ...})
+    の両方に対応して、{name: value} な dict を返す。
+    """
     with open(input_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)  # 1 回だけファイルを読み込む
-        cookies = data.get('cookies', {})
-        ua = data.get('user_agent')
+        data = json.load(f)
 
-    # requests用にCookieを変換
-    cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
+    # UA は user_agent / ua のどちらでも拾う
+    ua = data.get('user_agent') or data.get('ua')
+
+    cookies_raw = data.get('cookies', {})
+
+    # 新フォーマット: すでに {"name": "value"} な dict
+    if isinstance(cookies_raw, dict):
+        cookies_dict = dict(cookies_raw)  # 念のためコピー
+
+    # 旧フォーマット: [{"name": ..., "value": ...}, ...]
+    elif isinstance(cookies_raw, list):
+        cookies_dict = {}
+        for c in cookies_raw:
+            if not isinstance(c, dict):
+                continue
+            name = c.get('name')
+            value = c.get('value')
+            if name is None or value is None:
+                continue
+            cookies_dict[name] = value
+
+    else:
+        # 想定外フォーマットならさっさと落として原因を表に出す
+        raise TypeError(f"Unsupported cookies format: {type(cookies_raw)}")
+
     return cookies_dict, ua
 
 # Cookie とユーザーエージェントを保存する
