@@ -138,7 +138,7 @@ def load_config():
         shutil.copy('setting.ini', 'setting/setting.ini')
 
     config = configparser.ConfigParser()
-    config.read('setting/setting.ini')
+    config.read('setting/setting.ini', encoding='utf-8')
 
     # パス設定のヘルパー
     def get_path(section, key, default_name):
