@@ -1,354 +1,375 @@
-from datetime import datetime
 import os
 import re
-
-from crawler.common import safe_fromiso
-#ログを保存
 import logging
+from datetime import datetime
+from typing import Dict, Any, Optional
 
-#目次の書き込み
-def write_index(f, data, key_data):
-    """エピソード情報を基に目次を生成する関数"""
+# 外部モジュールの想定 (環境に合わせて適宜調整してください)
+from crawler.common import safe_fromiso
+
+# --- 定数・テンプレート定義 ---
+
+# 共通HTMLヘッダー/フッターテンプレート
+_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="/css/common.css">
+<link rel="icon" href="/icon/favicon.ico">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
+<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
+<title>{title}</title>
+{extra_head}
+</head>
+<body>
+{body}
+</body>
+</html>
+"""
+
+# 正規表現パターン
+_PATTERN_IMG_TAG = re.compile(r'\[image\]\((.*?)\)')
+_PATTERN_NEWPAGE_TAG = re.compile(r'\[newpage\]')
+_PATTERN_RUBY_TAG = re.compile(r"\[ruby:<(.*?)>\((.*?)\)\]")
+_PATTERN_HTML_IMG = re.compile(r'(.*?)(<img[^>]*>)(.*)')
+_PATTERN_JUMP_TAG = re.compile(r'\[jump:(\d+)\]')
+
+# ページカウント用パターン (narou_genで使用)
+_PATTERN_PAGE_COUNT = re.compile(
+    r'\[newpage\]\s*|\s*\[image\]\((.*?)\)|' 
+    r'\[image\]\s*\((.*?)\)\s*(?:\\n|\n)+\s*\[newpage\]|\s*'
+    r'\[newpage\]\s*(?:\\n|\n)+\s*\[image\]\s*\((.*?)\)|'
+    r'\[newpage\]\s*\[image\]\s*\((.*?)\)|'
+    r'\[image\]\s*\((.*?)\)\s*\[newpage\]|'
+    r'(?:\s*(?:\\n|\n)*\s*\[image\]\((.*?)\)\s*)+'
+)
+
+
+# --- ユーティリティ関数 ---
+
+def _format_date_jp(iso_date_str: str, format_str: str = "%Y/%m/%d %H:%M", default_msg: str = "") -> str:
+    """日付文字列を整形して返す"""
+    dt = safe_fromiso(iso_date_str)
+    if dt:
+        return dt.strftime(format_str)
+    return default_msg
+
+def _save_html(path: str, title: str, body_content: str, extra_head: str = ""):
+    """HTMLファイルを保存する共通関数"""
+    html_content = _HTML_TEMPLATE.format(
+        title=title,
+        extra_head=extra_head,
+        body=body_content
+    )
+    # ディレクトリ作成
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     
-    chapter = None
-    
-    f.write(f'<div class="p-eplist">\n')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
 
-    for ep in data['episodes'].values():  # ソートせずにそのまま順番で処理
-        episode_id = ep['id']
-        episode_title = ep['title']
-        # 安全に更新日や作成日を取得
-        create_date = safe_fromiso(ep['createDate'])
-        if create_date:
-            create_date = create_date.strftime("%Y/%m/%d %H:%M")
-        else:
-            create_date = "作成日を取得できませんでした。"
-        update_date = safe_fromiso(ep['updateDate'])
-        if update_date:
-            update_date = update_date.strftime("%Y/%m/%d %H:%M")
-        else:
-            update_date = "更新日を取得できませんでした。"
+# --- テキスト整形処理 ---
 
-        if not ep['chapter'] == chapter:
-            if ep['chapter']:
-                chapter = ep['chapter']
-                f.write(f'<div class="p-eplist__chapter-title">{chapter}</div>\n')
-        f.write(f'<div class="p-eplist__sublist">\n')
-        f.write(f'<a href="{a_link}/{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>\n\n')
-        f.write(f'<div class="p-eplist__update">\n')
-        f.write(f'{create_date}\n<span title="{update_date} 改稿">（<u>改</u>）</span>\n')
-        f.write(f'</div>\n')
-        f.write(f'</div>\n')
+def replace_images(text: str, img_link_base: str, key_data: str) -> str:
+    """[image](url) を <img> タグに置換"""
+    return _PATTERN_IMG_TAG.sub(
+        lambda match: f'<img src="{img_link_base}{match.group(1)}{key_data}" alt="{match.group(1)}">', 
+        text
+    )
 
-    f.write(f'</div>\n')
+def replace_newpage(text: str) -> str:
+    """[newpage] を [#改ページ] に置換"""
+    return _PATTERN_NEWPAGE_TAG.sub('[#改ページ]', text)
 
-#画像リンクへの置き換え
-def replace_images(text, key_data):
-    pattern = r'\[image\]\((.*?)\)'
-    return re.sub(pattern, lambda match: f'<img src="{img_link}{match.group(1)}{key_data}" alt="{match.group(1)}">', text)
+def replace_ruby(text: str) -> str:
+    """[ruby:文字(ルビ)] をHTMLルビタグに置換"""
+    return _PATTERN_RUBY_TAG.sub(
+        lambda match: f'<ruby>{match.group(1)}<rp>(</rp><rt>{match.group(2)}</rt><rp>)</rp></ruby>', 
+        text
+    )
 
-#改ページの置き換え
-def replace_newpage(text):
-    pattern = r'\[newpage\]'
-    return re.sub(pattern, lambda match: '[#改ページ]', text)
+def format_text(text: str, id_prefix: str, key_data: str, img_link_base: str) -> str:
+    """
+    テキスト全体をHTML段落形式に整形する
+    """
+    if not text:
+        return ""
 
-#ルビの置き換え
-def replace_ruby(text):
-    pattern = r"\[ruby:<(.*?)>\((.*?)\)\]"
-    return re.sub(pattern, lambda match: f'<ruby>{match.group(1)}<rp>(</rp><rt>{match.group(2)}</rt><rp>)</rp></ruby>', text)
-
-#テキスト形式の整形
-def format_text(text, id_prefix, key_data):
-
-    #画像リンクの置き換え
-    text = replace_images(text, key_data)
-    #青空文庫形式の改ページへ置き換え
+    text = replace_images(text, img_link_base, key_data)
     text = replace_newpage(text)
-
-    #ルビの置き換え
     text = replace_ruby(text)
 
-    # 改行で分割
     lines = text.split('\n')
-    
-    #画像リンクの正規表現
-    img_pattern = re.compile(r'(.*?)(<img[^>]*>)(.*)')
-    
     formatted_paragraphs = []
     id_counter = 1
-    
+
     for line in lines:
         line = line.rstrip()
+        
+        # 空行
         if line == '':
-            # 空行を <br> タグに変換
             formatted_paragraphs.append(f'<p id="{id_prefix}{id_counter}"><br></p>')
             id_counter += 1
-        elif img_pattern.search(line):
-            # <img> タグが含まれている行の処理
-            match = img_pattern.search(line)
-            before_img = match.group(1).strip()  # <img の前のテキスト
-            img_tag = match.group(2).strip()  # <img タグ
-            after_img = match.group(3).strip()  # <img の後のテキスト
-            
+            continue
+
+        # <img>タグを含む行の特別処理
+        match = _PATTERN_HTML_IMG.search(line)
+        if match:
+            before_img = match.group(1).strip()
+            img_tag = match.group(2).strip()
+            after_img = match.group(3).strip()
+
             if before_img:
-                # <img> タグの前にテキストがある場合
                 formatted_paragraphs.append(f'<p id="{id_prefix}{id_counter}">{before_img}</p>')
                 id_counter += 1
             
-            # <img> タグを含む部分を追加
             formatted_paragraphs.append(f'<p id="{id_prefix}{id_counter}">{img_tag}</p>')
             id_counter += 1
-            
+
             if after_img:
-                # <img> タグの後にテキストがある場合
                 formatted_paragraphs.append(f'<p id="{id_prefix}{id_counter}">{after_img}</p>')
                 id_counter += 1
         else:
+            # 通常のテキスト行
             formatted_paragraphs.append(f'<p id="{id_prefix}{id_counter}">{line}</p>')
             id_counter += 1
+
+    return '\n'.join(formatted_paragraphs)
+
+
+# --- HTMLコンテンツ生成パーツ ---
+
+def _generate_index_content(data: Dict, key_data: str, a_link_base: str) -> str:
+    """目次(index_box)の中身を生成"""
+    lines = []
+    lines.append('<div class="p-eplist">')
     
-    # 結果を一つのテキストに結合
-    result = '\n'.join(formatted_paragraphs)
+    chapter = None
+    # エピソード順序は元の辞書の順序に依存
+    for ep in data['episodes'].values():
+        episode_id = ep['id']
+        episode_title = ep['title']
+        
+        create_date = _format_date_jp(ep.get('createDate'), default_msg="作成日不明")
+        update_date = _format_date_jp(ep.get('updateDate'), default_msg="更新日不明")
+
+        # 章が変わった場合のヘッダー
+        if ep.get('chapter') != chapter:
+            chapter = ep.get('chapter')
+            if chapter:
+                lines.append(f'<div class="p-eplist__chapter-title">{chapter}</div>')
+
+        lines.append('<div class="p-eplist__sublist">')
+        lines.append(f'<a href="{a_link_base}/{episode_id}/{key_data}" class="p-eplist__subtitle">\n{episode_title}\n</a>')
+        lines.append('<div class="p-eplist__update">')
+        lines.append(f'{create_date}\n<span title="{update_date} 改稿">（<u>改</u>）</span>')
+        lines.append('</div>') # p-eplist__update
+        lines.append('</div>') # p-eplist__sublist
+
+    lines.append('</div>') # p-eplist
+    return '\n'.join(lines)
+
+
+def _generate_info_content(data: Dict, key_data: str, site_name: str, nid: str) -> str:
+    """作品情報ページの中身を生成"""
     
-    return result
+    # 共通ヘッダーリンク
+    links = [
+        f'<a href="../{key_data}" class="header-link">戻る</a>',
+        f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>'
+    ]
+    
+    # 作品タイトル・種別
+    content_parts = list(links)
+    content_parts.append(f'<h1><a href="{data.get("url")}" target="_blank">{data.get("title")}</a></h1>')
+    
+    serialization = data.get("serialization")
+    if serialization == "短編":
+        content_parts.append(f'<div><span id="noveltype">短編</span></div>')
+    else:
+        content_parts.append(f'<div><span id="noveltype">{serialization}</span> 全{data.get("total_episodes")}エピソード</div>')
 
-#前書きの書き込み
-def write_preface(f, ep, key_data):
-    preface = ep.get('introduction')
-    if preface == '':
+    # テーブル情報
+    all_tags_str = " ".join(data.get("all_tags", [])).strip()
+    if not all_tags_str:
+        all_tags_str = '\n<span>キーワードが設定されていません</span>\n'
+
+    formatted_create = _format_date_jp(data.get("createDate"), "%Y年 %m月%d日 %H時%M分")
+    formatted_update = _format_date_jp(data.get("updateDate"), "%Y年 %m月%d日 %H時%M分")
+    
+    date_label = "最終更新日" if serialization == "短編" else ("最新掲載日" if serialization == "連載中" else "最終掲載日")
+
+    table_html = f"""
+    <table>
+    <tr><th class="ex">あらすじ</th><td class="ex">{data.get("caption")}</td></tr>
+    <tr><th>作者名</th><td><a href="{data.get("author_url")}" target="_blank">{data.get("author")}</a></td></tr>
+    <tr><th>キーワード</th><td>{all_tags_str}</td></tr>
+    <tr><th>掲載日</th><td>{formatted_create}</td></tr>
+    <tr><th>{date_label}</th><td>{formatted_update}</td></tr>
+    <tr><th>文字数</th><td>{int(data.get("total_characters", 0)):,}文字</td></tr>
+    </table>
+    """
+    content_parts.append(table_html)
+    return '\n'.join(content_parts)
+
+
+# --- メイン処理 ---
+
+def narou_gen(data: Dict, nove_path: str, key_data: str, data_folder: str, host_name: str):
+    """
+    小説データを基に、目次、作品情報、各話ページを生成する
+    """
+    
+    # 1. パスとリンクの計算
+    try:
+        rel_path = os.path.relpath(nove_path, data_folder)
+        # Windowsパス対策
+        rel_path_web = rel_path.replace('\\', '/')
+        site_name, nid = rel_path.split(os.sep)[:2]
+    except ValueError:
+        # data_folder が nove_path の親でない場合などの安全策
+        logging.error(f"Path Error: {nove_path} is not under {data_folder}")
         return
-    f.write('<div class="js-novel-text p-novel__text p-novel__text--preface">\n')
-    f.write(format_text(preface, 'Lp', key_data) + '\n')
-    f.write('</div>\n')
 
-#本文の書き込み
-def write_main_text(f, ep, key_data):
-    text = ep.get('text')
-    f.write('<div class="js-novel-text p-novel__text">\n')
-    f.write(format_text(text, 'L', key_data) + '\n')
-    f.write('</div>\n')
-
-#あとがきの書き込み
-def write_postscript(f, ep, key_data):
-    postscript = ep.get('postscript')
-    if postscript == '':
-        return
-    f.write('<div class="js-novel-text p-novel__text p-novel__text--afterword">\n')
-    f.write(format_text(postscript, 'La', key_data) + '\n')
-    f.write('</div>\n')
-
-#小説家になろう形式で生成
-def narou_gen(data, nove_path, key_data, data_folder, host_name):
-
-    page_counter = 2  # 最初のページ番号を2に設定
-    pattern = re.compile(
-        r'\[newpage\]\s*|\s*\[image\]\((.*?)\)|'  # [newpage] または [image](...)（スペースを許可）
-        r'\[image\]\s*\((.*?)\)\s*(?:\\n|\n)+\s*\[newpage\]|\s*'  # [image] の後に改行（文字列または実際の改行）と [newpage]
-        r'\[newpage\]\s*(?:\\n|\n)+\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に改行と [image]
-        r'\[newpage\]\s*\[image\]\s*\((.*?)\)|'  # [newpage] の後に [image]（スペースを許可）
-        r'\[image\]\s*\((.*?)\)\s*\[newpage\]|'  # [image] の後に [newpage]（スペースを許可
-        r'(?:\s*(?:\\n|\n)*\s*\[image\]\((.*?)\)\s*)+'  # [image](...) の後に [image](...)（スペースを許可）
-    )
-    jump_pattern = re.compile(r'\[jump:(\d+)\]')   # '[jump(x)]' の形式のパターン
-
+    img_link_base = f'{host_name}/images/'
+    a_link_base = f"/{rel_path_web}"
+    
+    # 2. テキスト内のページ分割と [jump] リンクの解決 (ep['text']を更新)
+    page_counter = 2
+    
     for ep in data['episodes'].values():
         digits = max(4, len(str(page_counter)))
+        v_page = [page_counter]
 
-        # 仮想ページの設定
-        v_page = []
-        v_page.append(page_counter)
-
-        #logging.info(v_page[0]) # デバッグ用
-
-        # ページカウンターの更新ループ
-        for match in pattern.finditer(ep['text']):
-
-            if match.group(0).strip() == '[newpage]':
-                # [newpage] タグのみの場合
+        # ページ数カウントロジック
+        for match in _PATTERN_PAGE_COUNT.finditer(ep['text']):
+            matched_str = match.group(0)
+            
+            is_newpage = '[newpage]' in matched_str
+            is_image = '[image]' in matched_str
+            
+            # ロジックの再現
+            if matched_str.strip() == '[newpage]':
                 page_counter += 1
-                v_page.append(page_counter)  # 仮想ページにページ番号を追加
-                #logging.info(f'newpage: {page_counter}')  # デバッグ用
-            elif match.group(0).startswith('[image]'):
-                # [image](...) タグがマッチしている場合
+                v_page.append(page_counter)
+            
+            elif matched_str.startswith('[image]'):
                 page_counter += 2
-                #logging.info(f'image: {page_counter}')  # デバッグ用
-            elif match.group(1):  # [image] の後に改行（文字列または実際の改行）と [newpage] の場合
+                
+            elif match.group(1): # [image]...[newpage] pattern inside complex regex?
+                # NOTE: 元の正規表現のgroupインデックスに依存。
+                # group(1)は [image] \n [newpage] の最初のimageの中身を指す想定
                 page_counter += 2
-                if 'newpage' in match.group(0):
-                    v_page.append(page_counter)  # 仮想ページにページ番号を追加
-                #logging.info(f'image after newline and newpage: {page_counter}')  # デバッグ用
-            elif match.group(3):  # [newpage] の後に [image] の場合
+                if is_newpage:
+                    v_page.append(page_counter)
+            
+            elif match.group(3): # [newpage]...[image]
                 page_counter += 1
-                if 'newpage' in match.group(0):
-                    v_page.append(page_counter)  # 仮想ページにページ番号を追加
-                page_counter += 1 # 画像のページ
-                #logging.info(f'newpage after image: {page_counter}')  # デバッグ用
-            elif match.group(4):  # (?:\s*(?:\\n|\n)*\s*\[image\]\((.*?)\)\s*)+
-                # 連続する [image](...) タグの場合
+                if is_newpage:
+                    v_page.append(page_counter)
+                page_counter += 1 # 画像分
+
+            elif match.group(4): # 連続image
                 images_count = len(match.group(4).strip().split())
-                page_counter += images_count + 1  # 1ページと画像数分のページを追加
+                page_counter += images_count + 1
 
-        # ジャンプ処理ループ
-        for match in jump_pattern.finditer(ep['text']):
-            jump_value = int(match.group(1))  # 'jump(x)'のxを整数として取得
+        # [jump:x] の置換処理
+        def jump_replacer(match):
+            jump_value = int(match.group(1))
             if 0 <= jump_value - 1 < len(v_page):
-                ep['text'] = ep['text'].replace(match.group(), f'[#link_s]{str(v_page[jump_value - 1]).zfill(digits)}.xhtml[#link_t]{jump_value}ページ目へ移動[#link_e]')
+                 # リンク先ページ番号
+                target_page = str(v_page[jump_value - 1]).zfill(digits)
+                return f'[#link_s]{target_page}.xhtml[#link_t]{jump_value}ページ目へ移動[#link_e]'
+            return match.group(0) # 範囲外なら置換しない
 
-        page_counter += 1  # 次のエピソードのページ番号を設定
-       
+        ep['text'] = _PATTERN_JUMP_TAG.sub(jump_replacer, ep['text'])
+        page_counter += 1
 
-    global link
-    global img_link
-    global a_link
 
-    site_name, nid = os.path.relpath(nove_path, data_folder).split(os.sep)[:2]
-
-    img_link = f'{host_name}/images/'  # 画像ファイルが保存されているディレクトリのリンク
-
-    # 目次ファイルの生成
+    # 3. index.html (目次) の生成
     if data.get("serialization") != "短編":
-        relpath = os.path.relpath(nove_path, data_folder).replace('\\', '/')
-        
-        link = f"{host_name}/{relpath}"
-        a_link = f"/{relpath}"
-        index_path = os.path.join(nove_path, 'index.html')
-        with open(index_path, 'w', encoding='utf-8') as f:
-            f.write('<!DOCTYPE html>\n')
-            f.write('<html lang="ja">\n')
-            f.write('<head>\n')
-            f.write('<meta charset="UTF-8">\n')
-            f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-            f.write('<link rel="stylesheet" href="/css/common.css">\n')
-            f.write('<link rel="icon" href="/icon/favicon.ico">\n')
-            f.write('<link rel="manifest" href="/manifest.json">\n')
-            f.write('<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">\n')
-            f.write('<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">\n')
-            f.write('<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">\n')
-            f.write('<title>Index Pixiv</title>\n')
-            f.write('</head>\n')
-            f.write('<body>\n')
-            f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
-            f.write(f'<a href="./info/{key_data}" class="header-link">作品情報</a>\n')
-            f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
-            f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
-            f.write('<div class="index_box">\n')
-            write_index(f, data, key_data)  # 目次生成
-            f.write('</div>\n')
-            f.write('</body>\n')
-            f.write('</html>\n')
-    
-    formatted_create = (
-        safe_fromiso(data.get("createDate")).strftime("%Y年 %m月%d日 %H時%M分")
-        if safe_fromiso(data.get("createDate")) else ""
+        index_body_parts = [
+            f'<a href="../{key_data}" class="header-link">戻る</a>',
+            f'<a href="./info/{key_data}" class="header-link">作品情報</a>',
+            f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>',
+            f'<p class="novel_title">{data.get("title")}</p>',
+            '<div class="index_box">',
+            _generate_index_content(data, key_data, a_link_base),
+            '</div>'
+        ]
+        _save_html(
+            os.path.join(nove_path, 'index.html'),
+            title="Index Pixiv",
+            body_content='\n'.join(index_body_parts)
+        )
+
+
+    # 4. info/index.html (作品情報) の生成
+    info_body = _generate_info_content(data, key_data, site_name, nid)
+    _save_html(
+        os.path.join(nove_path, 'info', 'index.html'),
+        title="Index Pixiv",
+        body_content=info_body
     )
 
-    formatted_update = (
-        safe_fromiso(data.get("updateDate")).strftime("%Y年 %m月%d日 %H時%M分")
-        if safe_fromiso(data.get("updateDate")) else ""
-    )
 
-    #インフォメーションファイルの生成
-    if not os.path.exists(os.path.join(nove_path, 'info')):
-        os.makedirs(os.path.join(nove_path, 'info'))
-    info_path = os.path.join(nove_path, 'info', 'index.html')
-    with open(info_path, 'w', encoding='utf-8') as f:
-        f.write('<!DOCTYPE html>\n')
-        f.write('<html lang="ja">\n')
-        f.write('<head>\n')
-        f.write('<meta charset="UTF-8">\n')
-        f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write('<link rel="stylesheet" href="/css/common.css">\n')
-        f.write('<link rel="icon" href="/icon/favicon.ico">\n')
-        f.write('<link rel="manifest" href="/manifest.json">\n')
-        f.write('<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">\n')
-        f.write('<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">\n')
-        f.write('<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">\n')
-        f.write('<title>Index Pixiv</title>\n')
-        f.write('</head>\n')
-        f.write('<body>\n')
-        f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
-        f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
-        f.write(f'<h1><a href="{data.get("url")}" target="_blank">{data.get("title")}</a></h1>\n')
-        if data.get("serialization") == "短編":
-            f.write(f'<div><span id="noveltype">短編</span></div>\n')
-        else:
-            f.write(f'<div><span id="noveltype">{data.get("serialization")}</span> 全{data.get("total_episodes")}エピソード</div>\n')
-        f.write('<table>\n')
-        f.write(f'<tr><th class="ex">あらすじ</th><td class="ex">{data.get("caption")}</td></tr>\n')
-        f.write('<tr>\n')
-        f.write('<th>作者名</th>\n')
-        f.write(f'<td><a href="{data.get("author_url")}" target="_blank">{data.get("author")}</a></td>\n')
-        f.write('</tr>\n')
-        f.write('<tr>\n')
-        f.write('<th>キーワード</th>\n')
-        f.write(f'<td>{" ".join(data.get("all_tags", [])).strip() if data.get("all_tags") else "\n<span>キーワードが設定されていません</span>\n"}</td>\n')
-        f.write('</tr>\n')
-        f.write('<tr>\n')
-        f.write('<th>掲載日</th>\n')
-        f.write(f'<td>{formatted_create}</td>\n')
-        f.write('</tr>\n')
-        f.write('<tr>\n')
-        if data.get("serialization") == "短編":
-            f.write('<th>最終更新日</th>\n')
-        elif data.get("serialization") == "連載中":
-            f.write('<th>最新掲載日</th>\n')
-        elif data.get("serialization") == "完結済":
-            f.write('<th>最終掲載日</th>\n')
-        f.write(f'<td>{formatted_update}</td>\n')
-        f.write('</tr>\n')
-        f.write('<tr>\n')
-        f.write('<th>文字数</th>\n')
-        f.write(f'<td>{int(data.get("total_characters")):,}文字</td>\n')
-        f.write('</tr>\n')
-        f.write('</table>\n')
-        f.write('</body>\n')
-        f.write('</html>\n')
+    # 5. 各エピソードページの生成
+    is_short_story = (data.get("serialization") == "短編")
 
-    #エピソードファイルの生成
     for ep in data['episodes'].values():
-        if data.get("serialization") == "短編":
+        if is_short_story:
             ep_path = os.path.join(nove_path, 'index.html')
+            # 短編用のナビゲーション
+            nav_links = [
+                f'<a href="../{key_data}" class="header-link">戻る</a>',
+                f'<a href="./info/{key_data}" class="header-link">作品情報</a>',
+                f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>',
+                f'<p class="novel_title">{data.get("title")}</p>'
+            ]
         else:
             ep_path = os.path.join(nove_path, f'{ep["id"]}', 'index.html')
+            # 連載用のナビゲーション
+            nav_links = [
+                f'<a href="../{key_data}" class="header-link">戻る</a>',
+                f'<a href="../info/{key_data}" class="header-link">作品情報</a>',
+                f'<a href="/reader/?site={site_name}&nid={nid}&eid={ep["id"]}" class="header-link">簡易リーダーで読む</a>',
+                f'<p class="novel_subtitle">{ep["title"]}</p>'
+            ]
 
-        if not os.path.exists(os.path.dirname(ep_path)):
-            os.makedirs(os.path.dirname(ep_path))
+        # 本文組み立て
+        ep_body_parts = nav_links
+        
+        # 前書き
+        if ep.get('introduction'):
+            ep_body_parts.append('<div class="js-novel-text p-novel__text p-novel__text--preface">')
+            ep_body_parts.append(format_text(ep['introduction'], 'Lp', key_data, img_link_base))
+            ep_body_parts.append('</div>')
 
-        link = host_name + ep_path.replace('index.html', '').replace(data_folder, '').replace('\\', '/')
-        with open(ep_path, 'w', encoding='utf-8') as f:
-            f.write('<!DOCTYPE html>\n')
-            f.write('<html lang="ja">\n')
-            f.write('<head>\n')
-            f.write('<meta charset="UTF-8">\n')
-            f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-            f.write('<link rel="stylesheet" href="/css/common.css">\n')
-            f.write('<link rel="icon" href="/icon/favicon.ico">\n')
-            f.write('<link rel="manifest" href="/manifest.json">\n')
-            f.write('<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">\n')
-            f.write('<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">\n')
-            f.write('<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">\n')
-            f.write(f'<title>{ep["title"]}</title>\n')
-            f.write('''<style>
-                            img {
-                                display: block; /* レイアウトを安定させるため */
-                            }
-                        </style>\n''')
-            f.write('</head>\n')
-            f.write('<body>\n')
-            f.write(f'<a href="../{key_data}" class="header-link">戻る</a>\n')
-            if data.get("serialization") == "短編":
-                f.write(f'<a href="./info/{key_data}" class="header-link">作品情報</a>\n')
-                f.write(f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>\n')
-                f.write(f'<p class="novel_title">{data.get("title")}</p>\n')
-            else:
-                f.write(f'<a href="../info/{key_data}" class="header-link">作品情報</a>\n')
-                f.write(f'<a href="/reader/?site={site_name}&nid={nid}&eid={ep["id"]}" class="header-link">簡易リーダーで読む</a>\n')
-                f.write(f'<p class="novel_subtitle">{ep["title"]}</p>\n')
-            write_preface(f, ep, key_data)  # 前書き生成
-            write_main_text(f, ep, key_data) # 本文生成
-            write_postscript(f, ep, key_data) # あとがき生成
-            f.write('<script src="/script/image.js"></script>\n')
-            f.write('</body>\n')
-            f.write('</html>\n')
-    #完了
+        # 本文
+        ep_body_parts.append('<div class="js-novel-text p-novel__text">')
+        ep_body_parts.append(format_text(ep.get('text', ''), 'L', key_data, img_link_base))
+        ep_body_parts.append('</div>')
+
+        # 後書き
+        if ep.get('postscript'):
+            ep_body_parts.append('<div class="js-novel-text p-novel__text p-novel__text--afterword">')
+            ep_body_parts.append(format_text(ep['postscript'], 'La', key_data, img_link_base))
+            ep_body_parts.append('</div>')
+        
+        ep_body_parts.append('<script src="/script/image.js"></script>')
+
+        # 画像表示用の追加CSS
+        extra_css = """<style>
+            img { display: block; }
+        </style>"""
+
+        _save_html(
+            ep_path,
+            title=ep["title"],
+            body_content='\n'.join(ep_body_parts),
+            extra_head=extra_css
+        )
+
     logging.info(f'{data.get("title")}の変換が完了しました。')
