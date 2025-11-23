@@ -3,108 +3,79 @@ import json
 import shutil
 import importlib
 import configparser
+import logging
+import zipfile
 from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
 
+# 必要に応じてインポート (環境に合わせてパス解決してください)
 import crawler.convert_narou as cn
 import crawler.common as cm
 
-#ログを保存
-import logging
-import zipfile
+# --- 定数: HTMLテンプレート ---
 
-#utilで使うモジュールのインポート
-def init_import(site_dic):
-    globals().update(import_modules(site_dic))
+INDEX_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>const POST_URL = "{post_url}";</script>
+<script src="script/top_page.js"></script>
+<link rel="stylesheet" href="/css/common.css">
+<link rel="icon" href="/icon/favicon.ico">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
+<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
+<title>Index</title>
+</head>
+<body>
+<input type="text" id="input1" placeholder="登録URL">
+<button onclick="debouncedSubmit()">送信</button><br><br><br>
 
-#ルート用のindexファイルの作成
-def create_index(data_path, config, post_path=''):
+<button onclick="submitUpdate('all')">全て 更新</button>
+<button onclick="submitConvert('all')">全て 変換</button>
+<button onclick="submitReDownload('all')">全て 再ダウンロード</button>
+<br>
+{site_buttons}
 
-    # POST先を指定する
-    post_url = '/api/' if post_path == 'api' else '#'
+<br><br>
+<label for="pdfFile">PDFファイル選択:</label>
+<input type="file" id="pdfFile" accept="application/pdf">
+<br>
+<label for="authorId">author_id:</label>
+<input type="text" id="authorId" placeholder="author_id">
+<br>
+<label for="authorUrl">author_url:</label>
+<input type="text" id="authorUrl" placeholder="author_url">
+<br>
+<label for="chapter">chapter:</label>
+<input type="text" id="chapter" placeholder="exa:1-3:ああ,4-5:いい">
+<br>
+<label for="novelType">作品タイプ:</label>
+<select id="novelType">
+<option value="1">完結済</option>
+<option value="0">連載中</option>
+<option value="2">短編</option>
+</select>
+<br>
+<button onclick="submitPdfData()">送信</button>
 
-    # Indexファイルを作成
-    with open(os.path.join(data_path, 'index.html'), 'w', encoding='utf-8') as f:
-        f.write('<!DOCTYPE html>\n')
-        f.write('<html lang="ja">\n')
-        f.write('<head>\n')
-        f.write('<meta charset="UTF-8">\n')
-        f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write(f'<script>const POST_URL = "{post_url}";</script>')
-        f.write('<script src="script/top_page.js"></script>\n')
-        f.write('<link rel="stylesheet" href="/css/common.css">\n')
-        f.write('<link rel="icon" href="/icon/favicon.ico">\n')
-        f.write('<link rel="manifest" href="/manifest.json">\n')
-        f.write('<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">\n')
-        f.write('<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">\n')
-        f.write('<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">\n')
-        f.write('<title>Index</title>\n')
-        f.write('</head>\n')
-        f.write('<body>\n')
+<br><br>
+<label for="zipFile">ZIPファイル選択:</label>
+<input type="file" id="zipFile" accept="application/zip">
+<br>
+<br>
+<button onclick="submitZipData()">送信</button>
 
-        # 入力フィールドと送信ボタン
-        f.write('<input type="text" id="input1" placeholder="登録URL">\n')
-        f.write('<button onclick="debouncedSubmit()">送信</button><br><br><br>\n')
+<br><br><br>
+{site_links}
+<br><br><br><br><a href="#" onclick="redirectWithParams(/reader/)">簡易リーダーへ移動</a>
+</body>
+</html>
+"""
 
-        f.write(f'<button onclick="submitUpdate(\'all\')">全て 更新</button>\n')
-        f.write(f'<button onclick="submitConvert(\'all\')">全て 変換</button>\n')
-        f.write(f'<button onclick="submitReDownload(\'all\')">全て 再ダウンロード</button>\n<br>')
-
-        # config['crawler']のキーを使ったボタン生成
-        for key in config['crawler']:
-            if key == 'narou':
-                f.write(f'<button disabled>{key} 更新</button>\n')
-                f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n')
-                f.write(f'<button disabled>{key} 再ダウンロード</button>\n<br>')
-            else:
-                f.write(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>\n')
-                f.write(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>\n')
-                f.write(f'<button onclick="submitReDownload(\'{key}\')">{key} 再ダウンロード</button>\n<br>')
-        
-        # PDF選択ボタンとauthor_id, author_url入力テキストボックス、およびリストボックス
-        f.write('<br><br>\n')
-        f.write('<label for="pdfFile">PDFファイル選択:</label>\n')
-        f.write('<input type="file" id="pdfFile" accept="application/pdf">\n')
-        f.write('<br>\n')
-        f.write('<label for="authorId">author_id:</label>\n')
-        f.write('<input type="text" id="authorId" placeholder="author_id">\n')
-        f.write('<br>\n')
-        f.write('<label for="authorUrl">author_url:</label>\n')
-        f.write('<input type="text" id="authorUrl" placeholder="author_url">\n')
-        f.write('<br>\n')
-        f.write('<label for="chapter">chapter:</label>\n')
-        f.write('<input type="text" id="chapter" placeholder="exa:1-3:ああ,4-5:いい">\n')
-        f.write('<br>\n')
-        f.write('<label for="novelType">作品タイプ:</label>\n')
-        f.write('<select id="novelType">\n')
-        f.write('<option value="1">完結済</option>\n')
-        f.write('<option value="0">連載中</option>\n')
-        f.write('<option value="2">短編</option>\n')
-        f.write('</select>\n')
-        f.write('<br>\n')
-        f.write('<button onclick="submitPdfData()">送信</button>\n')
-
-        # zipファイル選択ボタン
-        f.write('<br><br>\n')
-        f.write('<label for="zipFile">ZIPファイル選択:</label>\n')
-        f.write('<input type="file" id="zipFile" accept="application/zip">\n')
-        f.write('<br>\n')
-        f.write('<br>\n')
-        f.write('<button onclick="submitZipData()">送信</button>\n')
-
-        f.write('<br><br><br>\n')
-
-        # config['crawler']内のキーを使った動的リンクの生成（オプション）
-        for key in config['crawler']:
-            f.write(f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>\n')
-
-        f.write('<br><br><br><br><a href="#" onclick="redirectWithParams(/reader/)">簡易リーダーへ移動</a>\n')
-        f.write('</body>\n')
-        f.write('</html>\n')
-
-#リーダー用のindexファイルの作成
-def create_reader_index(data_path, site_list):
-    with open(os.path.join(data_path, 'reader', 'index.html'), 'w', encoding='utf-8') as f:
-        f.write("""<!DOCTYPE html>
+READER_INDEX_HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
@@ -123,39 +94,188 @@ def create_reader_index(data_path, site_list):
     <button id="btn-clear-cache">キャッシュクリア</button>
   </header>
 
-  <!-- 進捗バー -->
   <div id="progress-container">
     <div id="progress-bar"></div>
     <div id="progress-info">0.00% (0/0)</div>
   </div>
 
   <main id="app">
-    <!-- 本棚／リーダー画面がここに描画されます -->
-  </main>
+    </main>
 
   <script>
-  // HTML側で単純リストを定義
-""")
-        f.write(f"  const sources = {site_list};")
-        f.write("""  </script>
-  <script src="/script/reader.js"></script>
-  <!--<script src="/script/image.js"></script>-->
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      const p = new URLSearchParams(location.search);
-      if (p.has('site') && p.has('nid') && typeof window.adjustImages === 'function') {
-        window.adjustImages();
-      }
-    });
+  const sources = {site_list_json};
   </script>
-
+  <script src="/script/reader.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {{
+      const p = new URLSearchParams(location.search);
+      if (p.has('site') && p.has('nid') && typeof window.adjustImages === 'function') {{
+        window.adjustImages();
+      }}
+    }});
+  </script>
 </body>
 </html>
-""")
+"""
 
-#manifest.jsonファイルの作成
+# --- 初期化・設定関連 ---
+
+def init_import(site_dic):
+    """各サイト用のクローラーモジュールを動的にインポート"""
+    globals().update(import_modules(site_dic))
+
+def import_modules(site_dic):
+    modules = {}
+    for site_key, value in site_dic.items():
+        module_name = 'crawler.' + value.replace('.py', '')
+        modules[site_key] = importlib.import_module(module_name)
+    return modules
+
+def load_config():
+    """設定ファイル(setting.ini)を読み込み、初期フォルダ構成を作成"""
+    if not os.path.isdir('setting'):
+        os.makedirs('setting')
+        shutil.copy('setting.ini', 'setting/setting.ini')
+
+    config = configparser.ConfigParser()
+    config.read('setting/setting.ini')
+
+    # パス設定のヘルパー
+    def get_path(section, key, default_name):
+        path = config[section].get(key)
+        if not path:
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), default_name)
+        return path
+
+    data_path = get_path('setting', 'data', 'data')
+    cookie_folder = get_path('setting', 'cookie', 'cookie')
+    log_path = get_path('setting', 'log', 'log')
+    queue_path = get_path('setting', 'queue', 'queue')
+    pdf_path = get_path('setting', 'pdf', 'pdf')
+
+    # 必須フォルダ作成
+    for p in [data_path, cookie_folder, log_path, queue_path, pdf_path]:
+        os.makedirs(p, exist_ok=True)
+    
+    os.makedirs(os.path.join(data_path, 'images'), exist_ok=True)
+    os.makedirs(os.path.join(data_path, 'reader'), exist_ok=True)
+
+    # サイトごとの設定読み込み
+    site_dic = {}
+    login_dic = {}
+    folder_path = {}
+    cookie_path = {}
+    site_list = []
+
+    for key in config['crawler']:
+        site_list.append(key)
+        site_dic[key] = config['crawler'][key]
+        login_dic[key] = int(config['login'][key])
+        
+        folder_path[key] = os.path.join(data_path, key)
+        cookie_path[key] = os.path.join(cookie_folder, key)
+        
+        os.makedirs(folder_path[key], exist_ok=True)
+        os.makedirs(cookie_path[key], exist_ok=True)
+
+    # インデックスとマニフェスト作成
+    create_reader_index(data_path, site_list)
+    create_manifest(data_path)
+
+    # 静的リソースのコピー (css, script, icon, default_cover)
+    _copy_static_resources(data_path)
+
+    print("Initialize successfully!")
+    
+    return (
+        config, 
+        int(config['setting']['reload']), 
+        int(config['setting']['auto_update']), 
+        int(config['setting']['save_log']), 
+        int(config['setting']['interval']), 
+        int(config['setting']['auto_update_interval']), 
+        site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, 
+        int(config['server']['port']), config['server']['domain'], 
+        int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
+    )
+
+def _copy_static_resources(data_path):
+    """commonフォルダから静的リソースをコピー"""
+    cwd = os.getcwd()
+    resources = ['css', 'script', 'icon']
+    
+    for res in resources:
+        src = os.path.join(cwd, 'common', res)
+        dst = os.path.join(data_path, res)
+        if os.path.exists(src):
+            if os.path.exists(dst):
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+
+    # default_cover.png
+    cover_src = os.path.join(cwd, 'common', 'default_cover.png')
+    cover_dst = os.path.join(data_path, 'images', 'default_cover.png')
+    if os.path.exists(cover_src):
+        if os.path.exists(cover_dst):
+            os.remove(cover_dst)
+        shutil.copy2(cover_src, cover_dst)
+
+# --- ファイル生成関連 ---
+
+def create_index(data_path, config, post_path=''):
+    """ルート用index.htmlを作成"""
+    post_url = '/api/' if post_path == 'api' else '#'
+    
+    # ボタン生成ロジック
+    buttons_html = []
+    links_html = []
+    
+    for key in config['crawler']:
+        # リンク
+        links_html.append(f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>')
+        
+        # ボタン
+        if key == 'narou':
+            buttons_html.append(f'<button disabled>{key} 更新</button>')
+            buttons_html.append(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>')
+            buttons_html.append(f'<button disabled>{key} 再ダウンロード</button><br>')
+        else:
+            buttons_html.append(f'<button onclick="submitUpdate(\'{key}\')">{key} 更新</button>')
+            buttons_html.append(f'<button onclick="submitConvert(\'{key}\')">{key} 変換</button>')
+            buttons_html.append(f'<button onclick="submitReDownload(\'{key}\')">{key} 再ダウンロード</button><br>')
+
+    html_content = INDEX_HTML_TEMPLATE.format(
+        post_url=post_url,
+        site_buttons='\n'.join(buttons_html),
+        site_links='\n'.join(links_html)
+    )
+
+    with open(os.path.join(data_path, 'index.html'), 'w', encoding='utf-8') as f:
+        f.write(html_content)
+
+def create_reader_index(data_path, site_list):
+    """リーダー用index.htmlを作成"""
+    # JSON文字列として埋め込む
+    site_list_json = json.dumps(site_list, ensure_ascii=False)
+    html_content = READER_INDEX_HTML_TEMPLATE.format(site_list_json=site_list_json)
+    
+    os.makedirs(os.path.join(data_path, 'reader'), exist_ok=True)
+    with open(os.path.join(data_path, 'reader', 'index.html'), 'w', encoding='utf-8') as f:
+        f.write(html_content)
+
 def create_manifest(data_path):
-    # 書き出すデータ
+    """PWA用 manifest.json を作成"""
+    icons = []
+    sizes = [512, 384, 192, 180, 152, 144, 128, 96, 72, 48]
+    for size in sizes:
+        icon_entry = {
+            "src": f"/icon/icon_{size}x{size}.png",
+            "sizes": f"{size}x{size}",
+            "type": "image/png",
+            "purpose": "any maskable" if size == 512 else "any"
+        }
+        icons.append(icon_entry)
+
     manifest_data = {
         "name": "Narou Bridge",
         "short_name": "NarouBridge",
@@ -165,427 +285,176 @@ def create_manifest(data_path):
         "background_color": "#ffffff",
         "theme_color": "#ffffff",
         "orientation": "portrait",
-        "icons": [
-            {"src": "/icon/icon_512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
-            {"src": "/icon/icon_384x384.png", "sizes": "384x384", "type": "image/png", "purpose": "any"},
-            {"src": "/icon/icon_192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-            {"src": "/icon/icon_180x180.png", "sizes": "180x180", "type": "image/png", "purpose": "any"},
-            {"src": "/icon/icon_152x152.png", "sizes": "152x152", "type": "image/png", "purpose": "any"},
-            {"src": "/icon/icon_144x144.png", "sizes": "144x144", "type": "image/png", "purpose": "any"},
-            {"src": "/icon/icon_128x128.png", "sizes": "128x128", "type": "image/png", "purpose": "any"},
-            {"src": "/icon/icon_96x96.png", "sizes": "96x96", "type": "image/png", "purpose": "any"},
-            {"src": "/icon/icon_72x72.png", "sizes": "72x72", "type": "image/png", "purpose": "any"},
-            {"src": "/icon/icon_48x48.png", "sizes": "48x48", "type": "image/png", "purpose": "any"}
-        ]
+        "icons": icons
     }
 
-    # manifest.jsonファイルのパス
-    manifest_path = os.path.join(data_path, 'manifest.json')
-
-    # ファイルに書き出し
-    with open(manifest_path, 'w', encoding='utf-8') as f:
+    with open(os.path.join(data_path, 'manifest.json'), 'w', encoding='utf-8') as f:
         json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
-#初期設定の読み込み
-def load_config():
-    site_dic = {}
-    login_dic = {}
+# --- クローラー実行ロジック ---
 
-    folder_path = {}
-    cookie_path = {}
-
-    if not os.path.isdir('setting'):
-        os.makedirs('setting')
-        # config.ini を config フォルダ内にコピー
-        shutil.copy('setting.ini', 'setting/setting.ini')
-
-    # 設定の読み込み
-    config = configparser.ConfigParser()
-    config.read('setting/setting.ini')
-
-    # Get the path from the data key
-    data_path = config['setting']['data']
-
-    # 指定されないならカレントディレクトリ
-    if not data_path:
-        data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-
-    #Cookieの保存先を指定
-    cookie_folder = config['setting']['cookie']
-
-    # 指定されないならカレントディレクトリ
-    if not cookie_folder:
-        cookie_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookie')
-
-    log_path = config['setting']['log']
-
-    # 指定されないならカレントディレクトリ
-    if not log_path:
-        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
-
-    queue_path = config['setting']['queue']
-
-    # 指定されないならカレントディレクトリ
-    if not queue_path:
-        queue_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'queue')
-
-    pdf_path = config['setting']['pdf']
-
-    # 指定されないならカレントディレクトリ
-    if not pdf_path:
-        pdf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pdf')
-
-
-    # ないなら作れdataフォルダ
-    image_path = os.path.join(data_path, 'images')
-    if not os.path.exists(image_path):
-        os.makedirs(image_path)
-
-    #ないなら作れreaderフォルダ
-    reader_path = os.path.join(data_path, 'reader')
-    if not os.path.exists(reader_path):
-        os.makedirs(reader_path)
-
-    site_list = []
-
-    # dataフォルダcookieフォルダとサイト名のマトリョシカを作成
-    for key in config['crawler']:
-        folder_name = key
-        site_list.append(folder_name)
-        site_dic[key] = config['crawler'][key]
-        login_dic[key] = int(config['login'][key])
-        folder_path[key] = os.path.join(data_path, folder_name)
-        cookie_path[key] = os.path.join(cookie_folder, folder_name)
-        if not os.path.exists(folder_path[key]):
-            os.makedirs(folder_path[key])
-        if not os.path.exists(cookie_path[key]):
-            os.makedirs(cookie_path[key])
-
-    create_reader_index(data_path, site_list)
-
-    # common/css フォルダを data_path/css に上書きコピー
-    css_source_path = os.path.join(os.getcwd(), 'common', 'css')
-    css_destination_path = os.path.join(data_path, 'css')
-
-    if os.path.exists(css_source_path):
-        if os.path.exists(css_destination_path):
-            shutil.rmtree(css_destination_path)
-        shutil.copytree(css_source_path, css_destination_path)
-
-    # common/script フォルダを data_path/script に上書きコピー
-    js_source_path = os.path.join(os.getcwd(), 'common', 'script')
-    js_destination_path = os.path.join(data_path, 'script')
-
-    if os.path.exists(js_source_path):
-        if os.path.exists(js_destination_path):
-            shutil.rmtree(js_destination_path)
-        shutil.copytree(js_source_path, js_destination_path)
-
-    # common/icon フォルダを data_path/icon に上書きコピー
-    icon_source_path = os.path.join(os.getcwd(), 'common', 'icon')
-    icon_destination_path = os.path.join(data_path, 'icon')
-
-    if os.path.exists(icon_source_path):
-        if os.path.exists(icon_destination_path):
-            shutil.rmtree(icon_destination_path)
-        shutil.copytree(icon_source_path, icon_destination_path)
-
-    # default_cover.pngをdata_path/imagesに上書きコピー
-    default_cover_source_path = os.path.join(os.getcwd(), 'common', 'default_cover.png')
-    default_cover_destination_path = os.path.join(data_path, 'images', 'default_cover.png')
-    if os.path.exists(default_cover_source_path):
-        if os.path.exists(default_cover_destination_path):
-            os.remove(default_cover_destination_path)
-        shutil.copy2(default_cover_source_path, default_cover_destination_path)
+def _execute_site_action(action_name, param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name):
+    """各サイトのアクション（update, convert, re_download, download）を共通処理"""
     
-    # manifest.jsonをdata_pathに作成
-    create_manifest(data_path)
+    target_sites = []
 
-    # ログフォルダがないなら作成
-    if not os.path.exists(log_path):
-        os.makedirs(log_path)
-
-    # キューフォルダがないなら作成
-    if not os.path.exists(queue_path):
-        os.makedirs(queue_path)
-
-    # PDFフォルダがないなら作成
-    if not os.path.exists(pdf_path):
-        os.makedirs(pdf_path)
-
-    print("Initialize successfully!")
-    return config, int(config['setting']['reload']), int(config['setting']['auto_update']), int(config['setting']['save_log']), int(config['setting']['interval']), int(config['setting']['auto_update_interval']), site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, int(config['server']['port']), config['server']['domain'], int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
-
-# clawler　フォルダ内のモジュールをインポート
-def import_modules(site_dic):
-    modules = {}
-    for site_key, value in site_dic.items():
-        module_name = 'crawler.' + value.replace('.py', '')
-        modules[site_key] = importlib.import_module(module_name)
-    return modules
-
-#小説の更新処理
-def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name):
-
-    if not update_param == 'all':
-        # 更新処理
+    # パラメータ解析: 'all' または 特定のサイトキー または URLの一部
+    if param == 'all':
+        target_sites = [k for k in site_dic.keys() if k != 'narou'] # narouは一括処理対象外とする仕様
+    elif param in site_dic:
+        if param == 'narou' and action_name != 'convert': # narouはconvert以外許可しない
+             logging.debug(f'Skipping site: {param} for {action_name}')
+             return 400
+        target_sites = [param]
+    else:
+        # URLの一部からサイト判定 (download用)
         for site_key, value in site_dic.items():
-            if update_param == site_key:
-                site = site_key
-
-                if site == 'narou':
-                    logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
+            # ファイル名からモジュール判定ロジック (元コード準拠)
+            module_sig = value.replace('_', '.').replace('.py', '')
+            if module_sig in param:
+                if site_key == 'narou':
+                    logging.debug('Skipping site: narou')
                     return 400
-
-                if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
-                    is_login = int(login_dic[site])
-                else:
-                    return 400
-                
+                target_sites = [site_key]
                 break
         else:
+            return 400 # 該当サイトなし
+
+    # 実行ループ
+    for site in target_sites:
+        # ログイン設定チェック
+        login_val = int(login_dic[site])
+        if login_val not in [0, 1]:
             return 400
         
-        logging.info(f'Update: {site}')
-        globals()[site].init(cookie_path[site], data_path, is_login, interval)
-        globals()[site].update(folder_path[site], key_data, data_path, host_name)
+        logging.info(f'{action_name.capitalize()}: {site}')
+        module = globals()[site]
+        
+        # 共通初期化
+        module.init(cookie_path[site], data_path, login_val, interval)
+        
+        # アクション実行
+        if action_name == 'update':
+            module.update(folder_path[site], key_data, data_path, host_name)
+        elif action_name == 're_download':
+            module.re_download(folder_path[site], key_data, data_path, host_name)
+        elif action_name == 'convert':
+            module.convert(folder_path[site], key_data, data_path, host_name)
+        elif action_name == 'download':
+            # downloadだけ引数が異なる (param=URL)
+            module.download(param, folder_path[site], key_data, data_path, host_name)
 
-    else:
-        # 全更新処理
-        for site_key, value in site_dic.items():
-            site = site_key
+    return 200
 
-            if site == 'narou':
-                logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
-                continue
+def update(update_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name):
+    return _execute_site_action('update', update_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name)
 
-            if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
-                is_login = int(login_dic[site])
-            else:
-                return 400
-            
-            logging.info(f'Update: {site}')
-            globals()[site].init(cookie_path[site], data_path, is_login, interval)
-            globals()[site].update(folder_path[site], key_data, data_path, host_name)
-
-#小説の再ダウンロード処理
 def re_download(re_download_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name):
+    return _execute_site_action('re_download', re_download_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name)
 
-    if not re_download_param == 'all':
-        # 更新処理
-        for site_key, value in site_dic.items():
-            if value.replace('_', '.').replace('.py', '') in re_download_param:
-                if re_download_param == site_key:
-                    site = site_key
-
-                    if site == 'narou':
-                        logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
-                        return 400
-
-                    if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
-                        is_login = int(login_dic[site])
-                    else:
-                        return 400
-                    
-                    break
-            else:
-                return 400
-        else:
-            return 400
-
-        logging.info(f'Re Download: {site}')
-        globals()[site].init(cookie_path[site], data_path, is_login, interval)
-        globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
-
-    else:
-        # 全更新処理
-        for site_key, value in site_dic.items():
-            site = site_key
-
-            if site == 'narou':
-                logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
-                continue
-
-            if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
-                is_login = int(login_dic[site])
-            else:
-                return 400
-            
-            logging.info(f'Re Download: {site}')
-            globals()[site].init(cookie_path[site], data_path, is_login, interval)
-            globals()[site].re_download(folder_path[site], key_data, data_path, host_name)
-
-#小説の変換処理
 def convert(convert_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name):
-    
-    if not convert_param == 'all':
-        # 変換処理
-        for site_key, value in site_dic.items():
-            if convert_param == site_key:
-                site = site_key
-                if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
-                    is_login = int(login_dic[site])
-                else:
-                    return 400
+    return _execute_site_action('convert', convert_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name)
 
-                break
-        else:
-            return 400
-
-        logging.info(f'Convert: {site}')
-        globals()[site].init(cookie_path[site], data_path, is_login, interval)
-        globals()[site].convert(folder_path[site], key_data, data_path, host_name)
-
-    else:
-        # 全変換処理
-        for site_key, value in site_dic.items():
-            site = site_key
-            if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
-                is_login = int(login_dic[site])
-            else:
-                return 400
-
-            logging.info(f'Convert: {site}')
-            globals()[site].init(cookie_path[site], data_path, is_login, interval)
-            globals()[site].convert(folder_path[site], key_data, data_path, host_name)
-
-#小説のダウンロード処理
 def download(add_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name):
-    # webサイトの判別
-    for site_key, value in site_dic.items():
-        if value.replace('_', '.').replace('.py', '') in add_param:
-            site = site_key
+    return _execute_site_action('download', add_param, site_dic, login_dic, folder_path, data_path, cookie_path, key_data, interval, host_name)
 
-            if site == 'narou':
-                logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
-                return 400
+# --- ファイル変換処理 (PDF/ZIP) ---
 
-            if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
-                is_login = int(login_dic[site])
-            else:
-                return 400
-            break
-    else:
-
-        if site == 'narou':
-            logging.debug(f'Skipping site: {site}')  # デバッグ用ログ
-            return 400    
-
-        if int(login_dic[site]) == 0 or int(login_dic[site]) == 1:
-            is_login = int(login_dic[site])
-        else:
-            return 400
-
-    logging.info(f'Web site: {site}')
-    logging.info(f'URL: {add_param}')
-    globals()[site].init(cookie_path[site], data_path, is_login, interval)
-    globals()[site].download(add_param, folder_path[site], key_data, data_path, host_name)
-
-#PDFファイルからテキストファイルへの変換
 def pdf_to_text(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, folder_path, data_path, key_data, host_name):
-    # PDFファイルの読み込み
-    site = 'narou'
-    logging.info(f'Genelate HTML from PDF: {site}')
+    site = 'narou' # PDF変換はnarouモジュールの機能を使用
+    logging.info(f'Generate HTML from PDF: {site}')
+    # globals()[site] -> crawler.narou
     globals()[site].gen_from_pdf(pdf_path, pdf_name, author_id, author_url, novel_type, chapter, folder_path[site], key_data, data_path, host_name)
 
-#ZIPファイルからテキストファイルへの変換
 def zip_to_text(pdf_path, zip_name, data_path, host_name):
-    # ZIPファイルの読み込み
+    """ZIPファイルからデータを展開・統合"""
     zip_file_path = os.path.join(pdf_path, zip_name)
-    data_json_content = None
-
-    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-        if 'data.json' in zip_ref.namelist():
+    
+    try:
+        with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+            # data.json の読み込み
+            if 'data.json' not in zip_ref.namelist():
+                logging.error('data.json not found in the zip file.')
+                return
+            
             with zip_ref.open('data.json') as f:
                 data_json_content = f.read().decode('utf-8')
-        else:
-            logging.error('data.json not found in the zip file.')
-            return
+            
+            json_data = json.loads(data_json_content)
+            sitename = json_data.get("site_name")
 
-        json_data = json.loads(data_json_content)
-        sitename = json_data.get("site_name")
-
-        if "images" in json_data and isinstance(json_data["images"], dict):
-            if not json_data["images"]:
-                # imagesが空の場合は何もしない
-                pass
-            else:
-                # imagesに中身がある場合の処理
+            # 画像データベースの更新
+            if json_data.get("images"):
                 images_dir = os.path.join(data_path, "images")
                 db_json_path = os.path.join(images_dir, "database.json")
-                # 既存のdatabase.jsonを読み込む（なければ空dict）
-                if os.path.exists(db_json_path):
-                    with open(db_json_path, "r", encoding="utf-8") as dbf:
-                        try:
-                            db_data = json.load(dbf)
-                        except Exception:
-                            db_data = {}
-                else:
-                    db_data = {}
-
-                # 画像データを追加・上書き
-                for image_name, image_data in json_data["images"].items():
-                    db_data[image_name] = image_data
-
-                # database.jsonに書き戻す
                 os.makedirs(images_dir, exist_ok=True)
+
+                db_data = {}
+                if os.path.exists(db_json_path):
+                    try:
+                        with open(db_json_path, "r", encoding="utf-8") as dbf:
+                            db_data = json.load(dbf)
+                    except Exception:
+                        pass # 読み込み失敗時は空で続行
+
+                # マージ
+                db_data.update(json_data["images"])
+
                 with open(db_json_path, "w", encoding="utf-8") as dbf:
                     json.dump(db_data, dbf, ensure_ascii=False, indent=2)
-                
-                # zip内のimages/フォルダをdata_path/imagesに上書きコピー
+
+                # 画像ファイルの展開
                 images_dir_in_zip = f"{sitename}/images/"
-                images_dest_dir = os.path.join(data_path, "images")
                 for member in zip_ref.namelist():
                     if member.startswith(images_dir_in_zip) and not member.endswith('/'):
-                        # 画像ファイルの相対パス
                         rel_path = os.path.relpath(member, images_dir_in_zip)
-                        dest_path = os.path.join(images_dest_dir, rel_path)
+                        dest_path = os.path.join(images_dir, rel_path)
                         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                         with zip_ref.open(member) as src, open(dest_path, "wb") as dst:
                             shutil.copyfileobj(src, dst)
-        
-        if not os.path.exists(os.path.join(data_path, sitename)):
-            os.makedirs(os.path.join(data_path, sitename))
-        
-        # zip内のsitenameフォルダをdata_path/sitenameに構造を保ったままコピー
-        if sitename:
-            for member in zip_ref.namelist():
-                if member.startswith(f"{sitename}/"):
-                    zip_ref.extract(member, data_path)
 
-    # zipファイルを削除
-    try:
+            # サイトデータの展開
+            if sitename:
+                target_dir = os.path.join(data_path, sitename)
+                os.makedirs(target_dir, exist_ok=True)
+                for member in zip_ref.namelist():
+                    if member.startswith(f"{sitename}/"):
+                        zip_ref.extract(member, data_path)
+
+        # ZIP削除
         os.remove(zip_file_path)
+
     except Exception as e:
-        logging.error(f"Failed to remove zip file: {zip_file_path} ({e})")
+        logging.error(f"ZIP processing failed: {e}")
 
-#リクエストIDの削除
+# --- その他ユーティリティ ---
+
 def cleanup_expired_requests(requests_dict, expiration_time):
-    """
-    指定した有効期限を超えたリクエストIDを削除し、リクエストID以外が同じ内容の重複リクエストを削除する。
-    """
+    """有効期限切れリクエストと重複リクエストの削除"""
     current_time = datetime.now()
-    processed_signatures = set()  # 処理済みのリクエスト内容を記録する集合
+    processed_signatures = set()
+    queue_stop = False # 元コードのロジックを維持するための変数（実際にはシグネチャ重複時のフラグとして使われている模様）
 
-    for key in list(requests_dict):
-        request_time = requests_dict[key]["time"]
-        request_data = requests_dict[key]["data"]
+    # 辞書を変更しながらイテレートしないようリスト化
+    for key in list(requests_dict.keys()):
+        item = requests_dict[key]
+        request_time = item["time"]
+        request_data = item["data"]
 
-        # リクエストの有効期限を確認
+        # 期限切れ削除
         if (current_time - request_time).total_seconds() > expiration_time:
             del requests_dict[key]
             continue
 
-        # リクエストの内容を識別するためのシグネチャを生成（リクエストIDを除く）
-        signature = json.dumps({k: v for k, v in request_data.items() if k != "request_id"}, sort_keys=True)
+        # シグネチャによる重複チェック
+        # request_id 以外をシグネチャとする
+        sig_data = {k: v for k, v in request_data.items() if k != "request_id"}
+        signature = json.dumps(sig_data, sort_keys=True)
 
-        # シグネチャが既に存在する場合、このリクエストを削除
         if signature in processed_signatures:
             del requests_dict[key]
-            queue_stop = True
+            queue_stop = True # 重複があったことを通知
         else:
-            # 新しいシグネチャを記録
             processed_signatures.add(signature)
-            queue_stop = False
 
     return requests_dict, queue_stop
