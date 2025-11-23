@@ -541,20 +541,36 @@ def get_cover(raw_small_url, folder_path):
     # 各URLを試行
     for ep_cover in url_variants:
         #print(f"Download cover image from: {ep_cover}")
+        file_extension = os.path.splitext(ep_cover)[1]
+        #folder_path内のncodeを取得
+        ncode = os.path.basename(folder_path)
+        #カバー画像があるかチェック
+        in_file = cm.check_image_file(img_path, f'pixiv_{ncode}_cover{file_extension}')
+        if in_file:
+            #print(f"Image already exists: pixiv_{ncode}_cover{file_extension}")
+            return  # 既に存在する場合は終了
+        
         response = cm.get_with_cookie(ep_cover, pixiv_cookie, pixiv_header)
         if response is not None and response.status_code == 200:
             # ファイルを保存
-            file_extension = os.path.splitext(ep_cover)[1]
-            with open(os.path.join(folder_path, f'cover{file_extension}'), 'wb') as f:
+            cover_hash = cm.check_image_hash(img_path, response.content, f'pixiv_{ncode}_cover{file_extension}', is_cover=True)
+            with open(os.path.join(img_path, f'{cover_hash}{file_extension}'), 'wb') as f:
                 f.write(response.content)
             #print(f"Save compleat!: {ep_cover}")
             return  # 成功したら終了
+
+    in_file = cm.check_image_file(img_path, f'pixiv_{ncode}_cover{os.path.splitext(original_url)[1]}')
+    if in_file:
+        #print(f"Image already exists: pixiv_{ncode}_cover{os.path.splitext(original_url)[1]}")
+        return  # 既に存在する場合は終了
+    
 
     # 全てのURLが404だった場合小さいサイズの表紙を保存
     response = cm.get_with_cookie(original_url, pixiv_cookie, pixiv_header)
     if response is not None and response.status_code == 200:
         file_extension = os.path.splitext(original_url)[1]
-        with open(os.path.join(folder_path, f'cover{file_extension}'), 'wb') as f:
+        cover_hash = cm.check_image_hash(img_path, response.content, f'pixiv_{ncode}_cover{file_extension}', is_cover=True)
+        with open(os.path.join(img_path, f'{cover_hash}{file_extension}'), 'wb') as f:
             f.write(response.content)
         #print(f"Save compleat!: {original_url}")
         return
