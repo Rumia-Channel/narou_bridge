@@ -1,6 +1,6 @@
 @echo off
 
 cd /d %~dp0
-rye sync
-rye run playwright install
-rye run python main.py
+uv sync
+uv run playwright install
+uv run python main.py
