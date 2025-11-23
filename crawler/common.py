@@ -1,7 +1,6 @@
 import os
 import shutil
 import json
-from jsondiff import diff
 import requests
 from requests.exceptions import RequestException, ConnectionError, Timeout
 from urllib.parse import unquote
@@ -10,116 +9,291 @@ from datetime import datetime, timezone, timedelta
 import hashlib
 import base64
 import re
-
-#ログを保存
 import logging
+from jsondiff import diff
+from typing import Optional, Dict, Any, Union, List
+
+# --- 定数定義 ---
+
+# JST定義
+JST = timezone(timedelta(hours=9))
+
+# 字下げ処理用定数
+_INDENT_OMIT_CHARS = " 　「『（【〔〖〘〈《｛"
+_INDENT_PATTERN = re.compile(r'(^|\n)(?![' + re.escape(_INDENT_OMIT_CHARS) + '])')
+
+# 全角半角変換用テーブル
+_FULLWIDTH = '０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ！”＃＄％＆’（）＊＋，－．／：；＜＝＞？＠［＼］＾＿｀｛｜｝～'
+_HALFWIDTH = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'
+_TRANSLATE_TABLE = str.maketrans(_FULLWIDTH, _HALFWIDTH)
+
+# HTMLテンプレート (index.html用)
+_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{site_name} Index</title>
+    <link rel="stylesheet" href="/css/index.css">
+    <link rel="icon" href="/icon/favicon.ico">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
+    <link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
+</head>
+<body>
+    <div><a href="../" class="header-link">戻る</a></div><br><br>
+    <div style='display: flex; justify-content: space-between;'><h1>{site_name} Index</h1><button id='reset-localstorage-button'>ローカルストレージリセット</button></div>
+    <div class="type-selector">
+        <label for="typeSelect">表示タイプ: </label>
+        <select id="typeSelect" onchange="filterByType()">
+            <option value="all">すべて</option>
+            <option value="novel">小説のみ</option>
+            <option value="comic">漫画のみ</option>
+        </select>
+    </div>
+
+    <div class="row-selector">
+        <label for="rowsPerPageSelect">1ページあたりの行数: </label>
+        <select id="rowsPerPageSelect" onchange="updateRowsPerPage()">
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="30">30</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="150">150</option>
+            <option value="200">200</option>
+            <option value="0">すべて</option>
+        </select>
+    </div>
+
+    <div style="display: flex; justify-content: space-between;">
+        <div class="author-filter">
+            <label for="author-filter-dropdown">作者絞り込み:</label>
+            <select id="author-filter-dropdown" onchange="updateAuthorFilter(this.value)">
+                <option value="">全て表示</option>
+                </select>
+        </div>
+        <button id="reset-author-filter-button">作者絞り込みリセット</button>
+    </div>
+    <div style="display: flex; justify-content: space-between;">
+        <div class="hidden-author-filter">
+            <span id="hidden-author-container"></span>
+        </div>
+        <button id="reset-hidden-authors-button">非表示作者リセット</button>
+    </div>
+    <br>
+    <div class="selection-controls" style="margin-top: 1em;">
+        <span id="selected-count">選択された件数: 0</span>
+        <button id="copy-selected-button">選択項目のリンクをコピー</button>
+    </div>
+    <br>
+    <div>
+        <label>表示項目の選択</label>
+        <div class="column-selector">
+            <label><input type="checkbox" id="show-serialization" checked onclick="toggleColumn('serialization')"> 連載状況</label>
+            <label><input type="checkbox" id="show-title" checked onclick="toggleColumn('title')"> タイトル</label>
+            <label><input type="checkbox" id="show-author" checked onclick="toggleColumn('author')"> 作者名</label>
+            <label><input type="checkbox" id="show-type" checked onclick="toggleColumn('type')"> 形式</label>
+            <label><input type="checkbox" id="show-tags" checked onclick="toggleColumn('tags')"> タグ</label>
+            <label><input type="checkbox" id="show-create_date" checked onclick="toggleColumn('create_date')"> 掲載日時</label>
+            <label><input type="checkbox" id="show-update_date" checked onclick="toggleColumn('update_date')"> 更新日時</label>
+        </div>
+    </div>
+    <br>
+
+    <div class="tag-filter">
+        <div style="display: flex; justify-content: space-between;">
+            <div>
+                <div id="include-tags"></div>
+            </div>
+            <button id="reset-include-tags-button">含むタグリセット</button>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+            <div>
+                <div id="exclude-tags"></div>
+            </div>
+            <button id="reset-exclude-tags-button">含まないタグリセット</button>
+        </div>
+    </div>
+
+    <br>
+    <br>
+
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <table>
+        <thead id="table-head">
+            <tr>
+                </tr>
+        </thead>
+        <tbody id="user-table-body">
+            </tbody>
+    </table>
+
+    <div class="pagination">
+        <button onclick="prevPage()">前へ</button>
+        <span id="page-info">1 / 1</span>
+        <button onclick="nextPage()">次へ</button>
+    </div>
+
+    <script src="/script/index.js"></script>
+    <link rel="stylesheet" href="/css/common.css">
+</body>
+</html>
+"""
+
+# --- ユーティリティ関数 ---
 
 def indent_paragraphs(text: str) -> str:
-
-    # 字下げ省略対象の括弧類
-    _OMIT_CHARS = " 　「『（【〔〖〘〈《｛"
-    # キャプチャパターン: 文字列先頭または改行直後で、直後文字が半角/全角スペース・括弧類以外
-    _PATTERN = re.compile(r'(^|\n)(?![' + re.escape(_OMIT_CHARS) + '])')
-
     """
     テキストの先頭および改行直後に、
-    直後の文字が以下に該当しない場合に全角スペースを挿入して字下げを行います。
-
-    - 半角スペース（U+0020）
-    - 全角スペース（U+3000）
-    - 字下げを省略する括弧類: 「 『 （ 【 〔 〘 〈 《 ｛
-
-    Args:
-        text (str): 字下げ対象テキスト
-    Returns:
-        str: 字下げ済みテキスト
+    直後の文字が特定文字に該当しない場合に全角スペースを挿入して字下げを行います。
     """
     # (^|\n) のキャプチャを保持しつつ、その直後に全角スペースを挿入
-    return _PATTERN.sub(r"\1　", text)
+    return _INDENT_PATTERN.sub(r"\1　", text)
 
-# 半角文字を全角文字に変換する関数
-def full_to_half(text):
-    # 全角文字を半角文字に変換する変換テーブル
-    fullwidth = '０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ！”＃＄％＆’（）＊＋，－．／：；＜＝＞？＠［＼］＾＿｀｛｜｝～'
-    halfwidth = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'
-    
-    # 全角から半角への変換テーブルを作成
-    translate_table = str.maketrans(fullwidth, halfwidth)
-    
-    # 変換を実行
-    return text.translate(translate_table)
 
-# Cookie とユーザーエージェントを返す
-def load_cookies_and_ua(input_file):
+def full_to_half(text: str) -> str:
+    """全角文字を半角文字に変換する関数"""
+    return text.translate(_TRANSLATE_TABLE)
+
+
+def load_cookies_and_ua(input_file: str):
     """
-    cookieファイルを読み込み、
-    - cookies: 旧フォーマット([{"name": ..., "value": ...}, ...])
-    - cookies: 新フォーマット({"name": "value", ...})
-    の両方に対応して、{name: value} な dict を返す。
+    cookieファイルを読み込み、{name: value} な dict と UA を返す。
     """
     with open(input_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    # UA は user_agent / ua のどちらでも拾う
     ua = data.get('user_agent') or data.get('ua')
-
     cookies_raw = data.get('cookies', {})
 
-    # 新フォーマット: すでに {"name": "value"} な dict
+    cookies_dict = {}
     if isinstance(cookies_raw, dict):
-        cookies_dict = dict(cookies_raw)  # 念のためコピー
-
-    # 旧フォーマット: [{"name": ..., "value": ...}, ...]
+        cookies_dict = cookies_raw.copy()
     elif isinstance(cookies_raw, list):
-        cookies_dict = {}
         for c in cookies_raw:
-            if not isinstance(c, dict):
-                continue
-            name = c.get('name')
-            value = c.get('value')
-            if name is None or value is None:
-                continue
-            cookies_dict[name] = value
-
+            if isinstance(c, dict):
+                name = c.get('name')
+                value = c.get('value')
+                if name is not None and value is not None:
+                    cookies_dict[name] = value
     else:
-        # 想定外フォーマットならさっさと落として原因を表に出す
         raise TypeError(f"Unsupported cookies format: {type(cookies_raw)}")
 
     return cookies_dict, ua
 
-# Cookie とユーザーエージェントを保存する
-def save_cookies_and_ua(output_file, cookies, ua):
+
+def save_cookies_and_ua(output_file: str, cookies: dict, ua: str):
+    """Cookie とユーザーエージェントを保存する"""
     with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump({'cookies': cookies, 'user_agent': ua}, f, ensure_ascii=False, indent=4)
+        json.dump({'cookies': cookies, 'user_agent': ua}, f, ensure_ascii=False, indent=4)
 
-#画像ファイルのチェック
-def check_image_file(img_path, file_name):
-    if not os.path.exists(os.path.join(img_path, 'database.json')):
-        with open(os.path.join(img_path, 'database.json'), 'w', encoding='utf-8') as f:
-            json.dump({}, f, ensure_ascii=False, indent=4)
 
-    with open(os.path.join(img_path, 'database.json'), 'r', encoding='utf-8') as f:
-        database = json.load(f)
+# --- ファイル操作・画像処理関連 ---
 
+def _load_json_safe(path: str) -> Dict:
+    """JSON読み込みヘルパー（ファイルがない場合は空辞書を返す）"""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _save_json(path: str, data: Dict):
+    """JSON保存ヘルパー"""
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+
+def check_image_file(img_path: str, file_name: str) -> Optional[str]:
+    """
+    database.json を参照し、同名のファイルが存在するかチェックする
+    """
+    db_path = os.path.join(img_path, 'database.json')
+    
+    # DB初期化
+    if not os.path.exists(db_path):
+        _save_json(db_path, {})
+
+    database = _load_json_safe(db_path)
+    base_name = file_name.split('.')[0]
+    
     for key, value in database.items():
-        if key == file_name or key.split('.')[0] == file_name.split('.')[0]:
-            if os.path.exists(os.path.join(img_path, value+f'{os.path.splitext(file_name)[1]}')):
-                return value+f'{os.path.splitext(key)[1]}'
-
+        if key == file_name or key.split('.')[0] == base_name:
+            # 拡張子を元のキーから取得して構築
+            target_ext = os.path.splitext(key)[1]
+            check_path = os.path.join(img_path, value + target_ext)
+            if os.path.exists(check_path):
+                return value + target_ext
     return None
 
-# 日本標準時(JST)を使いたいときに便利
-JST = timezone(timedelta(hours=9))
 
-def safe_fromiso(date_str, tzinfo=JST):
+def check_image_hash(img_path: str, file_data: bytes, file_name: str, is_cover: bool = False) -> str:
     """
-    ISO フォーマット文字列を安全に datetime に変換します。
-    - date_str が None や空文字列なら None を返します。
-    - パースに失敗した場合は警告ログを出して None を返します。
-    - tzinfo を指定すると astimezone(tzinfo) を行います。
+    画像データのハッシュを計算し、重複があれば既存のハッシュを、なければ新規ハッシュを返す。
+    is_cover=True の場合は cover.json も同期する。
     """
+    db_path = os.path.join(img_path, 'database.json')
+    cover_path = os.path.join(img_path, 'cover.json')
+
+    # メインDB読み込み（なければ作成）
+    if not os.path.exists(db_path):
+        _save_json(db_path, {})
+    database = _load_json_safe(db_path)
+
+    # カバー用DB読み込み
+    cover_db = {}
+    if is_cover:
+        if not os.path.exists(cover_path):
+            _save_json(cover_path, {})
+        cover_db = _load_json_safe(cover_path)
+        
+        # すでにcover.jsonにある場合
+        if file_name in cover_db:
+            image_hash = cover_db[file_name]
+            # database.json と同期
+            if database.get(file_name) != image_hash:
+                database[file_name] = image_hash
+                _save_json(db_path, database)
+            return image_hash
+
+    # ハッシュ計算
+    image_hash = base64.urlsafe_b64encode(
+        hashlib.sha3_256(file_data).digest()
+    ).rstrip(b'=').decode('utf-8')
+
+    # database.json 内でハッシュ重複チェック
+    # (値が同じ＝画像が同じなので、既存のハッシュを採用して別名保存扱いにする)
+    existing_hash = None
+    for val in database.values():
+        if val == image_hash:
+            existing_hash = val
+            break
+    
+    final_hash = existing_hash if existing_hash else image_hash
+    
+    # DB更新
+    database[file_name] = final_hash
+    _save_json(db_path, database)
+
+    if is_cover:
+        cover_db[file_name] = final_hash
+        _save_json(cover_path, cover_db)
+
+    return final_hash
+
+
+def safe_fromiso(date_str: Optional[str], tzinfo=JST) -> Optional[datetime]:
+    """ISO フォーマット文字列を安全に datetime に変換"""
     if not date_str:
-        logging.warning(f"safe_fromiso: empty or None date_str received")
+        logging.warning("safe_fromiso: empty or None date_str received")
         return None
     try:
         dt = datetime.fromisoformat(date_str)
@@ -130,88 +304,19 @@ def safe_fromiso(date_str, tzinfo=JST):
         logging.warning(f"safe_fromiso: invalid ISO format: {date_str}")
         return None
 
-#画像ファイルのハッシュをチェック
-def check_image_hash(img_path, file_data, file_name, is_cover=False):
-    db_path = os.path.join(img_path, 'database.json')
-    cover_path = os.path.join(img_path, 'cover.json')
 
-    # database.json が無ければ作る
-    if not os.path.exists(db_path):
-        with open(db_path, 'w', encoding='utf-8') as f:
-            json.dump({}, f, ensure_ascii=False, indent=4)
+# --- その他ユーティリティ ---
 
-    # メインDB読み込み
-    with open(db_path, 'r', encoding='utf-8') as f:
-        database = json.load(f)
-
-    # cover用DBの準備（カバーの時だけ）
-    cover_db = None
-    if is_cover:
-        if not os.path.exists(cover_path):
-            with open(cover_path, 'w', encoding='utf-8') as f:
-                json.dump({}, f, ensure_ascii=False, indent=4)
-
-        with open(cover_path, 'r', encoding='utf-8') as f:
-            cover_db = json.load(f)
-
-        # cover.json にすでに登録されているなら、それを返す
-        if file_name in cover_db:
-            image_hash = cover_db[file_name]
-
-            # database.json にも同期しておく
-            if database.get(file_name) != image_hash:
-                database[file_name] = image_hash
-                with open(db_path, 'w', encoding='utf-8') as f:
-                    json.dump(database, f, ensure_ascii=False, indent=4)
-
-            return image_hash
-
-    # ここまで来たら新規 or 未登録なのでハッシュ計算
-    image_hash = base64.urlsafe_b64encode(
-        hashlib.sha3_256(file_data).digest()
-    ).rstrip(b'=').decode('utf-8')
-
-    # database.json 内でハッシュ重複チェック
-    for key, value in database.items():
-        if value == image_hash:
-            # 同じ画像なので別名として登録
-            database[file_name] = value
-            with open(db_path, 'w', encoding='utf-8') as f:
-                json.dump(database, f, ensure_ascii=False, indent=4)
-
-            if is_cover:
-                cover_db[file_name] = value
-                with open(cover_path, 'w', encoding='utf-8') as f:
-                    json.dump(cover_db, f, ensure_ascii=False, indent=4)
-
-            return value
-
-    # 完全に新しい画像 → 新規登録
-    database[file_name] = image_hash
-    with open(db_path, 'w', encoding='utf-8') as f:
-        json.dump(database, f, ensure_ascii=False, indent=4)
-
-    if is_cover:
-        cover_db[file_name] = image_hash
-        with open(cover_path, 'w', encoding='utf-8') as f:
-            json.dump(cover_db, f, ensure_ascii=False, indent=4)
-
-    return image_hash
-
-# 再帰的にキーを探す
-def find_key_recursively(data, target_key):
-    
-    #辞書型の時
+def find_key_recursively(data: Union[Dict, List], target_key: str) -> Any:
+    """再帰的にキーを探す"""
     if isinstance(data, dict):
         for key, value in data.items():
             if key == target_key:
                 return value
-            elif isinstance(value, (dict, list)):
+            if isinstance(value, (dict, list)):
                 result = find_key_recursively(value, target_key)
                 if result is not None:
                     return result
-    
-    #リスト型の時
     elif isinstance(data, list):
         for item in data:
             result = find_key_recursively(item, target_key)
@@ -219,18 +324,19 @@ def find_key_recursively(data, target_key):
                 return result
     return None
 
-# クッキーを使ってGETリクエストを送信
-def get_with_cookie(url, cookie, header, retries=5, delay=5):
-    response = None  # responseを初期化
+
+def get_with_cookie(url: str, cookie: dict, header: dict, retries: int = 5, delay: int = 5) -> Optional[requests.Response]:
+    """クッキーを使ってGETリクエストを送信 (リトライ機能付き)"""
+    response = None
     for i in range(retries):
         try:
             response = requests.get(url, cookies=cookie, headers=header, timeout=10)
-            response.raise_for_status()  # HTTPエラーをキャッチ
+            response.raise_for_status()
             return response
         except (ConnectionError, Timeout) as e:
             logging.error(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
         except RequestException as e:
-            # 404エラーを特別扱い
+            # 404エラーの場合は即時終了
             if response is not None and response.status_code == 404:
                 logging.error("\n404 Error: Resource not found.")
                 return response
@@ -238,13 +344,14 @@ def get_with_cookie(url, cookie, header, retries=5, delay=5):
                 logging.error(f"\nError: {e}. Retrying in {delay * (2 ** i)} seconds...")
         
         if i < retries - 1:
-            time.sleep(delay * (2 ** i))  # 指数バックオフ
-        else:
-            logging.error("\nThe retry limit has been reached. No response received.")
-            return response
-        
-# キーをすべて文字列に変換する関数
-def convert_keys_to_str(d):
+            time.sleep(delay * (2 ** i))
+    
+    logging.error("\nThe retry limit has been reached. No response received.")
+    return response
+
+
+def convert_keys_to_str(d: Any) -> Any:
+    """辞書のキーをすべて文字列に変換する"""
     if isinstance(d, dict):
         return {str(k): convert_keys_to_str(v) for k, v in d.items()}
     elif isinstance(d, list):
@@ -252,211 +359,98 @@ def convert_keys_to_str(d):
     else:
         return d
 
-#小説データに差分があるなら保存   
-def save_raw_diff(raw_path, novel_path, novel):
+
+def save_raw_diff(raw_path: str, novel_path: str, novel: dict):
+    """小説データに差分があるなら保存"""
     if os.path.exists(raw_path):
         with open(raw_path, 'r', encoding='utf-8') as f:
             old_json = json.load(f)
-        old_json = json.loads(json.dumps(old_json))
-        new_json = json.loads(json.dumps(novel))
-        diff_json = convert_keys_to_str(diff(new_json,old_json))
+        
+        # jsondiff用に一度ダンプしてロードし直す (型を揃えるため)
+        old_obj = json.loads(json.dumps(old_json))
+        new_obj = json.loads(json.dumps(novel))
+        
+        diff_json = convert_keys_to_str(diff(new_obj, old_obj))
+        
+        # get_date のみの差分なら無視
         if len(diff_json) == 1 and 'get_date' in diff_json:
-            pass
-        else:
-            with open(os.path.join(novel_path, 'raw', f'diff_{str(old_json["get_date"]).replace(":", "-").replace(" ", "_")}.json'), 'w', encoding='utf-8') as f:
+            return
+            
+        if diff_json:
+            # ファイル名に使えない文字を置換
+            date_str = str(old_json.get("get_date", "unknown")).replace(":", "-").replace(" ", "_")
+            diff_filename = f'diff_{date_str}.json'
+            
+            # rawフォルダ配下に保存 (novel_path直下のrawフォルダを想定)
+            save_dir = os.path.join(novel_path, 'raw')
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir, exist_ok=True)
+
+            with open(os.path.join(save_dir, diff_filename), 'w', encoding='utf-8') as f:
                 json.dump(diff_json, f, ensure_ascii=False, indent=4)
 
-#ベースフォルダ作成
-def make_dir(id, folder_path):
 
-    full_path = os.path.join(folder_path, f'{id}')
-    
-    if not os.path.exists(full_path):
-        os.makedirs(full_path)
-    if not os.path.exists(f'{full_path}/raw'):
-        os.makedirs(f'{full_path}/raw')
-    if not os.path.exists(f'{full_path}/info'):
-        os.makedirs(f'{full_path}/info')
+def make_dir(id_str, folder_path):
+    """ベースフォルダとサブフォルダ(raw, info)を作成"""
+    full_path = os.path.join(folder_path, str(id_str))
+    os.makedirs(os.path.join(full_path, 'raw'), exist_ok=True)
+    os.makedirs(os.path.join(full_path, 'info'), exist_ok=True)
 
-def gen_site_index(folder_path ,key_data, site_name):
+
+def gen_site_index(folder_path: str, key_data, site_name: str):
+    """サイトのインデックス(index.html, index.json)を生成"""
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
     pairs = {}
     no_raw = []
-    # 各サブフォルダの raw/raw.json を読み込む
+
     for folder in subfolders:
         json_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
-        if os.path.exists(json_path):
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                title = data.get('title', 'No title found')
-                author = data.get('author', 'No author found')
-                author_id = data.get('author_id', 'No author_id found')
-                author_url = data.get('author_url', 'No author_url found')
-                tags = data.get('tags', 'No tags found')
-                all_tags = data.get('all_tags', 'No all_tags found')
-                caption = unquote(data.get('caption', 'No caption found'))
-                create_date = data.get('createDate', 'No create date found')
-                update_date = data.get('updateDate', 'No update date found')
-                type = data.get('type', 'No type found')
-                serialization = data.get('serialization', 'No serialization found')
-                episodes_data = {}
-                for key, value in data.get('episodes').items():
-                    episodes_data[key] = {}
-                    episodes_data[key]['title'] = value.get('title', 'No title found')
-                    episodes_data[key]['id'] = value.get('id', 'No id found')
-                    episodes_data[key]['caption'] = unquote(value.get('caption', 'No caption found'))
-                    episodes_data[key]['tags'] = value.get('tags', 'No tags found')
-
-
-                pairs[folder] = {'title': title, 'author': author, 'author_id': author_id, 'author_url' : author_url, 'type': type, 'serialization': serialization, 'tags': tags, 'all_tags': all_tags, 'caption': caption, 'episodes_data': episodes_data, 'create_date': create_date, 'update_date': update_date}
-        else:
-            #print(f"raw.json not found in {folder}")
-            #return
+        if not os.path.exists(json_path):
+            # raw.jsonが無いフォルダは削除対象
             shutil.rmtree(os.path.join(folder_path, folder))
             no_raw.append(folder)
             continue
-    
+
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # エピソードデータの整形
+        episodes_data = {}
+        raw_episodes = data.get('episodes', {})
+        if isinstance(raw_episodes, dict):
+            for key, value in raw_episodes.items():
+                episodes_data[key] = {
+                    'title': value.get('title', 'No title found'),
+                    'id': value.get('id', 'No id found'),
+                    'caption': unquote(value.get('caption', 'No caption found')),
+                    'tags': value.get('tags', 'No tags found')
+                }
+
+        # データの抽出・構築
+        pairs[folder] = {
+            'title': data.get('title', 'No title found'),
+            'author': data.get('author', 'No author found'),
+            'author_id': data.get('author_id', 'No author_id found'),
+            'author_url': data.get('author_url', 'No author_url found'),
+            'type': data.get('type', 'No type found'),
+            'serialization': data.get('serialization', 'No serialization found'),
+            'tags': data.get('tags', 'No tags found'),
+            'all_tags': data.get('all_tags', 'No all_tags found'),
+            'caption': unquote(data.get('caption', 'No caption found')),
+            'create_date': data.get('createDate', 'No create date found'),
+            'update_date': data.get('updateDate', 'No update date found'),
+            'episodes_data': episodes_data
+        }
+
+    # 作者名でソート
     pairs = dict(sorted(pairs.items(), key=lambda item: item[1]['author']))
 
-    # index.html の生成
+    # index.html の生成 (テンプレートを使用)
+    html_content = _HTML_TEMPLATE.format(site_name=site_name)
     with open(os.path.join(folder_path, 'index.html'), 'w', encoding='utf-8') as f:
-        f.write("""
-                    <!DOCTYPE html>
-                    <html lang="ja">
-                    <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>""")
-        f.write(f"{site_name} Index</title>\n")
-        f.write("""
-                        <!-- 画面固有スタイル -->
-                        <link rel="stylesheet" href="/css/index.css">
-                        <!-- favicon -->
-                        <link rel="icon" href="/icon/favicon.ico">
-                        <!-- PWA対応 -->
-                        <link rel="manifest" href="/manifest.json">
-                        <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
-                        <link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
-                        <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
-                    </head>
-                    <body>
-                        <div><a href="../" class="header-link">戻る</a></div><br><br>""")
+        f.write(html_content)
 
-        f.write(f"    <div style='display: flex; justify-content: space-between;'><h1>{site_name} Index</h1><button id='reset-localstorage-button'>ローカルストレージリセット</button></div>")
-        f.write("""
-                        <!-- テーブルの表示タイプを選ぶドロップダウン -->
-                        <div class="type-selector">
-                            <label for="typeSelect">表示タイプ: </label>
-                            <select id="typeSelect" onchange="filterByType()">
-                                <option value="all">すべて</option>
-                                <option value="novel">小説のみ</option>
-                                <option value="comic">漫画のみ</option>
-                            </select>
-                        </div>
-
-                        <!-- 行数変更のドロップダウン -->
-                        <div class="row-selector">
-                            <label for="rowsPerPageSelect">1ページあたりの行数: </label>
-                            <select id="rowsPerPageSelect" onchange="updateRowsPerPage()">
-                                <option value="10">10</option>
-                                <option value="20">20</option>
-                                <option value="30">30</option>
-                                <option value="50">50</option>
-                                <option value="100">100</option>
-                                <option value="150">150</option>
-                                <option value="200">200</option>
-                                <option value="0">すべて</option>
-                            </select>
-                        </div>
-                
-                            <!-- 既存のフィルターUI付近の変更箇所 -->
-                            <div style="display: flex; justify-content: space-between;">
-                                <div class="author-filter">
-                                    <label for="author-filter-dropdown">作者絞り込み:</label>
-                                    <select id="author-filter-dropdown" onchange="updateAuthorFilter(this.value)">
-                                        <option value="">全て表示</option>
-                                        <!-- ここに JS で作者一覧のオプションが追加される -->
-                                    </select>
-                                </div>
-                                <button id="reset-author-filter-button">作者絞り込みリセット</button>
-                            </div>
-                        <div style="display: flex; justify-content: space-between;">
-                            <!-- 既存のフィルターUI付近（例えば、作者絞り込みの下） -->
-                            <div class="hidden-author-filter">
-                                <span id="hidden-author-container"></span>
-                            </div>
-                            <button id="reset-hidden-authors-button">非表示作者リセット</button>
-                        </div>
-                        <br>
-                        <!-- 選択された行数表示と、選択項目のリンクをコピーするボタン -->
-                        <div class="selection-controls" style="margin-top: 1em;">
-                            <span id="selected-count">選択された件数: 0</span>
-                            <button id="copy-selected-button">選択項目のリンクをコピー</button>
-                        </div>
-                        <br>
-                        <!-- カラム選択のチェックボックス -->
-                        <div>
-                            <label>表示項目の選択</label>
-                            <div class="column-selector">
-                                <label><input type="checkbox" id="show-serialization" checked onclick="toggleColumn('serialization')"> 連載状況</label>
-                                <label><input type="checkbox" id="show-title" checked onclick="toggleColumn('title')"> タイトル</label>
-                                <label><input type="checkbox" id="show-author" checked onclick="toggleColumn('author')"> 作者名</label>
-                                <label><input type="checkbox" id="show-type" checked onclick="toggleColumn('type')"> 形式</label>
-                                <label><input type="checkbox" id="show-tags" checked onclick="toggleColumn('tags')"> タグ</label>
-                                <label><input type="checkbox" id="show-create_date" checked onclick="toggleColumn('create_date')"> 掲載日時</label>
-                                <label><input type="checkbox" id="show-update_date" checked onclick="toggleColumn('update_date')"> 更新日時</label>
-                            </div>
-                        </div>
-                        <br>
-                
-                        <div class="tag-filter">
-                            <div style="display: flex; justify-content: space-between;">
-                                <div>
-                                    <div id="include-tags"></div>
-                                </div>
-                                <button id="reset-include-tags-button">含むタグリセット</button>
-                            </div>
-                            <div style="display: flex; justify-content: space-between;">
-                                <div>
-                                    <div id="exclude-tags"></div>
-                                </div>
-                                <button id="reset-exclude-tags-button">含まないタグリセット</button>
-                            </div>
-                        </div>
-                
-                        <br>
-                        <br>
-                
-                        <div id="loading-overlay">
-                            <div class="spinner"></div>
-                        </div>
-
-                        <table>
-                            <thead id="table-head">
-                                <tr>
-                                    <!-- JavaScript でカラムを動的に追加 -->
-                                </tr>
-                            </thead>
-                            <tbody id="user-table-body">
-                                <!-- JavaScript でデータを挿入 -->
-                            </tbody>
-                        </table>
-
-                        <!-- ページネーション用のボタン -->
-                        <div class="pagination">
-                            <button onclick="prevPage()">前へ</button>
-                            <span id="page-info">1 / 1</span>
-                            <button onclick="nextPage()">次へ</button>
-                        </div>
-
-                        <script src="/script/index.js"></script>
-                        <!-- 共通スタイル -->
-                        <link rel="stylesheet" href="/css/common.css">
-                    </body>
-                    </html>
-                    """)
-
-    
+    # index.json の生成
     with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
         json.dump(pairs, f, ensure_ascii=False, indent=4)
 
