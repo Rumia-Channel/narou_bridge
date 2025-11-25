@@ -246,9 +246,9 @@ def read_domain_settings() -> str:
     # setting.ini からドメイン設定を読み込む
     import configparser
     config = configparser.ConfigParser()
-    ini_path = os.path.join(get_root_path(), 'setting.ini', encoding='utf-8')
+    ini_path = os.path.join(get_root_path(), 'setting.ini')
     
-    config.read(ini_path)
+    config.read(ini_path, encoding='utf-8')
     # [server] セクションの domain キーを取得
     return config.get('server', 'domain', fallback='localhost')
 
