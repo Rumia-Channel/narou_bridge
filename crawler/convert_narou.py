@@ -1,7 +1,6 @@
 import os
 import re
 import logging
-import configparser  # 追加: 設定ファイル読み込み用
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -50,27 +49,6 @@ _PATTERN_PAGE_COUNT = re.compile(
 
 
 # --- ユーティリティ関数 ---
-
-def _load_img_url_from_config() -> str:
-    """
-    setting.ini から img_url を直接読み込む
-    """
-    try:
-        # このファイル(convert_narou.py)の2階層上がルートディレクトリと仮定
-        # root/crawler/convert_narou.py -> root/setting/setting.ini
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        ini_path = os.path.join(base_dir, 'setting', 'setting.ini')
-        
-        if os.path.exists(ini_path):
-            config = configparser.ConfigParser()
-            config.read(ini_path, encoding='utf-8')
-            if 'server' in config and 'img_url' in config['server']:
-                val = config['server']['img_url'].strip()
-                return val.rstrip('/')
-    except Exception as e:
-        logging.warning(f"Failed to load img_url from config: {e}")
-    
-    return ""
 
 def _format_date_jp(iso_date_str: str, format_str: str = "%Y/%m/%d %H:%M", default_msg: str = "") -> str:
     """日付文字列を整形して返す"""
@@ -255,14 +233,7 @@ def narou_gen(data: Dict, nove_path: str, key_data: str, data_folder: str, host_
         logging.error(f"Path Error: {nove_path} is not under {data_folder}")
         return
 
-    # 設定ファイルから値を読み込む
-    loaded_url = _load_img_url_from_config()
-
-    # 値が空でなければそれを使い、そうでなければ今まで通り host_name を使う
-    if loaded_url:
-        img_link_base = f'{loaded_url}/'
-    else:
-        img_link_base = f'{host_name}/images/'
+    img_link_base = f'{host_name}/images/'
     a_link_base = f"/{rel_path_web}"
     
     # 2. テキスト内のページ分割と [jump] リンクの解決 (ep['text']を更新)
