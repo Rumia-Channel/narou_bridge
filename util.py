@@ -105,6 +105,7 @@ READER_INDEX_HTML_TEMPLATE = """<!DOCTYPE html>
   <script>
   const sources = {site_list_json};
   </script>
+  <script src="/script/cover.js"></script>
   <script src="/script/reader.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {{
