@@ -246,7 +246,7 @@ def read_domain_settings() -> str:
     # setting.ini からドメイン設定を読み込む
     import configparser
     config = configparser.ConfigParser()
-    ini_path = os.path.join(get_root_path(), 'setting.ini')
+    ini_path = os.path.join(get_root_path(), 'setting', 'setting.ini')
     
     config.read(ini_path, encoding='utf-8')
     # [server] セクションの domain キーを取得
