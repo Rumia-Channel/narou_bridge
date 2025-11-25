@@ -224,16 +224,33 @@ def check_image_file(img_path: str, file_name: str) -> Optional[str]:
 
     database = _load_json_safe(db_path)
     base_name = file_name.split('.')[0]
+    base_url = f'https://{read_domain_settings()}/images/'
     
     for key, value in database.items():
         if key == file_name or key.split('.')[0] == base_name:
             # 拡張子を元のキーから取得して構築
             target_ext = os.path.splitext(key)[1]
             check_path = os.path.join(img_path, value + target_ext)
+            check_url = base_url + value + target_ext
             if os.path.exists(check_path):
+                return value + target_ext
+            elif requests.head(check_url).status_code == 200:
                 return value + target_ext
     return None
 
+def get_root_path() -> str:
+    """プロジェクトのルートパスを取得"""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def read_domain_settings() -> str:
+    # setting.ini からドメイン設定を読み込む
+    import configparser
+    config = configparser.ConfigParser()
+    ini_path = os.path.join(get_root_path(), 'setting.ini', encoding='utf-8')
+    
+    config.read(ini_path)
+    # [server] セクションの domain キーを取得
+    return config.get('server', 'domain', fallback='localhost')
 
 def check_image_hash(img_path: str, file_data: bytes, file_name: str, is_cover: bool = False) -> str:
     """
