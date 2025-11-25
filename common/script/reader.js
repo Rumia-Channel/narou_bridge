@@ -72,23 +72,6 @@ var CACHE_NAME = 'cover-images';
 // cover.json のデータを保持するグローバル変数
 var globalCoverJson = null;
 
-function getImageBaseUrl() {
-  // 本気で「常に img_link」を強制したいなら、
-  // ここでエラーを投げる実装でもいい：
-  if (typeof img_link !== 'string' || !img_link) {
-    throw new Error('img_link is not defined');
-  }
-
-  if (typeof img_link === 'string' && img_link) {
-    return img_link;
-  }
-}
-
-function buildImageUrl(filename) {
-  const base = getImageBaseUrl();
-  return base.replace(/\/+$/, '/') + String(filename).replace(/^\/+/, '');
-}
-
 /**
  * 本棚画面用：ヘッダーに「トップページに戻る」ボタンを追加
  */
@@ -573,10 +556,9 @@ async function preloadAndMapCover(novel, coverCache) {
       const jsonKey = `${baseJsonInfo}.${ext}`;
       const hash = globalCoverJson[jsonKey];
       if (hash) {
-        // 以前: targetUrl = `${img_link}${hash}.${ext}`;
-        // 今: 必ず img_link 経由 (getImageBaseUrl が img_link を返す前提)
-        targetUrl = buildImageUrl(`${hash}.${ext}`);
-        break;
+        // ハッシュが見つかった場合、画像パスは "/images/ハッシュ.拡張子"
+        targetUrl = `/images/${hash}.${ext}`;
+        break; // 見つかったらループ終了
       }
     }
   }
@@ -1318,7 +1300,7 @@ function formatText(text, novel = null, episode = null) {
 
     // 画像表示
     .replace(/\[image\]\(([^)]+)\)/g, (_, filename) =>
-      `<img src="${buildImageUrl(filename)}" class="inline-image" alt="">`
+      `<img src="/images/${filename}" class="inline-image" alt="">`
     )
 
     // 改行

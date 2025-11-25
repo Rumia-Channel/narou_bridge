@@ -265,10 +265,6 @@ def narou_gen(data: Dict, nove_path: str, key_data: str, data_folder: str, host_
         img_link_base = f'{host_name}/images/'
     a_link_base = f"/{rel_path_web}"
     
-    
-    with open(os.path.join(data_folder, 'script', 'cover.js'), 'w', encoding='utf-8') as f:
-        f.write(f'const img_link = "{img_link_base}";\n')
-    
     # 2. テキスト内のページ分割と [jump] リンクの解決 (ep['text']を更新)
     page_counter = 2
     
