@@ -165,8 +165,10 @@ def load_cookies_and_ua(input_file: str):
     """
     cookieファイルを読み込み、{name: value} な dict と UA を返す。
     """
-    with open(input_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    data = _load_json_safe(input_file)
+    if not data:
+        logging.warning(f"Failed to load cookies from {input_file}, returning empty")
+        return {}, None
 
     ua = data.get('user_agent') or data.get('ua')
     cookies_raw = data.get('cookies', {})
@@ -189,35 +191,120 @@ def load_cookies_and_ua(input_file: str):
 
 def save_cookies_and_ua(output_file: str, cookies: dict, ua: str):
     """Cookie とユーザーエージェントを保存する"""
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump({'cookies': cookies, 'user_agent': ua}, f, ensure_ascii=False, indent=4)
+    _save_json(output_file, {'cookies': cookies, 'user_agent': ua})
 
 
 # --- ファイル操作・画像処理関連 ---
 
-def _load_json_safe(path: str) -> Dict:
-    """JSON読み込みヘルパー（ファイルがない場合は空辞書を返す）"""
+def _load_json_safe(path: str, create_backup: bool = True, max_backups: int = 3) -> Dict:
+    """
+    JSON読み込みヘルパー（安全版）
+    
+    Args:
+        path: JSONファイルパス
+        create_backup: 破損時にバックアップを作成するか
+        max_backups: 保持する最大バックアップ数
+    
+    Returns:
+        JSONデータ（失敗時は空辞書）
+    """
     if not os.path.exists(path):
         return {}
+    
+    # バックアップからの復元試行
+    def try_restore_from_backup():
+        if not create_backup:
+            return {}
+        
+        backup_dir = os.path.dirname(path)
+        backup_name = os.path.basename(path)
+        
+        # .backup.N 形式のバックアップを探す
+        for i in range(1, max_backups + 1):
+            backup_path = os.path.join(backup_dir, f"{backup_name}.backup.{i}")
+            if os.path.exists(backup_path):
+                try:
+                    with open(backup_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    logging.info(f"Restored from backup: {backup_path}")
+                    # 復元成功したらメインファイルを上書き
+                    shutil.copy2(backup_path, path)
+                    return data
+                except:
+                    continue
+        return {}
+    
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except json.JSONDecodeError:
-        logging.error(f"JSONDecodeError: {path} is corrupted. Backing up to {path}.corrupt")
-        if os.path.exists(path):
-            shutil.copy2(path, path + ".corrupt")
+    except json.JSONDecodeError as e:
+        logging.error(f"JSONDecodeError: {path} is corrupted at line {e.lineno}: {e.msg}")
+        
+        if create_backup:
+            # 破損ファイルを .corrupt として保存
+            corrupt_path = f"{path}.corrupt"
+            try:
+                shutil.copy2(path, corrupt_path)
+                logging.info(f"Corrupted file saved to: {corrupt_path}")
+            except Exception as backup_err:
+                logging.error(f"Failed to save corrupted file: {backup_err}")
+        
+        # バックアップからの復元を試行
+        restored_data = try_restore_from_backup()
+        if restored_data:
+            return restored_data
+        
+        logging.warning(f"No valid backup found for {path}, returning empty dict")
         return {}
+    
     except Exception as e:
         logging.error(f"Failed to load JSON {path}: {e}")
+        
+        # バックアップからの復元を試行
+        restored_data = try_restore_from_backup()
+        if restored_data:
+            return restored_data
+        
         return {}
 
 
-def _save_json(path: str, data: Dict):
-    """JSON保存ヘルパー（アトミック書き込み）"""
+def _save_json(path: str, data: Dict, create_backup: bool = True, max_backups: int = 3):
+    """
+    JSON保存ヘルパー（アトミック書き込み + バックアップローテーション）
+    
+    Args:
+        path: JSONファイルパス
+        data: 保存するデータ
+        create_backup: バックアップを作成するか
+        max_backups: 保持する最大バックアップ数
+    """
     dir_name = os.path.dirname(path)
     if dir_name and not os.path.exists(dir_name):
         os.makedirs(dir_name, exist_ok=True)
+    
+    # 既存ファイルのバックアップ作成
+    if create_backup and os.path.exists(path):
+        backup_name = os.path.basename(path)
+        backup_dir = os.path.dirname(path)
         
+        # バックアップをローテーション (.backup.3 -> .backup.4, .backup.2 -> .backup.3, ...)
+        for i in range(max_backups, 1, -1):
+            old_backup = os.path.join(backup_dir, f"{backup_name}.backup.{i-1}")
+            new_backup = os.path.join(backup_dir, f"{backup_name}.backup.{i}")
+            if os.path.exists(old_backup):
+                try:
+                    shutil.move(old_backup, new_backup)
+                except Exception as e:
+                    logging.warning(f"Failed to rotate backup {old_backup}: {e}")
+        
+        # 現在のファイルを .backup.1 として保存
+        try:
+            first_backup = os.path.join(backup_dir, f"{backup_name}.backup.1")
+            shutil.copy2(path, first_backup)
+        except Exception as e:
+            logging.warning(f"Failed to create backup for {path}: {e}")
+    
+    # アトミック書き込み
     tmp_path = path + ".tmp"
     try:
         with open(tmp_path, 'w', encoding='utf-8') as f:
@@ -228,7 +315,11 @@ def _save_json(path: str, data: Dict):
     except Exception as e:
         logging.error(f"Failed to write JSON {path}: {e}")
         if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+            try:
+                os.remove(tmp_path)
+            except:
+                pass
+        raise
 
 
 def check_image_file(img_path: str, file_name: str) -> Optional[str]:
@@ -406,32 +497,32 @@ def convert_keys_to_str(d: Any) -> Any:
 
 def save_raw_diff(raw_path: str, novel_path: str, novel: dict):
     """小説データに差分があるなら保存"""
-    if os.path.exists(raw_path):
-        with open(raw_path, 'r', encoding='utf-8') as f:
-            old_json = json.load(f)
+    old_json = _load_json_safe(raw_path)
+    if not old_json:
+        return
+    
+    # jsondiff用に一度ダンプしてロードし直す (型を揃えるため)
+    old_obj = json.loads(json.dumps(old_json))
+    new_obj = json.loads(json.dumps(novel))
+    
+    diff_json = convert_keys_to_str(diff(new_obj, old_obj))
+    
+    # get_date のみの差分なら無視
+    if len(diff_json) == 1 and 'get_date' in diff_json:
+        return
         
-        # jsondiff用に一度ダンプしてロードし直す (型を揃えるため)
-        old_obj = json.loads(json.dumps(old_json))
-        new_obj = json.loads(json.dumps(novel))
+    if diff_json:
+        # ファイル名に使えない文字を置換
+        date_str = str(old_json.get("get_date", "unknown")).replace(":", "-").replace(" ", "_")
+        diff_filename = f'diff_{date_str}.json'
         
-        diff_json = convert_keys_to_str(diff(new_obj, old_obj))
-        
-        # get_date のみの差分なら無視
-        if len(diff_json) == 1 and 'get_date' in diff_json:
-            return
-            
-        if diff_json:
-            # ファイル名に使えない文字を置換
-            date_str = str(old_json.get("get_date", "unknown")).replace(":", "-").replace(" ", "_")
-            diff_filename = f'diff_{date_str}.json'
-            
-            # rawフォルダ配下に保存 (novel_path直下のrawフォルダを想定)
-            save_dir = os.path.join(novel_path, 'raw')
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir, exist_ok=True)
+        # rawフォルダ配下に保存 (novel_path直下のrawフォルダを想定)
+        save_dir = os.path.join(novel_path, 'raw')
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
 
-            with open(os.path.join(save_dir, diff_filename), 'w', encoding='utf-8') as f:
-                json.dump(diff_json, f, ensure_ascii=False, indent=4)
+        diff_path = os.path.join(save_dir, diff_filename)
+        _save_json(diff_path, diff_json)
 
 
 def make_dir(id_str, folder_path):
@@ -455,8 +546,10 @@ def gen_site_index(folder_path: str, key_data, site_name: str):
             no_raw.append(folder)
             continue
 
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = _load_json_safe(json_path)
+        if not data:
+            logging.error(f"Failed to load {json_path}, skipping folder {folder}")
+            continue
 
         # エピソードデータの整形
         episodes_data = {}
@@ -495,8 +588,8 @@ def gen_site_index(folder_path: str, key_data, site_name: str):
         f.write(html_content)
 
     # index.json の生成
-    with open(os.path.join(folder_path, 'index.json'), 'w', encoding='utf-8') as f:
-        json.dump(pairs, f, ensure_ascii=False, indent=4)
+    index_json_path = os.path.join(folder_path, 'index.json')
+    _save_json(index_json_path, pairs)
 
     if no_raw:
         logging.warning(f"The folders {', '.join(no_raw)} were deleted because they do not contain 'raw.json'.")

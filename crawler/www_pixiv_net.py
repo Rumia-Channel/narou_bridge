@@ -280,45 +280,33 @@ class PixivCrawler:
     # -------------------------------------------------------------------------
 
     def _save_raw_file(self, path: str, data: Dict):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
+        cm._save_json(path, data)
 
     def _check_update(self, raw_path: str, new_date: datetime) -> bool:
         if not os.path.isfile(raw_path):
             return True
-        try:
-            with open(raw_path, 'r', encoding='utf-8') as f:
-                old = json.load(f)
-            # 更新日が None でない場合に比較
-            old_date = safe_fromiso(old.get('updateDate'))
-            if old_date and new_date:
-                return new_date != old_date
+        
+        old = cm._load_json_safe(raw_path)
+        if not old:
             return True
-        except:
-            return True
+        
+        # 更新日が None でない場合に比較
+        old_date = safe_fromiso(old.get('updateDate'))
+        if old_date and new_date:
+            return new_date != old_date
+        return True
 
     def _snapshot_path(self, folder_path: str, user_id: str) -> str:
         return os.path.join(folder_path, "snapshots", "illust_ids", f"{user_id}.json")
 
     def _load_illust_snapshot(self, folder_path: str, user_id: str, fallback: List) -> List:
         path = self._snapshot_path(folder_path, user_id)
-        try:
-            if os.path.isfile(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f) or []
-        except:
-            pass
-        return fallback or []
+        data = cm._load_json_safe(path)
+        return data if data else (fallback or [])
 
     def _save_illust_snapshot(self, folder_path: str, user_id: str, ids_set: Set[int]):
         path = self._snapshot_path(folder_path, user_id)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(list(map(str, sorted(ids_set))), f, ensure_ascii=False)
-        except Exception as e:
-            logging.error(f"Snapshot save failed: {e}")
+        cm._save_json(path, list(map(str, sorted(ids_set))))
 
     # -------------------------------------------------------------------------
     # 画像・コンテンツ処理
@@ -543,8 +531,8 @@ class PixivCrawler:
         # 既存エピソード読み込み
         old_eps = {}
         if update and os.path.isfile(raw_path):
-            with open(raw_path, 'r', encoding='utf-8') as f:
-                old_eps = json.load(f).get('episodes', {})
+            raw_data = cm._load_json_safe(raw_path)
+            old_eps = raw_data.get('episodes', {}) if raw_data else {}
 
         for idx, entry in tqdm(enumerate(toc, 1), total=len(toc), desc=f"Downloading series {series_id}", leave=False):
             if not entry.get('available'): continue
@@ -818,8 +806,8 @@ class PixivCrawler:
 
         old_eps = {}
         if update and os.path.isfile(raw_path):
-            with open(raw_path, 'r', encoding='utf-8') as f:
-                old_eps = json.load(f).get('episodes', {})
+            raw_data = cm._load_json_safe(raw_path)
+            old_eps = raw_data.get('episodes', {}) if raw_data else {}
 
         arts = dict(sorted(arts.items()))
         
@@ -1067,6 +1055,49 @@ def update(folder_path, key_data, data_path, host_name):
         logging.error("Crawler not initialized")
         return
 
+    # 1. 最優先: .corrupt ファイルの探索と再ダウンロード
+    corrupt_targets = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.endswith('.corrupt'):
+                # raw.json.corrupt のようなファイルを検出
+                if file == 'raw.json.corrupt':
+                    # 親ディレクトリから作品IDを特定
+                    folder_name = os.path.basename(root)
+                    corrupt_path = os.path.join(root, file)
+                    corrupt_targets.append((folder_name, corrupt_path))
+                    logging.warning(f"Found corrupted file: {corrupt_path}")
+    
+    # .corrupt ファイルがある作品を再ダウンロード
+    if corrupt_targets:
+        logging.info(f"Found {len(corrupt_targets)} corrupted files, re-downloading...")
+        for folder_name, corrupt_path in corrupt_targets:
+            try:
+                logging.info(f"Re-downloading corrupted: {folder_name}")
+                
+                # フォルダ名から作品タイプと IDを推定
+                if folder_name.startswith('n'):
+                    nid = folder_name.lstrip('n')
+                    _crawler.download_novel(nid, folder_path, key_data, update=False)
+                elif folder_name.startswith('s'):
+                    sid = folder_name.lstrip('s')
+                    _crawler.download_series(sid, folder_path, key_data, update=False)
+                elif folder_name.startswith('a'):
+                    aid = folder_name.lstrip('a')
+                    _crawler.download_art(aid, folder_path, key_data)
+                elif folder_name.startswith('c'):
+                    cid = folder_name.lstrip('c')
+                    _crawler.download_comic(cid, folder_path, key_data, update=False)
+                
+                # 再ダウンロード成功後、.corrupt ファイルを削除
+                if os.path.exists(corrupt_path):
+                    os.remove(corrupt_path)
+                    logging.info(f"Removed corrupt file: {corrupt_path}")
+                    
+            except Exception as e:
+                logging.error(f"Failed to re-download corrupted {folder_name}: {e}", exc_info=True)
+    
+    # 2. 通常の更新処理
     # index.json から更新
     index_path = os.path.join(folder_path, 'index.json')
     if not os.path.exists(index_path): return
@@ -1132,8 +1163,26 @@ def request_re_download(target_id: str, host_name: str):
 
 def convert(folder_path, key_data, data_path, host_name):
     """ローカルデータの再変換"""
+    
+    # 1. 最優先: .corrupt ファイルの探索
+    corrupt_found = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.endswith('.corrupt'):
+                if file == 'raw.json.corrupt':
+                    folder_name = os.path.basename(root)
+                    corrupt_path = os.path.join(root, file)
+                    corrupt_found.append(folder_name)
+                    logging.warning(f"Convert: Found corrupted file in {folder_name}, skipping and requesting re-download")
+                    request_re_download(folder_name, host_name)
+    
+    # 2. 通常の変換処理
     folders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
     for folder in folders:
+        # .corrupt が見つかったフォルダはスキップ
+        if folder in corrupt_found:
+            continue
+            
         raw_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
         if os.path.exists(raw_path):
             try:
@@ -1156,3 +1205,83 @@ def convert(folder_path, key_data, data_path, host_name):
                 logging.error(f"Convert failed for {folder}: {e}")
     
     cm.gen_site_index(folder_path, key_data, 'Pixiv')
+
+def re_download(folder_path, key_data, data_path, host_name):
+    """全作品の再ダウンロード（.corrupt優先処理付き）"""
+    if not _crawler:
+        logging.error("Crawler not initialized")
+        return
+    
+    # 1. 最優先: .corrupt ファイルの探索と再ダウンロード
+    corrupt_targets = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.endswith('.corrupt'):
+                if file == 'raw.json.corrupt':
+                    folder_name = os.path.basename(root)
+                    corrupt_path = os.path.join(root, file)
+                    corrupt_targets.append((folder_name, corrupt_path))
+                    logging.warning(f"Re-download: Found corrupted file in {folder_name}")
+    
+    # .corrupt ファイルを持つ作品を最優先で再ダウンロード
+    if corrupt_targets:
+        logging.info(f"Re-download: Processing {len(corrupt_targets)} corrupted files first...")
+        for folder_name, corrupt_path in corrupt_targets:
+            try:
+                logging.info(f"Re-downloading corrupted: {folder_name}")
+                
+                # フォルダ名から作品タイプと IDを推定
+                if folder_name.startswith('n'):
+                    nid = folder_name.lstrip('n')
+                    _crawler.download_novel(nid, folder_path, key_data, update=False)
+                elif folder_name.startswith('s'):
+                    sid = folder_name.lstrip('s')
+                    _crawler.download_series(sid, folder_path, key_data, update=False)
+                elif folder_name.startswith('a'):
+                    aid = folder_name.lstrip('a')
+                    _crawler.download_art(aid, folder_path, key_data)
+                elif folder_name.startswith('c'):
+                    cid = folder_name.lstrip('c')
+                    _crawler.download_comic(cid, folder_path, key_data, update=False)
+                
+                # 再ダウンロード成功後、.corrupt ファイルを削除
+                if os.path.exists(corrupt_path):
+                    os.remove(corrupt_path)
+                    logging.info(f"Removed corrupt file: {corrupt_path}")
+                    
+            except Exception as e:
+                logging.error(f"Failed to re-download corrupted {folder_name}: {e}", exc_info=True)
+    
+    # 2. 通常の全作品再ダウンロード
+    # index.json から全作品取得
+    index_path = os.path.join(folder_path, 'index.json')
+    if not os.path.exists(index_path):
+        logging.warning("No index.json found for re-download")
+        return
+    
+    index_data = cm._load_json_safe(index_path)
+    if not index_data:
+        logging.warning("Failed to load index.json for re-download")
+        return
+    
+    logging.info(f"Re-downloading {len(index_data)} works...")
+    for folder, meta in index_data.items():
+        try:
+            if meta['type'] == 'novel':
+                if meta['serialization'] == '短編':
+                    nid = folder.lstrip('n')
+                    _crawler.download_novel(nid, folder_path, key_data, update=False)
+                else:
+                    sid = folder.lstrip('s')
+                    _crawler.download_series(sid, folder_path, key_data, update=False)
+            elif meta['type'] == 'comic':
+                if meta['serialization'] == '短編':
+                    aid = folder.lstrip('a')
+                    _crawler.download_art(aid, folder_path, key_data)
+                else:
+                    cid = folder.lstrip('c')
+                    _crawler.download_comic(cid, folder_path, key_data, update=False)
+        except Exception as e:
+            logging.error(f"Re-download failed for {folder}: {e}")
+    
+    logging.info("Re-download completed")
