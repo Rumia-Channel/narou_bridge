@@ -487,8 +487,7 @@ def process_text_details(file_data: List[Dict], last_details: List[Dict],
     results['all_characters'] = total_chars
 
     # 中間ファイルの保存 (デバッグ用)
-    with open('results.json', 'w', encoding='utf-8') as file:
-        json.dump(results, file, ensure_ascii=False, indent=4)
+    cm._save_json('results.json', results)
 
     return results, ncode
 
@@ -527,8 +526,7 @@ def gen_from_pdf(pdf_path: str, pdf_name: str, author_id: str, author_url: str,
 
     # 差分保存とJSON保存
     cm.save_raw_diff(raw_path, base_dir, results)
-    with open(raw_path, 'w', encoding='utf-8') as file:
-        json.dump(results, file, ensure_ascii=False, indent=4)
+    cm._save_json(raw_path, results)
 
     # 4. HTML生成
     cn.narou_gen(results, base_dir, key_data, data_path, host_name)
@@ -554,9 +552,9 @@ def convert(folder_path: str, key_data: str, data_path: str, host_name: str):
         info_html_path = os.path.join(target_dir, 'info', 'index.html')
 
         if os.path.exists(raw_json_path) and os.path.exists(info_html_path):
-            with open(raw_json_path, 'r', encoding='utf-8') as f:
-                raw_json_data = json.load(f)
-            cn.narou_gen(raw_json_data, target_dir, key_data, data_path, host_name)
+            raw_json_data = cm._load_json_safe(raw_json_path)
+            if raw_json_data:
+                cn.narou_gen(raw_json_data, target_dir, key_data, data_path, host_name)
 
     cm.gen_site_index(folder_path, key_data, '小説家になろう')
 

@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import random
 import time
 import threading
@@ -112,14 +113,26 @@ class TaskManager:
     def _save_queue(self):
         """キューの状態をファイルに保存"""
         with self.lock:
-            # Pickle保存 (互換性維持のため)
+            # Pickle保存 (互換性維持のため) - バックアップ付き
             try:
-                with open(self.job_file_path, "wb") as f:
+                # バックアップローテーション
+                if os.path.exists(self.job_file_path):
+                    for i in range(3, 1, -1):
+                        old_backup = f"{self.job_file_path}.backup.{i-1}"
+                        new_backup = f"{self.job_file_path}.backup.{i}"
+                        if os.path.exists(old_backup):
+                            shutil.move(old_backup, new_backup)
+                    shutil.copy2(self.job_file_path, f"{self.job_file_path}.backup.1")
+                
+                # アトミック書き込み
+                tmp_path = self.job_file_path + ".tmp"
+                with open(tmp_path, "wb") as f:
                     pickle.dump(list(self.queue.queue), f)
+                os.replace(tmp_path, self.job_file_path)
             except Exception as e:
                 logging.error(f"Failed to save queue pickle: {e}")
             
-            # JSON保存 (可視化用)
+            # JSON保存 (可視化用) - task.json はバックアップ不要
             try:
                 data = {
                     "current_task": self.current_task,
@@ -132,21 +145,43 @@ class TaskManager:
                 logging.error(f"Failed to save task.json: {e}")
 
     def _load_queue(self):
-        """起動時にキューを復元"""
+        """起動時にキューを復元（バックアップからの復元機能付き）"""
         if not os.path.exists(self.job_file_path):
             logging.info("No job file found. Starting empty.")
             return
 
         with self.lock:
+            jobs = None
+            # メインファイル読み込み試行
             try:
                 with open(self.job_file_path, "rb") as f:
                     jobs = pickle.load(f)
-                    compacted_jobs = self._compact_list(jobs)
-                    for job in compacted_jobs:
-                        self.queue.put(job)
-                logging.info(f"Queue restored with {len(compacted_jobs)} items.")
+                logging.info(f"Queue loaded from {self.job_file_path}")
             except Exception as e:
-                logging.error(f"Failed to load queue: {e}")
+                logging.error(f"Failed to load queue from main file: {e}")
+                
+                # バックアップからの復元試行
+                for i in range(1, 4):
+                    backup_path = f"{self.job_file_path}.backup.{i}"
+                    if os.path.exists(backup_path):
+                        try:
+                            with open(backup_path, "rb") as f:
+                                jobs = pickle.load(f)
+                            logging.info(f"Queue restored from backup: {backup_path}")
+                            # 復元成功したらメインファイルを上書き
+                            shutil.copy2(backup_path, self.job_file_path)
+                            break
+                        except Exception as backup_err:
+                            logging.error(f"Failed to restore from {backup_path}: {backup_err}")
+                            continue
+            
+            if jobs:
+                compacted_jobs = self._compact_list(jobs)
+                for job in compacted_jobs:
+                    self.queue.put(job)
+                logging.info(f"Queue restored with {len(compacted_jobs)} items.")
+            else:
+                logging.warning("All queue restore attempts failed. Starting with empty queue.")
 
     def _compact_list(self, requests_list: List[Dict]) -> List[Dict]:
         """リスト内の重複リクエストをまとめる"""

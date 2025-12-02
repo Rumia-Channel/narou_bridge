@@ -288,7 +288,9 @@ def create_manifest(data_path):
         "icons": icons
     }
 
-    with open(os.path.join(data_path, 'manifest.json'), 'w', encoding='utf-8') as f:
+    manifest_path = os.path.join(data_path, 'manifest.json')
+    # manifest.json はバックアップ不要（静的設定ファイル）
+    with open(manifest_path, 'w', encoding='utf-8') as f:
         json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
 # --- クローラー実行ロジック ---
@@ -389,19 +391,12 @@ def zip_to_text(pdf_path, zip_name, data_path, host_name):
                 db_json_path = os.path.join(images_dir, "database.json")
                 os.makedirs(images_dir, exist_ok=True)
 
-                db_data = {}
-                if os.path.exists(db_json_path):
-                    try:
-                        with open(db_json_path, "r", encoding="utf-8") as dbf:
-                            db_data = json.load(dbf)
-                    except Exception:
-                        pass # 読み込み失敗時は空で続行
+                db_data = cm._load_json_safe(db_json_path)
 
                 # マージ
                 db_data.update(json_data["images"])
 
-                with open(db_json_path, "w", encoding="utf-8") as dbf:
-                    json.dump(db_data, dbf, ensure_ascii=False, indent=2)
+                cm._save_json(db_json_path, db_data)
 
                 # 画像ファイルの展開
                 images_dir_in_zip = f"{sitename}/images/"
