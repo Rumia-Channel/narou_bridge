@@ -1102,26 +1102,27 @@ def update(folder_path, key_data, data_path, host_name):
         except Exception as e:
             logging.error(f"Update failed for {folder}: {e}")
             # エラー発生時は破損の可能性が高いため再ダウンロードをリクエスト
-            request_re_download(folder)
+            request_re_download(folder, host_name)
 
-def request_re_download(target_id: str):
+def generate_request_id() -> str:
+    """リクエストIDを生成 (server.pyと同等)"""
+    template = "xxxx-xxxx-4xxx-yxxx-xxxx"
+    def replace_char(c):
+        r = random.randint(0, 15)
+        if c == 'x': return hex(r)[2:]
+        if c == 'y': return hex(r & 0x3 | 0x8)[2:]
+        if c == '4': return '4'
+        return c
+    return ''.join(replace_char(c) for c in template)
+
+def request_re_download(target_id: str, host_name: str):
     """破損データの再ダウンロードをリクエスト"""
     try:
-        import configparser
-        config = configparser.ConfigParser()
-        ini_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'setting', 'setting.ini')
-        config.read(ini_path, encoding='utf-8')
-        port = config.get('server', 'port', fallback='8080')
-        
-        url = f"http://127.0.0.1:{port}/api/"
-        # pixivのID形式に合わせて変換 (例: s1234 -> https://www.pixiv.net/novel/series/1234)
-        # ただし re_download はフォルダ名(ID)やURLを受け付ける仕様
-        # ここではシンプルにID(フォルダ名)を渡すか、可能ならURLを構築して渡す
-        # re_downloadの実装を見ると、ID文字列が含まれていればターゲット特定できるロジックになっているため、フォルダ名をそのまま渡す
+        url = f"{host_name}/api/"
         
         payload = {
             "re_download": target_id,
-            "request_id": f"auto_repair_{target_id}_{int(time.time())}"
+            "request_id": generate_request_id()
         }
         # タイムアウトを短めに設定して、サーバーが詰まらないようにする
         requests.post(url, data=payload, timeout=1)
@@ -1139,7 +1140,7 @@ def convert(folder_path, key_data, data_path, host_name):
                 data = cm._load_json_safe(raw_path)
                 if not data:
                     logging.warning(f"Corrupted raw.json found in {folder}. Requesting re-download.")
-                    request_re_download(folder)
+                    request_re_download(folder, host_name)
                     continue
 
                 # タグ整形再適用
