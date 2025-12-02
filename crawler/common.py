@@ -227,7 +227,7 @@ def _load_json_safe(path: str, create_backup: bool = True, max_backups: int = 3)
                     with open(backup_path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                     logging.info(f"Restored from backup: {backup_path}")
-                    # 復元成功したらメインファイルを上書き
+                    # 復元成功したらメインファイルを上書き（破損データは .corrupt に保存済み）
                     shutil.copy2(backup_path, path)
                     return data
                 except:
