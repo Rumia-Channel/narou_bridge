@@ -1087,11 +1087,14 @@ def update(folder_path, key_data, data_path, host_name):
             if file.endswith('.corrupt'):
                 # raw.json.corrupt のようなファイルを検出
                 if file == 'raw.json.corrupt':
-                    # 親ディレクトリから作品IDを特定
-                    folder_name = os.path.basename(root)
+                    # raw.json.corrupt は raw フォルダ内にあるため、親の親フォルダが作品フォルダ
+                    # 例: /pixiv/n18922281/raw/raw.json.corrupt
+                    # root = /pixiv/n18922281/raw なので、os.path.dirname(root) で /pixiv/n18922281 を取得
+                    work_folder = os.path.dirname(root)
+                    folder_name = os.path.basename(work_folder)
                     corrupt_path = os.path.join(root, file)
                     corrupt_targets.append((folder_name, corrupt_path))
-                    logging.warning(f"Found corrupted file: {corrupt_path}")
+                    logging.warning(f"Found corrupted file: {corrupt_path}, work folder: {folder_name}")
     
     # .corrupt ファイルがある作品を再ダウンロード
     if corrupt_targets:
