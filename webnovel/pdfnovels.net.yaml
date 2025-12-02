@@ -16,7 +16,7 @@ version: 2.1
 # 目次取得設定
 toc_url: \\k<top_url>/narou/\\k<ncode>/
 subtitles: |-
-  (?:<div class="p-eplist__chapter-title">(?<chapter>.+?)</div>\s*)?<div class="p-eplist__sublist">\s*<a href="(?<href>\/pixiv/(?<ncode>[sc]\d+)\/(?<index>\d+)\/)" class="p-eplist__subtitle">\s*(?<subtitle>.+?)\s*</a>\s*<div class="p-eplist__update">\s*(?:<span class="p-eplist__favep">.+?</span></span>)?(?<subdate>.+?)(?:<span title="(?<subupdate>.+?) 改稿">（<u>改</u>）</span>)?</div>\s*</div>
+  (?:<div class="p-eplist__chapter-title">(?<chapter>.+?)</div>\s*)?<div class="p-eplist__sublist">\s*<a href="(?<href>\/narou/(?<ncode>[sc]\d+)\/(?<index>\d+)\/)" class="p-eplist__subtitle">\s*(?<subtitle>.+?)\s*</a>\s*<div class="p-eplist__update">\s*(?:<span class="p-eplist__favep">.+?</span></span>)?(?<subdate>.+?)(?:<span title="(?<subupdate>.+?) 改稿">（<u>改</u>）</span>)?</div>\s*</div>
 
 # ------------------------------------------------------------
 # 本文取得設定
