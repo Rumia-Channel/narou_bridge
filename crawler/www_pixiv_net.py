@@ -984,6 +984,25 @@ class PixivCrawler:
 
         # --- 漫画/イラスト処理 (スナップショット) ---
         if user_conf.get("comic") == "enable":
+            # 保留中の破損漫画の修復チェック
+            if hasattr(_crawler, '_corrupt_comics_pending') and _crawler._corrupt_comics_pending:
+                logging.info(f"Checking pending corrupted comics for user {user_id}...")
+                for pending_item in list(_crawler._corrupt_comics_pending):
+                    folder_name, corrupt_path, cid = pending_item
+                    # このユーザーの漫画シリーズに該当するか確認
+                    if cid in m_series:
+                        logging.info(f"Found pending comic {cid} in user {user_id} series, re-downloading...")
+                        try:
+                            self.download_comic(cid, folder_path, key_data, update=False)
+                            # 成功したら .corrupt を削除
+                            if os.path.exists(corrupt_path):
+                                os.remove(corrupt_path)
+                                logging.info(f"Removed corrupt file: {corrupt_path}")
+                            # 保留リストから削除
+                            _crawler._corrupt_comics_pending.remove(pending_item)
+                        except Exception as e:
+                            logging.error(f"Failed to repair pending comic {cid}: {e}")
+            
             for sid in m_series:
                 self._sleep()
                 self.download_comic(str(sid), folder_path, key_data, update)
@@ -1057,6 +1076,12 @@ def update(folder_path, key_data, data_path, host_name):
 
     # 1. 最優先: .corrupt ファイルの探索と再ダウンロード
     corrupt_targets = []
+    corrupt_comics_pending = []  # author_id 不明の漫画シリーズ
+    
+    # クローラーインスタンスに保留リストを初期化（既存のものがあれば保持）
+    if not hasattr(_crawler, '_corrupt_comics_pending'):
+        _crawler._corrupt_comics_pending = []
+    
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.endswith('.corrupt'):
@@ -1087,7 +1112,57 @@ def update(folder_path, key_data, data_path, host_name):
                     _crawler.download_art(aid, folder_path, key_data)
                 elif folder_name.startswith('c'):
                     cid = folder_name.lstrip('c')
-                    _crawler.download_comic(cid, folder_path, key_data, update=False)
+                    
+                    # 漫画シリーズの author_id をパターンマッチングで探索
+                    author_id = None
+                    
+                    # 1. index.json から author_id を取得試行
+                    index_path = os.path.join(folder_path, 'index.json')
+                    if os.path.exists(index_path):
+                        index_data = cm._load_json_safe(index_path)
+                        if index_data and folder_name in index_data:
+                            author_id = index_data[folder_name].get('author_id')
+                            logging.info(f"Found author_id from index.json: {author_id}")
+                    
+                    # 2. 同一フォルダ内の他のファイルから author_id を探索
+                    if not author_id:
+                        parent_dir = os.path.dirname(corrupt_path)
+                        for fname in os.listdir(parent_dir):
+                            fpath = os.path.join(parent_dir, fname)
+                            if fname.endswith('.json') and os.path.isfile(fpath):
+                                try:
+                                    data = cm._load_json_safe(fpath)
+                                    if data and 'author_id' in data:
+                                        author_id = data['author_id']
+                                        logging.info(f"Found author_id from {fname}: {author_id}")
+                                        break
+                                except:
+                                    continue
+                    
+                    # 3. raw フォルダ内のバックアップファイルから探索
+                    if not author_id:
+                        raw_dir = os.path.join(os.path.dirname(corrupt_path), 'raw')
+                        if os.path.exists(raw_dir):
+                            for fname in os.listdir(raw_dir):
+                                if fname.startswith('raw.json.backup.'):
+                                    backup_path = os.path.join(raw_dir, fname)
+                                    try:
+                                        data = cm._load_json_safe(backup_path)
+                                        if data and 'author_id' in data:
+                                            author_id = data['author_id']
+                                            logging.info(f"Found author_id from backup {fname}: {author_id}")
+                                            break
+                                    except:
+                                        continue
+                    
+                    if author_id:
+                        # author_id が判明した場合は即座に再ダウンロード
+                        _crawler.download_comic(cid, folder_path, key_data, update=False)
+                    else:
+                        # author_id が不明な場合は保留リストに追加
+                        logging.warning(f"Comic {cid} author_id unknown, adding to pending list")
+                        corrupt_comics_pending.append((folder_name, corrupt_path, cid))
+                        continue  # .corrupt 削除をスキップ
                 
                 # 再ダウンロード成功後、.corrupt ファイルを削除
                 if os.path.exists(corrupt_path):
@@ -1097,6 +1172,11 @@ def update(folder_path, key_data, data_path, host_name):
             except Exception as e:
                 logging.error(f"Failed to re-download corrupted {folder_name}: {e}", exc_info=True)
     
+    # 保留中の漫画をクローラーインスタンスに追加
+    if corrupt_comics_pending:
+        _crawler._corrupt_comics_pending.extend(corrupt_comics_pending)
+        logging.info(f"Added {len(corrupt_comics_pending)} pending comics to repair queue")
+    
     # 2. 通常の更新処理
     # index.json から更新
     index_path = os.path.join(folder_path, 'index.json')
@@ -1104,6 +1184,9 @@ def update(folder_path, key_data, data_path, host_name):
     
     index_data = cm._load_json_safe(index_path)
     if not index_data: return
+    
+    # .corrupt が見つかったフォルダ名のセット（高速検索用）
+    corrupt_folder_names = {folder_name for folder_name, _ in corrupt_targets}
     
     # user.json からユーザー更新
     user_json_path = os.path.join(folder_path, 'user.json')
@@ -1115,6 +1198,11 @@ def update(folder_path, key_data, data_path, host_name):
     
     # 個別作品更新
     for folder, meta in index_data.items():
+        # .corrupt で既に処理済みのフォルダはスキップ
+        if folder in corrupt_folder_names:
+            logging.debug(f"Skipping {folder} (already re-downloaded due to corruption)")
+            continue
+            
         try:
             if meta['type'] == 'novel':
                 if meta['serialization'] == '短編':
@@ -1147,17 +1235,40 @@ def generate_request_id() -> str:
     return ''.join(replace_char(c) for c in template)
 
 def request_re_download(target_id: str, host_name: str):
-    """破損データの再ダウンロードをリクエスト"""
+    """破損データの再ダウンロードをリクエスト（URL形式に変換）"""
     try:
+        # フォルダ名からPixiv URLを成形
+        pixiv_url = None
+        if target_id.startswith('n'):
+            # 短編小説: https://www.pixiv.net/novel/show.php?id=12345678
+            nid = target_id.lstrip('n')
+            pixiv_url = f"https://www.pixiv.net/novel/show.php?id={nid}"
+        elif target_id.startswith('s'):
+            # 連載小説: https://www.pixiv.net/novel/series/12345678
+            sid = target_id.lstrip('s')
+            pixiv_url = f"https://www.pixiv.net/novel/series/{sid}"
+        elif target_id.startswith('a'):
+            # イラスト: https://www.pixiv.net/artworks/12345678
+            aid = target_id.lstrip('a')
+            pixiv_url = f"https://www.pixiv.net/artworks/{aid}"
+        elif target_id.startswith('c'):
+            # 漫画シリーズ: https://www.pixiv.net/user/123456/series/789012 (ユーザーIDが必要)
+            # ※ comic は author_id が必要なため、ここでは対応不可
+            logging.warning(f"Comic series {target_id} cannot be auto-repaired via URL (author_id required)")
+            return
+        else:
+            logging.error(f"Unknown target_id format: {target_id}")
+            return
+        
         url = f"{host_name}/api/"
         
         payload = {
-            "re_download": target_id,
+            "re_download": pixiv_url,  # URL形式で送信
             "request_id": generate_request_id()
         }
         # タイムアウトを短めに設定して、サーバーが詰まらないようにする
         requests.post(url, data=payload, timeout=1)
-        logging.info(f"Requested auto-repair (re-download) for corrupted data: {target_id}")
+        logging.info(f"Requested auto-repair (re-download) for corrupted data: {target_id} -> {pixiv_url}")
     except Exception as e:
         logging.error(f"Failed to request auto-repair for {target_id}: {e}")
 
@@ -1205,83 +1316,3 @@ def convert(folder_path, key_data, data_path, host_name):
                 logging.error(f"Convert failed for {folder}: {e}")
     
     cm.gen_site_index(folder_path, key_data, 'Pixiv')
-
-def re_download(folder_path, key_data, data_path, host_name):
-    """全作品の再ダウンロード（.corrupt優先処理付き）"""
-    if not _crawler:
-        logging.error("Crawler not initialized")
-        return
-    
-    # 1. 最優先: .corrupt ファイルの探索と再ダウンロード
-    corrupt_targets = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.endswith('.corrupt'):
-                if file == 'raw.json.corrupt':
-                    folder_name = os.path.basename(root)
-                    corrupt_path = os.path.join(root, file)
-                    corrupt_targets.append((folder_name, corrupt_path))
-                    logging.warning(f"Re-download: Found corrupted file in {folder_name}")
-    
-    # .corrupt ファイルを持つ作品を最優先で再ダウンロード
-    if corrupt_targets:
-        logging.info(f"Re-download: Processing {len(corrupt_targets)} corrupted files first...")
-        for folder_name, corrupt_path in corrupt_targets:
-            try:
-                logging.info(f"Re-downloading corrupted: {folder_name}")
-                
-                # フォルダ名から作品タイプと IDを推定
-                if folder_name.startswith('n'):
-                    nid = folder_name.lstrip('n')
-                    _crawler.download_novel(nid, folder_path, key_data, update=False)
-                elif folder_name.startswith('s'):
-                    sid = folder_name.lstrip('s')
-                    _crawler.download_series(sid, folder_path, key_data, update=False)
-                elif folder_name.startswith('a'):
-                    aid = folder_name.lstrip('a')
-                    _crawler.download_art(aid, folder_path, key_data)
-                elif folder_name.startswith('c'):
-                    cid = folder_name.lstrip('c')
-                    _crawler.download_comic(cid, folder_path, key_data, update=False)
-                
-                # 再ダウンロード成功後、.corrupt ファイルを削除
-                if os.path.exists(corrupt_path):
-                    os.remove(corrupt_path)
-                    logging.info(f"Removed corrupt file: {corrupt_path}")
-                    
-            except Exception as e:
-                logging.error(f"Failed to re-download corrupted {folder_name}: {e}", exc_info=True)
-    
-    # 2. 通常の全作品再ダウンロード
-    # index.json から全作品取得
-    index_path = os.path.join(folder_path, 'index.json')
-    if not os.path.exists(index_path):
-        logging.warning("No index.json found for re-download")
-        return
-    
-    index_data = cm._load_json_safe(index_path)
-    if not index_data:
-        logging.warning("Failed to load index.json for re-download")
-        return
-    
-    logging.info(f"Re-downloading {len(index_data)} works...")
-    for folder, meta in index_data.items():
-        try:
-            if meta['type'] == 'novel':
-                if meta['serialization'] == '短編':
-                    nid = folder.lstrip('n')
-                    _crawler.download_novel(nid, folder_path, key_data, update=False)
-                else:
-                    sid = folder.lstrip('s')
-                    _crawler.download_series(sid, folder_path, key_data, update=False)
-            elif meta['type'] == 'comic':
-                if meta['serialization'] == '短編':
-                    aid = folder.lstrip('a')
-                    _crawler.download_art(aid, folder_path, key_data)
-                else:
-                    cid = folder.lstrip('c')
-                    _crawler.download_comic(cid, folder_path, key_data, update=False)
-        except Exception as e:
-            logging.error(f"Re-download failed for {folder}: {e}")
-    
-    logging.info("Re-download completed")
