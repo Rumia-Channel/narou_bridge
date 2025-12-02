@@ -1122,9 +1122,13 @@ def recover_user_json(folder_path: str, corrupt_user_json_path: str):
     # Step 2: raw.jsonからユーザーIDとイラストIDを収集
     user_illusts = {}  # {user_id: set(illust_ids)}
     
+    logging.info("Scanning raw.json files to collect user IDs and illust IDs...")
+    raw_file_count = 0
+    
     for root, dirs, files in os.walk(folder_path):
         if 'raw.json' in files:
             raw_path = os.path.join(root, 'raw.json')
+            raw_file_count += 1
             try:
                 data = cm._load_json_safe(raw_path)
                 if not data:
@@ -1136,8 +1140,11 @@ def recover_user_json(folder_path: str, corrupt_user_json_path: str):
                     user_id = str(data["userId"])
                 elif "user_id" in data:
                     user_id = str(data["user_id"])
+                elif "author_id" in data:
+                    user_id = str(data["author_id"])
                 
                 if not user_id:
+                    logging.debug(f"No userId/author_id in {raw_path}")
                     continue
                 
                 # イラストIDを収集
@@ -1166,7 +1173,9 @@ def recover_user_json(folder_path: str, corrupt_user_json_path: str):
                 user_illusts[user_id].update(illust_ids)
             
             except Exception as e:
-                logging.debug(f"Failed to process {raw_path}: {e}")
+                logging.warning(f"Failed to process {raw_path}: {e}")
+    
+    logging.info(f"Scanned {raw_file_count} raw.json files, found {len(user_illusts)} unique users")
     
     # Step 3: データをマージ
     for user_id, illust_ids in user_illusts.items():
