@@ -203,13 +203,32 @@ def _load_json_safe(path: str) -> Dict:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except json.JSONDecodeError:
+        logging.error(f"JSONDecodeError: {path} is corrupted. Backing up to {path}.corrupt")
+        if os.path.exists(path):
+            shutil.copy2(path, path + ".corrupt")
+        return {}
+    except Exception as e:
+        logging.error(f"Failed to load JSON {path}: {e}")
         return {}
 
 
 def _save_json(path: str, data: Dict):
-    """JSON保存ヘルパー"""
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    """JSON保存ヘルパー（アトミック書き込み）"""
+    dir_name = os.path.dirname(path)
+    if dir_name and not os.path.exists(dir_name):
+        os.makedirs(dir_name, exist_ok=True)
+        
+    tmp_path = path + ".tmp"
+    try:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception as e:
+        logging.error(f"Failed to write JSON {path}: {e}")
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 def check_image_file(img_path: str, file_name: str) -> Optional[str]:
