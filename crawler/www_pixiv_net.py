@@ -1129,9 +1129,19 @@ def recover_from_corrupt_json(corrupt_path: str) -> dict:
     """
     recovered_data = {}
     
+    # ファイルサイズチェック（空ファイルの場合は処理不要）
+    if os.path.exists(corrupt_path) and os.path.getsize(corrupt_path) == 0:
+        logging.info(f"Corrupt file is empty (0 bytes), skipping recovery: {corrupt_path}")
+        return {}
+    
     try:
         with open(corrupt_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
+        
+        # 空または空白のみの場合
+        if not content.strip():
+            logging.info(f"Corrupt file contains only whitespace, skipping recovery: {corrupt_path}")
+            return {}
         
         logging.info(f"Attempting aggressive recovery from: {corrupt_path}")
         
