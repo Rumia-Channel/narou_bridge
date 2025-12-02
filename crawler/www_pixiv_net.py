@@ -1101,6 +1101,33 @@ def update(folder_path, key_data, data_path, host_name):
                     _crawler.download_comic(cid, folder_path, key_data, update=True)
         except Exception as e:
             logging.error(f"Update failed for {folder}: {e}")
+            # エラー発生時は破損の可能性が高いため再ダウンロードをリクエスト
+            request_re_download(folder)
+
+def request_re_download(target_id: str):
+    """破損データの再ダウンロードをリクエスト"""
+    try:
+        import configparser
+        config = configparser.ConfigParser()
+        ini_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'setting', 'setting.ini')
+        config.read(ini_path, encoding='utf-8')
+        port = config.get('server', 'port', fallback='8080')
+        
+        url = f"http://127.0.0.1:{port}/api/"
+        # pixivのID形式に合わせて変換 (例: s1234 -> https://www.pixiv.net/novel/series/1234)
+        # ただし re_download はフォルダ名(ID)やURLを受け付ける仕様
+        # ここではシンプルにID(フォルダ名)を渡すか、可能ならURLを構築して渡す
+        # re_downloadの実装を見ると、ID文字列が含まれていればターゲット特定できるロジックになっているため、フォルダ名をそのまま渡す
+        
+        payload = {
+            "re_download": target_id,
+            "request_id": f"auto_repair_{target_id}_{int(time.time())}"
+        }
+        # タイムアウトを短めに設定して、サーバーが詰まらないようにする
+        requests.post(url, data=payload, timeout=1)
+        logging.info(f"Requested auto-repair (re-download) for corrupted data: {target_id}")
+    except Exception as e:
+        logging.error(f"Failed to request auto-repair for {target_id}: {e}")
 
 def convert(folder_path, key_data, data_path, host_name):
     """ローカルデータの再変換"""
@@ -1111,7 +1138,8 @@ def convert(folder_path, key_data, data_path, host_name):
             try:
                 data = cm._load_json_safe(raw_path)
                 if not data:
-                    logging.warning(f"Skipping conversion for {folder} due to empty/corrupted raw.json")
+                    logging.warning(f"Corrupted raw.json found in {folder}. Requesting re-download.")
+                    request_re_download(folder)
                     continue
 
                 # タグ整形再適用
