@@ -537,8 +537,15 @@ def gen_site_index(folder_path: str, key_data, site_name: str):
     subfolders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
     pairs = {}
     no_raw = []
+    
+    # システムフォルダ（削除対象外）
+    system_folders = {'images', 'snapshots'}
 
     for folder in subfolders:
+        # システムフォルダはスキップ
+        if folder in system_folders:
+            continue
+            
         json_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
         if not os.path.exists(json_path):
             # raw.jsonが無いフォルダは削除対象
