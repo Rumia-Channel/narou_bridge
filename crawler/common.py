@@ -233,7 +233,7 @@ def _save_json(path: str, data: Dict):
 
 def check_image_file(img_path: str, file_name: str) -> Optional[str]:
     """
-    database.json を参照し、同名のファイルが存在するかチェックする
+    database.json を参照し、同名のファイルが存在するかチェックする。
     """
     db_path = os.path.join(img_path, 'database.json')
     
@@ -251,10 +251,18 @@ def check_image_file(img_path: str, file_name: str) -> Optional[str]:
             target_ext = os.path.splitext(key)[1]
             check_path = os.path.join(img_path, value + target_ext)
             check_url = base_url + value + target_ext
+            
+            # ローカルチェック
             if os.path.exists(check_path):
                 return value + target_ext
-            elif requests.head(check_url).status_code == 200:
-                return value + target_ext
+            
+            # リモートチェック (通信エラー時はNone扱いにして再DLへ)
+            try:
+                if requests.head(check_url, timeout=5).status_code == 200:
+                    return value + target_ext
+            except requests.RequestException:
+                pass 
+
     return None
 
 def get_root_path() -> str:
