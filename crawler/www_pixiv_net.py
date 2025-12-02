@@ -1147,10 +1147,17 @@ def recover_user_json(folder_path: str, corrupt_user_json_path: str):
                     logging.debug(f"No userId/author_id in {raw_path}")
                     continue
                 
-                # イラストIDを収集
+                # イラストIDを収集（小説は除外）
+                work_type = data.get("type", "")
+                if work_type == "novel":
+                    # 小説の場合はイラストIDを収集しない
+                    if user_id not in user_illusts:
+                        user_illusts[user_id] = set()
+                    continue
+                
                 illust_ids = set()
                 
-                # シリーズの場合
+                # シリーズの場合（漫画シリーズなど）
                 if "series" in data:
                     for episode in data.get("series", []):
                         if isinstance(episode, dict):
@@ -1158,8 +1165,8 @@ def recover_user_json(folder_path: str, corrupt_user_json_path: str):
                                 if isinstance(illust, dict) and "id" in illust:
                                     illust_ids.add(str(illust["id"]))
                 
-                # 単体イラスト
-                if "id" in data:
+                # 単体イラスト/漫画（typeがcomicの場合のみ）
+                if work_type == "comic" and "id" in data:
                     illust_ids.add(str(data["id"]))
                 
                 # illusts配列
@@ -1188,10 +1195,14 @@ def recover_user_json(folder_path: str, corrupt_user_json_path: str):
             logging.info(f"Added new user from raw.json: {user_id}")
         
         # ハッシュを計算（既存の_hash_ids関数を使用）
+        # raw.jsonから計算したハッシュを最優先（破損ファイルの値より優先）
         if illust_ids:
             snapshot_hash = _hash_ids(illust_ids)
             recovered[user_id]["illust_ids_snapshot_hash"] = snapshot_hash
             logging.info(f"Updated hash for user {user_id}: {snapshot_hash[:16]}...")
+        else:
+            # イラストが無い場合は古いハッシュを削除（小説専業作家など）
+            recovered[user_id].pop("illust_ids_snapshot_hash", None)
     
     # Step 4: 復元データを保存
     cm._save_json(user_json_path, recovered)
