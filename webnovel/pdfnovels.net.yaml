@@ -2,7 +2,7 @@
 # 小説サイト定義
 name: &name タテ書き小説ネット
 sitename: *name
-domain: ncode.syosetu.com
+domain: pdfnovels.net
 top_url: http://localhost:8080
 url: \\k<top_url>/narou/(?<ncode>n\d+[a-z]+)/
 encoding: UTF-8
