@@ -1005,7 +1005,28 @@ class PixivCrawler:
             
             # イラスト・単発漫画
             target_ids = set(map(int, illusts + mangas))
-            prev_snapshot = set(map(int, self._load_illust_snapshot(folder_path, user_id, user_conf.get("illust_ids_snapshot", []))))
+            
+            # スナップショット読み込み（旧規格からの移行処理を含む）
+            snapshot_file = self._snapshot_path(folder_path, user_id)
+            old_snapshot_array = user_conf.get("illust_ids_snapshot", [])
+            
+            # snapshotsファイルが存在しない場合、旧規格配列から移行
+            if not os.path.exists(snapshot_file) and old_snapshot_array:
+                # ハッシュで検証
+                old_hash = user_conf.get("illust_ids_snapshot_hash", "")
+                current_hash = _hash_ids(old_snapshot_array)
+                if old_hash == current_hash:
+                    # ハッシュが一致：snapshotsファイルに移行
+                    os.makedirs(os.path.dirname(snapshot_file), exist_ok=True)
+                    cm._save_json(snapshot_file, old_snapshot_array)
+                    logging.info(f"Migrated illust_ids_snapshot array to {snapshot_file}")
+                    # user.jsonから旧規格配列を削除
+                    full_conf = cm._load_json_safe(user_json_path)
+                    if user_id in full_conf:
+                        full_conf[user_id].pop("illust_ids_snapshot", None)
+                        cm._save_json(user_json_path, full_conf)
+            
+            prev_snapshot = set(map(int, self._load_illust_snapshot(folder_path, user_id, old_snapshot_array)))
             
             if update:
                 new_ids = sorted(list(target_ids - prev_snapshot))
@@ -1025,6 +1046,8 @@ class PixivCrawler:
             full_conf = cm._load_json_safe(user_json_path)
             if user_id in full_conf:
                 full_conf[user_id]["illust_ids_snapshot_hash"] = _hash_ids(target_ids)
+                # 旧規格配列が残っていれば削除（念のため）
+                full_conf[user_id].pop("illust_ids_snapshot", None)
                 cm._save_json(user_json_path, full_conf)
 
 
@@ -1201,8 +1224,11 @@ def recover_user_json(folder_path: str, corrupt_user_json_path: str):
             recovered[user_id]["illust_ids_snapshot_hash"] = snapshot_hash
             logging.info(f"Updated hash for user {user_id}: {snapshot_hash[:16]}...")
         else:
-            # イラストが無い場合は古いハッシュを削除（小説専業作家など）
-            recovered[user_id].pop("illust_ids_snapshot_hash", None)
+            # イラストが無い場合は空文字列を設定（小説専業作家など）
+            recovered[user_id]["illust_ids_snapshot_hash"] = ""
+        
+        # 旧規格の配列を保持（snapshotsへの移行は更新時に行う）
+        # illust_ids_snapshotは削除しない
     
     # Step 4: 復元データを保存
     cm._save_json(user_json_path, recovered)
