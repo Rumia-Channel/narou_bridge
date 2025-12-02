@@ -1075,14 +1075,14 @@ def update(folder_path, key_data, data_path, host_name):
     index_path = os.path.join(folder_path, 'index.json')
     if not os.path.exists(index_path): return
     
-    index_data = cm.safe_load_json(index_path, {})
-    if not index_data: return # Handle empty/corrupted load
+    with open(index_path, 'r', encoding='utf-8') as f:
+        index_data = json.load(f)
     
     # user.json からユーザー更新
     user_json_path = os.path.join(folder_path, 'user.json')
-    # cm.safe_load_json で読み込む
-    users = cm.safe_load_json(user_json_path, {})
-    if users: # Process only if users data is successfully loaded
+    if os.path.exists(user_json_path):
+        with open(user_json_path, 'r', encoding='utf-8') as f:
+            users = json.load(f)
         for uid in users:
             if uid == "version": continue
             _crawler.download_user(uid, folder_path, key_data, update=True)
@@ -1114,10 +1114,8 @@ def convert(folder_path, key_data, data_path, host_name):
         raw_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
         if os.path.exists(raw_path):
             try:
-                data = cm.safe_load_json(raw_path, {})
-                if not data:
-                    logging.warning(f"Skipping conversion for {folder} due to empty/corrupted raw.json")
-                    continue
+                with open(raw_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
                 
                 # タグ整形再適用
                 if 'tags' in data:
@@ -1125,7 +1123,8 @@ def convert(folder_path, key_data, data_path, host_name):
                 if 'all_tags' in data:
                     data['all_tags'] = format_tags(data['all_tags'])
                 
-                cm.atomic_write_json(raw_path, data)
+                with open(raw_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=4)
                 
                 cn.narou_gen(data, os.path.join(folder_path, folder), key_data, data_path, host_name)
             except Exception as e:
