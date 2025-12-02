@@ -1065,6 +1065,135 @@ def download(url, folder_path, key_data, data_path, host_name):
     except Exception as e:
         logging.error(f"Download failed: {e}", exc_info=True)
 
+def recover_user_json(folder_path: str, corrupt_user_json_path: str):
+    """
+    user.jsonの復元
+    1. バックアップから復元を試みる（_load_json_safeで自動実行済み）
+    2. 破損ファイルから回収可能なデータを抽出
+    3. raw.jsonからユーザーIDとイラストIDを収集してハッシュを再計算
+    4. データをマージして復元
+    """
+    logging.warning(f"user.json corrupted: {corrupt_user_json_path}")
+    logging.info("Attempting to recover user.json from corrupt file and raw.json files...")
+    
+    user_json_path = corrupt_user_json_path.replace('.corrupt', '')
+    recovered = {"version": VERSION}
+    
+    # Step 1: 破損ファイルからデータを抽出
+    try:
+        with open(corrupt_user_json_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        # ユーザーIDブロックを正規表現で抽出: "12345678": { ... }
+        user_pattern = r'"(\d+)":\s*\{([^}]+)\}'
+        for match in re.finditer(user_pattern, content):
+            user_id = match.group(1)
+            user_block = match.group(2)
+            user_data = {}
+            
+            # novel/comic の設定を抽出
+            novel_match = re.search(r'"novel":\s*"(enable|disable)"', user_block)
+            if novel_match:
+                user_data["novel"] = novel_match.group(1)
+            
+            comic_match = re.search(r'"comic":\s*"(enable|disable)"', user_block)
+            if comic_match:
+                user_data["comic"] = comic_match.group(1)
+            
+            # illust_ids_snapshot_hash を抽出（あれば）
+            hash_match = re.search(r'"illust_ids_snapshot_hash":\s*"([a-f0-9]{64})"', user_block)
+            if hash_match:
+                user_data["illust_ids_snapshot_hash"] = hash_match.group(1)
+            
+            # 旧規格の illust_ids_snapshot は無視（除去）
+            
+            if user_data:
+                recovered[user_id] = user_data
+                logging.info(f"Recovered user {user_id}: {user_data}")
+        
+        # versionも抽出
+        version_match = re.search(r'"version":\s*(\d+)', content)
+        if version_match:
+            recovered["version"] = int(version_match.group(1))
+    
+    except Exception as e:
+        logging.error(f"Failed to extract from corrupt file: {e}")
+    
+    # Step 2: raw.jsonからユーザーIDとイラストIDを収集
+    user_illusts = {}  # {user_id: set(illust_ids)}
+    
+    for root, dirs, files in os.walk(folder_path):
+        if 'raw.json' in files:
+            raw_path = os.path.join(root, 'raw.json')
+            try:
+                data = cm._load_json_safe(raw_path)
+                if not data:
+                    continue
+                
+                # ユーザーIDを取得
+                user_id = None
+                if "userId" in data:
+                    user_id = str(data["userId"])
+                elif "user_id" in data:
+                    user_id = str(data["user_id"])
+                
+                if not user_id:
+                    continue
+                
+                # イラストIDを収集
+                illust_ids = set()
+                
+                # シリーズの場合
+                if "series" in data:
+                    for episode in data.get("series", []):
+                        if isinstance(episode, dict):
+                            for illust in episode.get("illusts", []):
+                                if isinstance(illust, dict) and "id" in illust:
+                                    illust_ids.add(str(illust["id"]))
+                
+                # 単体イラスト
+                if "id" in data:
+                    illust_ids.add(str(data["id"]))
+                
+                # illusts配列
+                if "illusts" in data and isinstance(data["illusts"], list):
+                    for illust in data["illusts"]:
+                        if isinstance(illust, dict) and "id" in illust:
+                            illust_ids.add(str(illust["id"]))
+                
+                if user_id not in user_illusts:
+                    user_illusts[user_id] = set()
+                user_illusts[user_id].update(illust_ids)
+            
+            except Exception as e:
+                logging.debug(f"Failed to process {raw_path}: {e}")
+    
+    # Step 3: データをマージ
+    for user_id, illust_ids in user_illusts.items():
+        if user_id not in recovered:
+            # 新規ユーザー（デフォルト設定）
+            recovered[user_id] = {
+                "novel": "enable",
+                "comic": "enable"
+            }
+            logging.info(f"Added new user from raw.json: {user_id}")
+        
+        # ハッシュを計算（既存の_hash_ids関数を使用）
+        if illust_ids:
+            snapshot_hash = _hash_ids(illust_ids)
+            recovered[user_id]["illust_ids_snapshot_hash"] = snapshot_hash
+            logging.info(f"Updated hash for user {user_id}: {snapshot_hash[:16]}...")
+    
+    # Step 4: 復元データを保存
+    cm._save_json(user_json_path, recovered)
+    logging.info(f"✓ user.json recovered with {len(recovered) - 1} users")
+    
+    # .corruptファイルを削除
+    if os.path.exists(corrupt_user_json_path):
+        os.remove(corrupt_user_json_path)
+        logging.info(f"Removed {corrupt_user_json_path}")
+
+
 def recover_global_image_db(folder_path: str, corrupt_db_path: str):
     """
     グローバル画像DBの復元
@@ -1179,7 +1308,7 @@ def update(folder_path, key_data, data_path, host_name):
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.endswith('.corrupt'):
-                # raw.json.corrupt, database.json.corrupt, cover.json.corrupt を検出
+                # raw.json.corrupt, database.json.corrupt, cover.json.corrupt, user.json.corrupt を検出
                 if file == 'raw.json.corrupt':
                     # raw.json.corrupt は raw フォルダ内にあるため、親の親フォルダが作品フォルダ
                     # 例: /pixiv/n18922281/raw/raw.json.corrupt
@@ -1189,6 +1318,16 @@ def update(folder_path, key_data, data_path, host_name):
                     corrupt_path = os.path.join(root, file)
                     corrupt_targets.append((folder_name, corrupt_path))
                     logging.warning(f"Found corrupted file: {corrupt_path}, work folder: {folder_name}")
+                    
+                elif file == 'user.json.corrupt':
+                    # user.json.corrupt はフォルダ直下
+                    # 例: /pixiv/user.json.corrupt
+                    corrupt_path = os.path.join(root, file)
+                    logging.warning(f"Found corrupted user.json: {corrupt_path}")
+                    try:
+                        recover_user_json(folder_path, corrupt_path)
+                    except Exception as e:
+                        logging.error(f"Failed to recover user.json: {e}", exc_info=True)
                     
                 elif file in ('database.json.corrupt', 'cover.json.corrupt'):
                     # database.json.corrupt, cover.json.corrupt は images フォルダ内のみ
