@@ -916,23 +916,20 @@ class PixivCrawler:
         
         # ユーザー設定読み込み
         user_json_path = os.path.join(folder_path, "user.json")
-        user_conf = {}
-        if os.path.exists(user_json_path):
-            with open(user_json_path, 'r', encoding='utf-8') as f:
-                full_conf = json.load(f)
-                user_conf = full_conf.get(user_id, {})
+        
+        full_conf = cm._load_json_safe(user_json_path)
+        user_conf = full_conf.get(user_id, {})
         
         # 初期化
         if not user_conf:
             user_conf = {"novel": "enable", "comic": "enable", "illust_ids_snapshot": []}
-            if os.path.exists(user_json_path):
-                with open(user_json_path, 'r', encoding='utf-8') as f:
-                    full_conf = json.load(f)
-            else:
-                full_conf = {"version": 3}
+            # 再読み込み (atomic writeにより競合は減るが、最新状態を取得)
+            full_conf = cm._load_json_safe(user_json_path)
+            if not full_conf:
+                 full_conf = {"version": 3}
+            
             full_conf[user_id] = user_conf
-            with open(user_json_path, 'w', encoding='utf-8') as f:
-                json.dump(full_conf, f, ensure_ascii=False, indent=4)
+            cm._save_json(user_json_path, full_conf)
 
         # プロフィール全取得
         all_data = self.get_json(f"https://www.pixiv.net/ajax/user/{user_id}/profile/all")
@@ -1022,11 +1019,10 @@ class PixivCrawler:
             self._save_illust_snapshot(folder_path, user_id, target_ids)
             
             # user.json 更新 (ハッシュのみ)
-            with open(user_json_path, 'r', encoding='utf-8') as f:
-                full_conf = json.load(f)
-            full_conf[user_id]["illust_ids_snapshot_hash"] = _hash_ids(target_ids)
-            with open(user_json_path, 'w', encoding='utf-8') as f:
-                json.dump(full_conf, f, ensure_ascii=False, indent=4)
+            full_conf = cm._load_json_safe(user_json_path)
+            if user_id in full_conf:
+                full_conf[user_id]["illust_ids_snapshot_hash"] = _hash_ids(target_ids)
+                cm._save_json(user_json_path, full_conf)
 
 
 # --- エントリーポイント (互換性維持) ---
@@ -1075,14 +1071,13 @@ def update(folder_path, key_data, data_path, host_name):
     index_path = os.path.join(folder_path, 'index.json')
     if not os.path.exists(index_path): return
     
-    with open(index_path, 'r', encoding='utf-8') as f:
-        index_data = json.load(f)
+    index_data = cm._load_json_safe(index_path)
+    if not index_data: return
     
     # user.json からユーザー更新
     user_json_path = os.path.join(folder_path, 'user.json')
-    if os.path.exists(user_json_path):
-        with open(user_json_path, 'r', encoding='utf-8') as f:
-            users = json.load(f)
+    users = cm._load_json_safe(user_json_path)
+    if users:
         for uid in users:
             if uid == "version": continue
             _crawler.download_user(uid, folder_path, key_data, update=True)
@@ -1114,17 +1109,18 @@ def convert(folder_path, key_data, data_path, host_name):
         raw_path = os.path.join(folder_path, folder, 'raw', 'raw.json')
         if os.path.exists(raw_path):
             try:
-                with open(raw_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
+                data = cm._load_json_safe(raw_path)
+                if not data:
+                    logging.warning(f"Skipping conversion for {folder} due to empty/corrupted raw.json")
+                    continue
+
                 # タグ整形再適用
                 if 'tags' in data:
                     data['tags'] = format_tags(data['tags'])
                 if 'all_tags' in data:
                     data['all_tags'] = format_tags(data['all_tags'])
                 
-                with open(raw_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=4)
+                cm._save_json(raw_path, data)
                 
                 cn.narou_gen(data, os.path.join(folder_path, folder), key_data, data_path, host_name)
             except Exception as e:
