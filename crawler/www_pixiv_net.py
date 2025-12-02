@@ -321,8 +321,6 @@ class PixivCrawler:
         ext = os.path.splitext(url)[1]
         
         # 既に存在するかチェック
-        if cm.check_image_file(folder_path, f'cover{ext}'):
-            return
         if cm.check_image_file(self.img_path, f'pixiv_{ncode}_cover{ext}'):
             return
 
@@ -335,12 +333,9 @@ class PixivCrawler:
             res = cm.get_with_cookie(cand, self.cookies, self.headers)
             if res and res.status_code == 200:
                 f_ext = os.path.splitext(cand)[1]
-                # 共通フォルダへ保存
+                # グローバル images フォルダへ保存
                 hash_name = cm.check_image_hash(self.img_path, res.content, f'pixiv_{ncode}_cover{f_ext}', is_cover=True)
                 with open(os.path.join(self.img_path, f'{hash_name}{f_ext}'), 'wb') as f:
-                    f.write(res.content)
-                # 個別フォルダへ保存
-                with open(os.path.join(folder_path, f'cover{f_ext}'), 'wb') as f:
                     f.write(res.content)
                 return
 
@@ -1073,50 +1068,18 @@ def download(url, folder_path, key_data, data_path, host_name):
 def recover_global_image_db(folder_path: str, corrupt_db_path: str):
     """
     グローバル画像DBの復元
-    全作品フォルダから database.json と cover.json を収集してマージ
+    破損したdatabase.json/cover.jsonはバックアップから復元する
     """
-    logging.info("Recovering global image database from all work folders...")
+    logging.warning(f"Global image DB corrupted: {corrupt_db_path}")
+    logging.info("Attempting to restore from backup files (.backup.1, .backup.2, .backup.3)")
     
-    merged_db = {}
-    recovered_count = 0
+    # バックアップからの復元は _load_json_safe で既に試行済み
+    # ここでは.corruptファイルを削除するのみ
+    if os.path.exists(corrupt_db_path):
+        os.remove(corrupt_db_path)
+        logging.info(f"Removed {corrupt_db_path}")
     
-    # 全作品フォルダを探索
-    for item in os.listdir(folder_path):
-        item_path = os.path.join(folder_path, item)
-        if not os.path.isdir(item_path):
-            continue
-        
-        # images フォルダ自体はスキップ
-        if item == 'images':
-            continue
-        
-        # 各作品フォルダ内の database.json と cover.json を収集
-        for json_file in ['database.json', 'cover.json']:
-            json_path = os.path.join(item_path, json_file)
-            if os.path.exists(json_path):
-                try:
-                    data = cm._load_json_safe(json_path)
-                    if data:
-                        merged_db.update(data)
-                        recovered_count += len(data)
-                except Exception as e:
-                    logging.warning(f"Failed to load {json_path}: {e}")
-    
-    if merged_db:
-        # 復元したデータを保存
-        db_dir = os.path.dirname(corrupt_db_path)
-        db_filename = os.path.basename(corrupt_db_path).replace('.corrupt', '')
-        recovered_path = os.path.join(db_dir, db_filename)
-        
-        cm._save_json(recovered_path, merged_db)
-        logging.info(f"Recovered {len(merged_db)} unique entries ({recovered_count} total) to {recovered_path}")
-        
-        # .corrupt ファイルを削除
-        if os.path.exists(corrupt_db_path):
-            os.remove(corrupt_db_path)
-            logging.info(f"Removed {corrupt_db_path} after recovery")
-    else:
-        logging.warning("No data found to recover global image database")
+    # 復元できなかった場合は空のDBとして再作成される
 
 def recover_from_corrupt_json(corrupt_path: str) -> dict:
     """
@@ -1228,63 +1191,30 @@ def update(folder_path, key_data, data_path, host_name):
                     logging.warning(f"Found corrupted file: {corrupt_path}, work folder: {folder_name}")
                     
                 elif file in ('database.json.corrupt', 'cover.json.corrupt'):
-                    # database.json.corrupt, cover.json.corrupt は作品フォルダ直下または images フォルダ内
-                    # 例: /pixiv/a135990959/database.json.corrupt
-                    # または /pixiv/images/database.json.corrupt
+                    # database.json.corrupt, cover.json.corrupt は images フォルダ内のみ
+                    # 例: /pixiv/images/database.json.corrupt
                     folder_name = os.path.basename(root)
                     corrupt_path = os.path.join(root, file)
                     
-                    # images フォルダ内の場合は特別処理
+                    # images フォルダ内の場合のみ処理
                     if folder_name == 'images':
                         logging.warning(f"Found corrupted global image DB: {corrupt_path}")
-                        # グローバル画像DBの修復は別途処理
-                        # 全作品フォルダから画像情報を収集して再構築
                         try:
                             recover_global_image_db(folder_path, corrupt_path)
                         except Exception as e:
                             logging.error(f"Failed to recover global image DB: {e}")
-                        continue
-                    
-                    # 作品フォルダ内の database.json/cover.json の破損からデータを拾い上げ
-                    try:
-                        recovered_data = recover_from_corrupt_json(corrupt_path)
-                        if recovered_data:
-                            # 復元したデータを保存
-                            recovered_path = os.path.join(root, file.replace('.corrupt', ''))
-                            
-                            # 既存のデータとマージ
-                            existing_data = {}
-                            if os.path.exists(recovered_path):
-                                existing_data = cm._load_json_safe(recovered_path)
-                            
-                            # 既存データを優先、破損ファイルから拾ったデータで補完
-                            for key, value in recovered_data.items():
-                                if key not in existing_data:
-                                    existing_data[key] = value
-                            
-                            cm._save_json(recovered_path, existing_data)
-                            logging.info(f"Saved recovered data ({len(recovered_data)} entries) to {recovered_path}")
-                            
-                            # .corrupt ファイルを削除
-                            if os.path.exists(corrupt_path):
-                                os.remove(corrupt_path)
-                                logging.info(f"Removed {file} after data recovery")
-                            continue
-                        else:
-                            logging.warning(f"No data could be recovered from {corrupt_path}")
-                    except Exception as e:
-                        logging.error(f"Failed to recover data from {corrupt_path}: {e}")
-                    
-                    # データ回収が不可能な場合、同じフォルダに複数の .corrupt がある場合は重複登録を避ける
-                    if not any(fn == folder_name for fn, _ in corrupt_targets):
-                        corrupt_targets.append((folder_name, corrupt_path))
-                        logging.warning(f"Found corrupted {file}: {corrupt_path}, work folder: {folder_name}")
                     else:
-                        # raw.json.corrupt も見つかっている場合は database/cover.json.corrupt だけ削除
-                        # （再ダウンロード時に再生成されるため）
+                        # 作品フォルダ内に database.json/cover.json があるのは間違い
+                        logging.warning(f"Found unexpected {file} in work folder: {corrupt_path} (should only be in images/)")
+                        # 削除する
                         if os.path.exists(corrupt_path):
                             os.remove(corrupt_path)
-                            logging.info(f"Removed {file} (will be regenerated): {corrupt_path}")
+                            logging.info(f"Removed unexpected {file}")
+                        # 作品フォルダ内にあった場合も、念のため対応する正常ファイルも削除
+                        normal_path = corrupt_path.replace('.corrupt', '')
+                        if os.path.exists(normal_path):
+                            os.remove(normal_path)
+                            logging.info(f"Removed unexpected {normal_path}")
     
     # .corrupt ファイルがある作品を再ダウンロード
     if corrupt_targets:
