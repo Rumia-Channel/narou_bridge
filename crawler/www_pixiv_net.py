@@ -433,7 +433,7 @@ class PixivCrawler:
 
     @suppress_errors()
     def download_novel(self, novel_id: str, folder_path: str, key_data: str, update: bool = False):
-        """短編小説ダウンロード"""
+        """短編小説ダウンロード (タグ常時更新対応版)"""
         logging.info(f"Novel ID: {novel_id}")
         json_data = self.get_json(f"https://www.pixiv.net/ajax/novel/{novel_id}")
         if not json_data: return
@@ -444,10 +444,27 @@ class PixivCrawler:
         novel_path = os.path.join(folder_path, f'n{novel_id}')
         raw_path = os.path.join(novel_path, 'raw', 'raw.json')
 
-        # 更新チェック
-        if update and not self._check_update(raw_path, upload_date):
-            logging.info(f"{body.get('title')} に更新はありません。")
-            return
+        # --- タグ情報の生成 (常に最新を使うためここで作成) ---
+        tags = format_tags([t.get('tag', '') for t in body.get('tags', {}).get('tags', [])])
+        tags = add_ai_tag_if_needed(body.get('aiType'), tags)
+
+        # --- 更新チェックとタグのみ更新処理 ---
+        if update and os.path.isfile(raw_path):
+            # 既存データをロード
+            old_data = cm._load_json_safe(raw_path)
+            if old_data:
+                old_date = safe_fromiso(old_data.get('updateDate'))
+                # 日付が一致する場合 (本文更新なし)
+                if old_date and upload_date and old_date == upload_date:
+                    # タグのみ書き換える
+                    if old_data.get('tags') != tags:
+                        logging.info(f"{body.get('title')} : 本文更新なし、タグのみ更新します。")
+                        old_data['tags'] = tags
+                        old_data['all_tags'] = tags  # 短編は tags=all_tags
+                        self._save_raw_file(raw_path, old_data)
+                    else:
+                        logging.info(f"{body.get('title')} : 更新はありません。")
+                    return
 
         cm.make_dir(f'n{novel_id}', folder_path)
         
@@ -503,27 +520,52 @@ class PixivCrawler:
 
     @suppress_errors()
     def download_series(self, series_id: str, folder_path: str, key_data: str, update: bool = False):
-        """シリーズ小説ダウンロード"""
+        """シリーズ小説ダウンロード (タグ常時更新対応版)"""
         logging.info(f"Series ID: {series_id}")
         
         s_detail = self.get_json(f"https://www.pixiv.net/ajax/novel/series/{series_id}")
-        if not s_detail:
-            return
+        if not s_detail: return
         body = s_detail['body']
         
-        s_toc = self.get_json(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
-        if not s_toc:
-            return
-        toc = s_toc['body']
-
         series_path = os.path.join(folder_path, f's{series_id}')
         raw_path = os.path.join(series_path, 'raw', 'raw.json')
         
-        # シリーズ更新チェック
+        # --- タグ情報の生成 ---
+        series_tags = format_tags(list(body.get('tags', [])))
+        series_tags = add_ai_tag_if_needed(body.get('aiType'), series_tags)
+        
         series_update_date = safe_fromiso(body.get('updateDate'))
-        if update and not self._check_update(raw_path, series_update_date):
-            logging.info(f"{body.get('title')} に更新はありません。")
-            return
+
+        # --- 更新チェックとタグのみ更新処理 ---
+        if update and os.path.isfile(raw_path):
+            old_data = cm._load_json_safe(raw_path)
+            if old_data:
+                old_date = safe_fromiso(old_data.get('updateDate'))
+                
+                # 日付が一致する場合
+                if old_date and series_update_date and old_date == series_update_date:
+                    # タグが変更されているかチェック
+                    current_tags = old_data.get('tags', [])
+                    if current_tags != series_tags:
+                        logging.info(f"{body.get('title')} : シリーズ更新なし、タグのみ更新します。")
+                        
+                        old_data['tags'] = series_tags
+                        
+                        # all_tags にも新しいシリーズタグを反映させる (重複排除してマージ)
+                        # ※各話のタグは再取得しないため、既存のall_tagsに新しいシリーズタグを追加する形にする
+                        current_all = set(old_data.get('all_tags', []))
+                        current_all.update(series_tags)
+                        old_data['all_tags'] = format_tags(list(current_all))
+                        
+                        self._save_raw_file(raw_path, old_data)
+                    else:
+                        logging.info(f"{body.get('title')} : 更新はありません。")
+                    return
+
+        # --- 以下、通常ダウンロード処理 ---
+        s_toc = self.get_json(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
+        if not s_toc: return
+        toc = s_toc['body']
 
         cm.make_dir(f's{series_id}', folder_path)
         self.get_cover(body.get('cover', {}).get('urls', {}).get('original'), series_path)
@@ -540,17 +582,12 @@ class PixivCrawler:
         # 既存エピソード読み込み
         old_eps = {}
         if update and os.path.isfile(raw_path):
+            # load済みかもしれないが、念のため
             raw_data = cm._load_json_safe(raw_path)
             old_eps = raw_data.get('episodes', {}) if raw_data else {}
 
-        for idx, entry in tqdm(
-            enumerate(toc, 1),
-            total=len(toc),
-            desc=f"Downloading series {series_id}",
-            leave=False
-        ):
-            if not entry.get('available'):
-                continue
+        for idx, entry in tqdm(enumerate(toc, 1), total=len(toc), desc=f"Downloading series {series_id}", leave=False):
+            if not entry.get('available'): continue
 
             ep_id = entry['id']
             ep_folder = os.path.join(series_path, str(ep_id))
@@ -558,7 +595,7 @@ class PixivCrawler:
 
             # エピソード更新チェック
             ep_update = False
-            old_ep_data = old_eps.get(str(idx))  # idxに対応するか確認が必要だが、元コードロジックを踏襲
+            old_ep_data = old_eps.get(str(idx))
             if update and old_ep_data:
                 old_ud = safe_fromiso(old_ep_data.get('updateDate'))
                 new_ud = safe_fromiso(entry.get('updateDate'))
@@ -574,24 +611,13 @@ class PixivCrawler:
             else:
                 self._sleep()
                 ep_json = self.get_json(f"https://www.pixiv.net/ajax/novel/{ep_id}")
-                if not ep_json:
-                    continue
+                if not ep_json: continue
                 ep_body = ep_json['body']
 
                 self.get_cover(ep_body.get('coverUrl'), ep_folder)
                 
-                text = self._format_novel_text(
-                    ep_body.get('content', ''),
-                    ep_id,
-                    ep_json,
-                    folder_path,
-                    True,
-                    ep_id
-                )
-                tags = format_tags(
-                    [t.get('tag', '') for t in ep_body.get('tags', {}).get('tags', [])]
-                )
-                # 各話の aiType が 2 なら AI生成 を付与（1話につき1個だけ）
+                text = self._format_novel_text(ep_body.get('content', ''), ep_id, ep_json, folder_path, True, ep_id)
+                tags = format_tags([t.get('tag', '') for t in ep_body.get('tags', {}).get('tags', [])])
                 tags = add_ai_tag_if_needed(ep_body.get('aiType'), tags)
                 all_tags.extend(tags)
                 poll = cm.find_key_recursively(ep_body, 'pollData')
@@ -614,8 +640,7 @@ class PixivCrawler:
                 
                 # 重複フォルダ削除（元コードロジック）
                 dup = os.path.join(folder_path, f'n{ep_id}')
-                if os.path.exists(dup):
-                    shutil.rmtree(dup)
+                if os.path.exists(dup): shutil.rmtree(dup)
 
         novel_data = {
             'version': VERSION,
@@ -779,14 +804,57 @@ class PixivCrawler:
 
     @suppress_errors()
     def download_comic(self, comic_id: str, folder_path: str, key_data: str, update: bool = False):
-        """漫画シリーズダウンロード"""
+        """漫画シリーズダウンロード (タグ常時更新対応版)"""
         logging.info(f"Comic ID: {comic_id}")
 
         # シリーズ情報取得 (page 1)
         resp = self.get_json(f"https://www.pixiv.net/ajax/series/{comic_id}?p=1&lang=ja")
         if not resp: return
         c_detail = cm.find_key_recursively(resp, "body")
+        
+        # --- タグ情報の生成 ---
+        new_tags = format_tags(list(c_detail.get('tagTranslation', {}).keys()))
+        # 漫画シリーズ自体には aiType が直接取れないことが多いが、取れる場合はここで処理
+        # ここではとりあえずタグリストのみ取得
 
+        comic_dir = os.path.join(folder_path, f'c{comic_id}')
+        raw_path = os.path.join(comic_dir, 'raw', 'raw.json')
+        cm.make_dir(f'c{comic_id}', folder_path)
+
+        # シリーズ更新チェック
+        series_update_date = None
+        for j in c_detail.get('illustSeries', []):
+            if str(j['id']) == str(comic_id):
+                series_update_date = safe_fromiso(j['updateDate'])
+                break
+        
+        # --- 更新チェックとタグのみ更新処理 ---
+        if update and os.path.isfile(raw_path):
+             old_data = cm._load_json_safe(raw_path)
+             if old_data:
+                 old_date = safe_fromiso(old_data.get('updateDate'))
+                 
+                 if old_date and series_update_date and old_date == series_update_date:
+                     if old_data.get('tags', []) != new_tags:
+                         # メタデータ
+                         meta = c_detail['extraData']['meta']
+                         title = meta['twitter']['title']
+                         logging.info(f"{title} : シリーズ更新なし、タグのみ更新します。")
+                         
+                         old_data['tags'] = new_tags
+                         
+                         # all_tags の更新 (既存 + 新規タグ)
+                         current_all = set(old_data.get('all_tags', []))
+                         current_all.update(new_tags)
+                         old_data['all_tags'] = format_tags(list(current_all))
+                         
+                         self._save_raw_file(raw_path, old_data)
+                     else:
+                         # メタデータ取得前なのでタイトルが出せないがログ出力
+                         logging.info(f"Comic {comic_id} : 更新はありません。")
+                     return
+
+        # --- 以下、通常ダウンロード処理 ---
         # リンク取得（ページング対応）
         arts = {}
         page = 1
@@ -800,9 +868,7 @@ class PixivCrawler:
             for item in series_data:
                 arts[item["order"]] = item["workId"]
             
-            # 簡易ループ継続判定 (通常はもっと多く取れるが、空でなければ次へ)
-            if len(series_data) == 0:
-                 break
+            if len(series_data) == 0: break
             page += 1
         
         if not arts: return
@@ -819,24 +885,9 @@ class PixivCrawler:
         except:
             author_id = "0"
 
-        comic_dir = os.path.join(folder_path, f'c{comic_id}')
-        raw_path = os.path.join(comic_dir, 'raw', 'raw.json')
-        cm.make_dir(f'c{comic_id}', folder_path)
-
-        # シリーズ更新チェック
-        series_update_date = None
-        for j in c_detail.get('illustSeries', []):
-            if str(j['id']) == str(comic_id):
-                series_update_date = safe_fromiso(j['updateDate'])
-                break
-        
-        if update and not self._check_update(raw_path, series_update_date):
-             logging.info(f"{title} に更新はありません。")
-             return
-
         # エピソードDL
         episodes_data = {}
-        all_tags = format_tags(list(c_detail.get('tagTranslation', {}).keys()))
+        all_tags = new_tags.copy() # 初期値はシリーズタグ
 
         old_eps = {}
         if update and os.path.isfile(raw_path):
@@ -920,7 +971,7 @@ class PixivCrawler:
             'all_characters': 0,
             'type': 'comic',
             'serialization': '連載中',
-            'tags': format_tags(list(c_detail.get('tagTranslation', {}).keys())),
+            'tags': new_tags,
             'all_tags': format_tags(list(set(all_tags))),
             'createDate': str(safe_fromiso(c_detail.get('illustSeries', [{}])[0].get('createDate')).astimezone(JST)),
             'updateDate': str(safe_fromiso(c_detail.get('illustSeries', [{}])[0].get('updateDate')).astimezone(JST)),
