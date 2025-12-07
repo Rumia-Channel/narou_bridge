@@ -34,6 +34,12 @@ DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 
 # --- ユーティリティ関数 ---
 
+def add_ai_tag_if_needed(ai_type: Optional[int], tags: List[str]) -> List[str]:
+    """aiType が 2 のときだけ 'AI生成' タグを 1 個だけ追加する"""
+    if ai_type == 2 and "AI生成" not in tags:
+        tags.append("AI生成")
+    return tags
+
 def suppress_errors(default=None):
     """例外を握りつぶしてログ出力するデコレータ"""
     def decorator(func):
@@ -450,6 +456,7 @@ class PixivCrawler:
         self.get_cover(body.get('coverUrl'), novel_path)
 
         tags = format_tags([t.get('tag', '') for t in body.get('tags', {}).get('tags', [])])
+        tags = add_ai_tag_if_needed(body.get('aiType'), tags)  # ← 追加
         poll = cm.find_key_recursively(body, 'pollData')
         
         novel_data = {
@@ -500,11 +507,13 @@ class PixivCrawler:
         logging.info(f"Series ID: {series_id}")
         
         s_detail = self.get_json(f"https://www.pixiv.net/ajax/novel/series/{series_id}")
-        if not s_detail: return
+        if not s_detail:
+            return
         body = s_detail['body']
         
         s_toc = self.get_json(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
-        if not s_toc: return
+        if not s_toc:
+            return
         toc = s_toc['body']
 
         series_path = os.path.join(folder_path, f's{series_id}')
@@ -519,7 +528,12 @@ class PixivCrawler:
         cm.make_dir(f's{series_id}', folder_path)
         self.get_cover(body.get('cover', {}).get('urls', {}).get('original'), series_path)
 
-        all_tags = format_tags(list(body.get('tags', [])))
+        # シリーズ本体のタグ（AI生成含む）を決定
+        series_tags = format_tags(list(body.get('tags', [])))
+        series_tags = add_ai_tag_if_needed(body.get('aiType'), series_tags)
+
+        # all_tags はシリーズタグからスタートし、各話のタグを追加していく
+        all_tags = series_tags.copy()
         episodes_data = {}
         total_text = 0
 
@@ -529,15 +543,22 @@ class PixivCrawler:
             raw_data = cm._load_json_safe(raw_path)
             old_eps = raw_data.get('episodes', {}) if raw_data else {}
 
-        for idx, entry in tqdm(enumerate(toc, 1), total=len(toc), desc=f"Downloading series {series_id}", leave=False):
-            if not entry.get('available'): continue
+        for idx, entry in tqdm(
+            enumerate(toc, 1),
+            total=len(toc),
+            desc=f"Downloading series {series_id}",
+            leave=False
+        ):
+            if not entry.get('available'):
+                continue
+
             ep_id = entry['id']
             ep_folder = os.path.join(series_path, str(ep_id))
             os.makedirs(ep_folder, exist_ok=True)
 
             # エピソード更新チェック
             ep_update = False
-            old_ep_data = old_eps.get(str(idx)) # idxに対応するか確認が必要だが、元コードロジックを踏襲
+            old_ep_data = old_eps.get(str(idx))  # idxに対応するか確認が必要だが、元コードロジックを踏襲
             if update and old_ep_data:
                 old_ud = safe_fromiso(old_ep_data.get('updateDate'))
                 new_ud = safe_fromiso(entry.get('updateDate'))
@@ -548,18 +569,30 @@ class PixivCrawler:
                 # 古いデータをそのまま使う
                 episodes_data[idx] = old_ep_data
                 total_text += old_ep_data.get('textCount', 0)
-                # タグ統合
+                # タグ統合（旧データ側に既に AI生成 が入っていればそのまま反映）
                 all_tags.extend(old_ep_data.get('tags', []))
             else:
                 self._sleep()
                 ep_json = self.get_json(f"https://www.pixiv.net/ajax/novel/{ep_id}")
-                if not ep_json: continue
+                if not ep_json:
+                    continue
                 ep_body = ep_json['body']
 
                 self.get_cover(ep_body.get('coverUrl'), ep_folder)
                 
-                text = self._format_novel_text(ep_body.get('content', ''), ep_id, ep_json, folder_path, True, ep_id)
-                tags = format_tags([t.get('tag', '') for t in ep_body.get('tags', {}).get('tags', [])])
+                text = self._format_novel_text(
+                    ep_body.get('content', ''),
+                    ep_id,
+                    ep_json,
+                    folder_path,
+                    True,
+                    ep_id
+                )
+                tags = format_tags(
+                    [t.get('tag', '') for t in ep_body.get('tags', {}).get('tags', [])]
+                )
+                # 各話の aiType が 2 なら AI生成 を付与（1話につき1個だけ）
+                tags = add_ai_tag_if_needed(ep_body.get('aiType'), tags)
                 all_tags.extend(tags)
                 poll = cm.find_key_recursively(ep_body, 'pollData')
 
@@ -576,12 +609,13 @@ class PixivCrawler:
                     'text': text,
                     'postscript': format_survey(poll) if poll else '',
                     'createDate': str(safe_fromiso(ep_body.get('createDate')).astimezone(JST)),
-                    'updateDate': str(safe_fromiso(ep_body.get('uploadDate')).astimezone(JST))
+                    'updateDate': str(safe_fromiso(ep_body.get('uploadDate')).astimezone(JST)),
                 }
                 
                 # 重複フォルダ削除（元コードロジック）
                 dup = os.path.join(folder_path, f'n{ep_id}')
-                if os.path.exists(dup): shutil.rmtree(dup)
+                if os.path.exists(dup):
+                    shutil.rmtree(dup)
 
         novel_data = {
             'version': VERSION,
@@ -600,14 +634,17 @@ class PixivCrawler:
             'all_characters': body.get('publishedTotalCharacterCount'),
             'type': 'novel',
             'serialization': '連載中',
-            'tags': format_tags(list(body.get('tags', []))),
+            # ← ここで series_tags をそのまま使うのが大事
+            'tags': series_tags,
+            # all_tags は重複除去した上で format_tags に通す
             'all_tags': format_tags(list(set(all_tags))),
             'createDate': str(safe_fromiso(body.get('createDate')).astimezone(JST)),
             'updateDate': str(safe_fromiso(body.get('updateDate')).astimezone(JST)),
-            'episodes': episodes_data
+            'episodes': episodes_data,
         }
 
-        cm.save_raw_diff(raw_path, series_path, novel_data) if update else None
+        if update:
+            cm.save_raw_diff(raw_path, series_path, novel_data)
         self._save_raw_file(raw_path, novel_data)
         cn.narou_gen(novel_data, series_path, key_data, self.data_path, "")
         cm.gen_site_index(folder_path, key_data, 'Pixiv')
@@ -694,6 +731,7 @@ class PixivCrawler:
         self.get_cover(body.get('urls', {}).get('original'), art_path)
 
         tags = format_tags([t.get('tag', '') for t in body.get('tags', {}).get('tags', [])])
+        tags = add_ai_tag_if_needed(body.get('aiType'), tags)  # ← 追加
         poll = cm.find_key_recursively(body, 'pollData')
 
         novel_data = {
@@ -845,6 +883,7 @@ class PixivCrawler:
                 self.get_cover(body.get('urls', {}).get('original'), ep_folder)
                 
                 tags = format_tags([t.get('tag', '') for t in body.get('tags', {}).get('tags', [])])
+                tags = add_ai_tag_if_needed(body.get('aiType'), tags)
                 all_tags.extend(tags)
                 poll = cm.find_key_recursively(body, 'pollData')
 
@@ -908,9 +947,14 @@ class PixivCrawler:
         if not user_conf:
             user_conf = {"novel": "enable", "comic": "enable", "illust_ids_snapshot": []}
             # 再読み込み (atomic writeにより競合は減るが、最新状態を取得)
-            full_conf = cm._load_json_safe(user_json_path)
-            if not full_conf:
-                 full_conf = {"version": 3}
+            full_conf = cm._load_json_safe(user_json_path) or {"version": 3}
+            user_conf = full_conf.get(user_id, {})
+
+            if not user_conf:
+                user_conf = {"novel": "enable", "comic": "enable", "illust_ids_snapshot": []}
+                full_conf[user_id] = user_conf
+                cm._save_json(user_json_path, full_conf)
+
             
             full_conf[user_id] = user_conf
             cm._save_json(user_json_path, full_conf)
@@ -1589,10 +1633,15 @@ def convert(folder_path, key_data, data_path, host_name):
         for file in files:
             if file.endswith('.corrupt'):
                 if file == 'raw.json.corrupt':
-                    folder_name = os.path.basename(root)
+                    # root = /pixiv/n12345678/raw
+                    work_folder = os.path.dirname(root)          # /pixiv/n12345678
+                    folder_name = os.path.basename(work_folder)  # n12345678
                     corrupt_path = os.path.join(root, file)
                     corrupt_found.append(folder_name)
-                    logging.warning(f"Convert: Found corrupted file in {folder_name}, skipping and requesting re-download")
+                    logging.warning(
+                        f"Convert: Found corrupted file in {folder_name}, "
+                        "skipping and requesting re-download"
+                    )
                     request_re_download(folder_name, host_name)
     
     # 2. 通常の変換処理
