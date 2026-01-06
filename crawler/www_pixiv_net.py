@@ -675,7 +675,7 @@ class PixivCrawler:
         cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
     @suppress_errors()
-    def download_art(self, art_id: str, folder_path: str, key_data: str):
+    def download_art(self, art_id: str, folder_path: str, key_data: str, update: bool = False):
         """短編漫画/イラストダウンロード (APNG/Ugoira対応)"""
         logging.info(f"Art ID: {art_id}")
         
@@ -684,12 +684,37 @@ class PixivCrawler:
         if not a_data: return
         body = a_data['body']
 
+        # --- 更新チェックとタグのみ更新処理 ---
+        art_path = os.path.join(folder_path, f'a{art_id}')
+        raw_path = os.path.join(art_path, 'raw', 'raw.json')
+        
+        # タグ情報の生成
+        tags = format_tags([t.get('tag', '') for t in body.get('tags', {}).get('tags', [])])
+        tags = add_ai_tag_if_needed(body.get('aiType'), tags)
+        
+        new_update_date = safe_fromiso(body.get('uploadDate'))
+
+        if update and os.path.isfile(raw_path):
+            old_data = cm._load_json_safe(raw_path)
+            if old_data:
+                old_date = safe_fromiso(old_data.get('updateDate'))
+                
+                # 日付が一致する場合
+                if old_date and new_update_date and old_date == new_update_date:
+                    # タグが変更されているかチェック
+                    if old_data.get('tags') != tags:
+                        logging.info(f"{body.get('title')} : 更新なし、タグのみ更新します。")
+                        old_data['tags'] = tags
+                        old_data['all_tags'] = tags
+                        self._save_raw_file(raw_path, old_data)
+                    else:
+                        logging.info(f"{body.get('title')} : 更新はありません。")
+                    return
+
         a_pages = self.get_json(f"https://www.pixiv.net/ajax/illust/{art_id}/pages")
         pages = a_pages.get('body', []) if a_pages else []
 
         cm.make_dir(f'a{art_id}', folder_path)
-        art_path = os.path.join(folder_path, f'a{art_id}')
-        raw_path = os.path.join(art_path, 'raw', 'raw.json')
 
         # 本文構築
         art_text = ""
@@ -1617,7 +1642,7 @@ def update(folder_path, key_data, data_path, host_name):
             elif meta['type'] == 'comic':
                 if meta['serialization'] == '短編':
                     aid = folder.lstrip('a')
-                    _crawler.download_art(aid, folder_path, key_data) 
+                    _crawler.download_art(aid, folder_path, key_data, update=True) 
                 else:
                     cid = folder.lstrip('c')
                     _crawler.download_comic(cid, folder_path, key_data, update=True)
