@@ -302,6 +302,42 @@ class PixivCrawler:
             return new_date != old_date
         return True
 
+    def _is_assets_missing(self, raw_data: Dict, ncode: str) -> bool:
+        """
+        raw.json のデータに含まれる画像（表紙・本文挿絵）が
+        ローカル（DBおよびファイルシステム）に揃っているか確認する。
+        戻り値: True=欠損あり（再DL必要）, False=完全（DL不要）
+        """
+        # 1. 表紙チェック (DB登録 & 実体存在)
+        # 拡張子の候補
+        cover_ok = False
+        for ext in ['.jpg', '.jpeg', '.png', '.gif']:
+            # check_image_file は database.json を確認し、かつファイルが存在すればそのパス(ファイル名)を返す
+            if cm.check_image_file(self.img_path, f'pixiv_{ncode}_cover{ext}'):
+                cover_ok = True
+                break
+        
+        if not cover_ok:
+            logging.info(f"Asset missing (Cover): {ncode}")
+            return True
+
+        # 2. 本文画像チェック (実体存在)
+        # 全エピソードのテキストを結合して検索
+        all_text = ""
+        if 'episodes' in raw_data:
+            for ep in raw_data['episodes'].values():
+                all_text += ep.get('text', '') + "\n"
+        
+        # [image](filename) 形式を抽出
+        images = re.findall(r'\[image\]\((.*?)\)', all_text)
+        for img_file in images:
+            img_path = os.path.join(self.img_path, img_file)
+            if not os.path.exists(img_path):
+                logging.info(f"Asset missing (Image): {img_file} in {ncode}")
+                return True
+        
+        return False
+
     def _snapshot_path(self, folder_path: str, user_id: str) -> str:
         return os.path.join(folder_path, "snapshots", "illust_ids", f"{user_id}.json")
 
@@ -456,15 +492,19 @@ class PixivCrawler:
                 old_date = safe_fromiso(old_data.get('updateDate'))
                 # 日付が一致する場合 (本文更新なし)
                 if old_date and upload_date and old_date == upload_date:
+                    # 資産チェック
+                    if self._is_assets_missing(old_data, f'n{novel_id}'):
+                         logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
                     # タグのみ書き換える
-                    if old_data.get('tags') != tags:
+                    elif old_data.get('tags') != tags:
                         logging.info(f"{body.get('title')} : 本文更新なし、タグのみ更新します。")
                         old_data['tags'] = tags
                         old_data['all_tags'] = tags  # 短編は tags=all_tags
                         self._save_raw_file(raw_path, old_data)
+                        return
                     else:
                         logging.info(f"{body.get('title')} : 更新はありません。")
-                    return
+                        return
 
         cm.make_dir(f'n{novel_id}', folder_path)
         
@@ -544,9 +584,11 @@ class PixivCrawler:
                 
                 # 日付が一致する場合
                 if old_date and series_update_date and old_date == series_update_date:
+                    # 資産チェック
+                    if self._is_assets_missing(old_data, f's{series_id}'):
+                         logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
                     # タグが変更されているかチェック
-                    current_tags = old_data.get('tags', [])
-                    if current_tags != series_tags:
+                    elif old_data.get('tags', []) != series_tags:
                         logging.info(f"{body.get('title')} : シリーズ更新なし、タグのみ更新します。")
                         
                         old_data['tags'] = series_tags
@@ -558,9 +600,10 @@ class PixivCrawler:
                         old_data['all_tags'] = format_tags(list(current_all))
                         
                         self._save_raw_file(raw_path, old_data)
+                        return
                     else:
                         logging.info(f"{body.get('title')} : 更新はありません。")
-                    return
+                        return
 
         # --- 以下、通常ダウンロード処理 ---
         s_toc = self.get_json(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
@@ -701,15 +744,19 @@ class PixivCrawler:
                 
                 # 日付が一致する場合
                 if old_date and new_update_date and old_date == new_update_date:
+                    # 資産チェック
+                    if self._is_assets_missing(old_data, f'a{art_id}'):
+                         logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
                     # タグが変更されているかチェック
-                    if old_data.get('tags') != tags:
+                    elif old_data.get('tags') != tags:
                         logging.info(f"{body.get('title')} : 更新なし、タグのみ更新します。")
                         old_data['tags'] = tags
                         old_data['all_tags'] = tags
                         self._save_raw_file(raw_path, old_data)
+                        return
                     else:
                         logging.info(f"{body.get('title')} : 更新はありません。")
-                    return
+                        return
 
         a_pages = self.get_json(f"https://www.pixiv.net/ajax/illust/{art_id}/pages")
         pages = a_pages.get('body', []) if a_pages else []
@@ -860,7 +907,10 @@ class PixivCrawler:
                  old_date = safe_fromiso(old_data.get('updateDate'))
                  
                  if old_date and series_update_date and old_date == series_update_date:
-                     if old_data.get('tags', []) != new_tags:
+                     # 資産チェック
+                     if self._is_assets_missing(old_data, f'c{comic_id}'):
+                         logging.info(f"{c_detail['extraData']['meta']['twitter']['title']} : ローカルリソース欠損を検出、再取得を実行します。")
+                     elif old_data.get('tags', []) != new_tags:
                          # メタデータ
                          meta = c_detail['extraData']['meta']
                          title = meta['twitter']['title']
@@ -874,10 +924,11 @@ class PixivCrawler:
                          old_data['all_tags'] = format_tags(list(current_all))
                          
                          self._save_raw_file(raw_path, old_data)
+                         return
                      else:
                          # メタデータ取得前なのでタイトルが出せないがログ出力
                          logging.info(f"Comic {comic_id} : 更新はありません。")
-                     return
+                         return
 
         # --- 以下、通常ダウンロード処理 ---
         # リンク取得（ページング対応）
