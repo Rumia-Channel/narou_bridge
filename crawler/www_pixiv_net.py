@@ -1528,13 +1528,17 @@ def update(folder_path, key_data, data_path, host_name):
         return
 
     # 1. 最優先: .corrupt ファイルの探索と再ダウンロード
+    logging.info("=" * 60)
+    logging.info("Phase 1: Searching for .corrupt files...")
+    logging.info("=" * 60)
+
     corrupt_targets = []
     corrupt_comics_pending = []  # author_id 不明の漫画シリーズ
-    
+
     # クローラーインスタンスに保留リストを初期化（既存のものがあれば保持）
     if not hasattr(_crawler, '_corrupt_comics_pending'):
         _crawler._corrupt_comics_pending = []
-    
+
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.endswith('.corrupt'):
@@ -1587,10 +1591,10 @@ def update(folder_path, key_data, data_path, host_name):
     
     # .corrupt ファイルがある作品を再ダウンロード
     if corrupt_targets:
-        logging.info(f"Found {len(corrupt_targets)} corrupted files, re-downloading...")
-        for folder_name, corrupt_path in corrupt_targets:
+        logging.info(f"Found {len(corrupt_targets)} corrupted files, starting repair...")
+        for folder_name, corrupt_path in tqdm(corrupt_targets, desc="Repairing corrupted files", unit="work"):
             try:
-                logging.info(f"Re-downloading corrupted: {folder_name}")
+                logging.info(f"[Corrupt Repair] Re-downloading: {folder_name}")
                 
                 # フォルダ名から作品タイプと IDを推定
                 if folder_name.startswith('n'):
@@ -1659,18 +1663,23 @@ def update(folder_path, key_data, data_path, host_name):
                 # 再ダウンロード成功後、.corrupt ファイルを削除
                 if os.path.exists(corrupt_path):
                     os.remove(corrupt_path)
-                    logging.info(f"Removed corrupt file: {corrupt_path}")
-                    
+                    logging.info(f"[Corrupt Repair] ✓ Completed: {folder_name}")
+
             except Exception as e:
-                logging.error(f"Failed to re-download corrupted {folder_name}: {e}", exc_info=True)
+                logging.error(f"[Corrupt Repair] ✗ Failed: {folder_name} - {e}", exc_info=True)
     
     # 保留中の漫画をクローラーインスタンスに追加
     if corrupt_comics_pending:
         _crawler._corrupt_comics_pending.extend(corrupt_comics_pending)
         logging.info(f"Added {len(corrupt_comics_pending)} pending comics to repair queue")
+    else:
+        logging.info("No .corrupt files found.")
 
     # 2. raw.json と画像データベースの照合による破損チェック
-    logging.info("Starting asset integrity check for all works...")
+    logging.info("")
+    logging.info("=" * 60)
+    logging.info("Phase 2: Checking asset integrity (raw.json vs database.json)...")
+    logging.info("=" * 60)
 
     # index.json から全作品リストを取得
     index_path = os.path.join(folder_path, 'index.json')
@@ -1686,7 +1695,7 @@ def update(folder_path, key_data, data_path, host_name):
     asset_missing_targets = []
 
     # 全作品を走査して破損チェック
-    for folder_name in index_data.keys():
+    for folder_name in tqdm(list(index_data.keys()), desc="Checking asset integrity", unit="work"):
         # .corrupt で既に処理済みのフォルダはスキップ
         if folder_name in corrupt_folder_names:
             continue
@@ -1704,18 +1713,18 @@ def update(folder_path, key_data, data_path, host_name):
             # 資産破損チェック
             if _crawler._is_assets_missing(raw_data, folder_name):
                 title = raw_data.get('title', folder_name)
-                logging.warning(f"Asset missing detected: {folder_name} ({title})")
+                logging.warning(f"[Asset Check] ✗ Missing: {folder_name} - {title}")
                 asset_missing_targets.append(folder_name)
 
         except Exception as e:
-            logging.error(f"Asset check failed for {folder_name}: {e}")
+            logging.error(f"[Asset Check] Error: {folder_name} - {e}")
 
     # 破損した作品を再ダウンロード
     if asset_missing_targets:
-        logging.info(f"Found {len(asset_missing_targets)} works with missing assets, re-downloading...")
-        for folder_name in asset_missing_targets:
+        logging.info(f"Found {len(asset_missing_targets)} works with missing assets, starting repair...")
+        for folder_name in tqdm(asset_missing_targets, desc="Repairing missing assets", unit="work"):
             try:
-                logging.info(f"Re-downloading due to asset missing: {folder_name}")
+                logging.info(f"[Asset Repair] Re-downloading: {folder_name}")
 
                 # フォルダ名から作品タイプと IDを推定
                 if folder_name.startswith('n'):
@@ -1731,17 +1740,32 @@ def update(folder_path, key_data, data_path, host_name):
                     cid = folder_name.lstrip('c')
                     _crawler.download_comic(cid, folder_path, key_data, update=False)
 
-                logging.info(f"Successfully re-downloaded: {folder_name}")
+                logging.info(f"[Asset Repair] ✓ Completed: {folder_name}")
 
             except Exception as e:
-                logging.error(f"Failed to re-download {folder_name}: {e}", exc_info=True)
+                logging.error(f"[Asset Repair] ✗ Failed: {folder_name} - {e}", exc_info=True)
 
         # 破損修復した作品も通常更新から除外
         corrupt_folder_names.update(asset_missing_targets)
+        logging.info(f"Asset repair completed: {len(asset_missing_targets)} works repaired.")
     else:
-        logging.info("No asset integrity issues found.")
+        logging.info("✓ No asset integrity issues found.")
+
+    # 修復作業の総括
+    total_repaired = len(corrupt_targets) + len(asset_missing_targets)
+    if total_repaired > 0:
+        logging.info("")
+        logging.info("=" * 60)
+        logging.info(f"Repair Summary: {total_repaired} works repaired")
+        logging.info(f"  - Corrupted files repaired: {len(corrupt_targets)}")
+        logging.info(f"  - Missing assets repaired: {len(asset_missing_targets)}")
+        logging.info("=" * 60)
 
     # 3. 通常の更新処理
+    logging.info("")
+    logging.info("=" * 60)
+    logging.info("Phase 3: Starting normal update process...")
+    logging.info("=" * 60)
     
     # user.json からユーザー更新
     user_json_path = os.path.join(folder_path, 'user.json')
