@@ -74,6 +74,7 @@ interval=小説やファイルを取得する間隔の秒数(2秒以上が負荷
 reload=現状無意味(デフォルトでOK)
 auto_update=サーバー起動時に小説の自動アップデートをするか(0で無効, 1で有効)
 auto_update_interval=小説の自動アップデートをする際の間隔(秒指定, デフォルトで12時間)
+img_url=画像のベースURL(空の場合は相対パス、例: https://example.com/ を指定すると画像リンクが https://example.com/画像名.png になる)
 
 [crawler]
 サイト名(内部で使う名前)=crawlerフォルダにあるファイル名(サイトのURLから'https://'を抜いて '.' を '_' に入れ替えることを推奨)

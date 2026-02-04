@@ -217,11 +217,14 @@ def _generate_info_content(data: Dict, key_data: str, site_name: str, nid: str) 
 
 # --- メイン処理 ---
 
-def narou_gen(data: Dict, nove_path: str, key_data: str, data_folder: str, host_name: str):
+def narou_gen(data: Dict, nove_path: str, key_data: str, data_folder: str, host_name: str, img_url: str = ''):
     """
     小説データを基に、目次、作品情報、各話ページを生成する
+
+    Args:
+        img_url: 画像のベースURL。設定されている場合はこちらを優先。空の場合は host_name/images/ を使用
     """
-    
+
     # 1. パスとリンクの計算
     try:
         rel_path = os.path.relpath(nove_path, data_folder)
@@ -233,7 +236,13 @@ def narou_gen(data: Dict, nove_path: str, key_data: str, data_folder: str, host_
         logging.error(f"Path Error: {nove_path} is not under {data_folder}")
         return
 
-    img_link_base = f'{host_name}/images/'
+    # 画像リンクベースの決定
+    if img_url:
+        # img_url が設定されている場合はそれを使用（末尾にスラッシュがなければ追加）
+        img_link_base = img_url if img_url.endswith('/') else img_url + '/'
+    else:
+        # 従来通り host_name/images/ を使用
+        img_link_base = f'{host_name}/images/'
     a_link_base = f"/{rel_path_web}"
     
     # 2. テキスト内のページ分割と [jump] リンクの解決 (ep['text']を更新)

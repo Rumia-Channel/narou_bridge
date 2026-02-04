@@ -12,6 +12,9 @@ from typing import Dict, Any, List, Optional, Tuple
 import crawler.convert_narou as cn
 import crawler.common as cm
 
+# グローバル設定
+_global_img_url = ''
+
 # --- 定数: HTMLテンプレート ---
 
 INDEX_HTML_TEMPLATE = """<!DOCTYPE html>
@@ -120,6 +123,15 @@ READER_INDEX_HTML_TEMPLATE = """<!DOCTYPE html>
 
 # --- 初期化・設定関連 ---
 
+def set_img_url(img_url: str):
+    """画像URL設定をグローバルに設定"""
+    global _global_img_url
+    _global_img_url = img_url
+
+def get_img_url() -> str:
+    """画像URL設定を取得"""
+    return _global_img_url
+
 def init_import(site_dic):
     """各サイト用のクローラーモジュールを動的にインポート"""
     globals().update(import_modules(site_dic))
@@ -188,15 +200,16 @@ def load_config():
     print("Initialize successfully!")
     
     return (
-        config, 
-        int(config['setting']['reload']), 
-        int(config['setting']['auto_update']), 
-        int(config['setting']['save_log']), 
-        int(config['setting']['interval']), 
-        int(config['setting']['auto_update_interval']), 
-        site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, 
-        int(config['server']['port']), config['server']['domain'], 
-        int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl'])
+        config,
+        int(config['setting']['reload']),
+        int(config['setting']['auto_update']),
+        int(config['setting']['save_log']),
+        int(config['setting']['interval']),
+        int(config['setting']['auto_update_interval']),
+        site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path,
+        int(config['server']['port']), config['server']['domain'],
+        int(config['server']['use_proxy']), int(config['server']['proxy_port']), int(config['server']['proxy_ssl']),
+        config['server'].get('img_url', '')
     )
 
 def _copy_static_resources(data_path):
