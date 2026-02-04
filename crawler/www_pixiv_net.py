@@ -493,18 +493,21 @@ class PixivCrawler:
                 # 日付が一致する場合 (本文更新なし)
                 if old_date and upload_date and old_date == upload_date:
                     # 資産チェック
-                    if self._is_assets_missing(old_data, f'n{novel_id}'):
-                         logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
-                    # タグのみ書き換える
-                    elif old_data.get('tags') != tags:
-                        logging.info(f"{body.get('title')} : 本文更新なし、タグのみ更新します。")
-                        old_data['tags'] = tags
-                        old_data['all_tags'] = tags  # 短編は tags=all_tags
-                        self._save_raw_file(raw_path, old_data)
-                        return
+                    if not self._is_assets_missing(old_data, f'n{novel_id}'):
+                        # 資産が完全な場合のみ、タグチェックや更新なしチェックを行う
+                        if old_data.get('tags') != tags:
+                            logging.info(f"{body.get('title')} : 本文更新なし、タグのみ更新します。")
+                            old_data['tags'] = tags
+                            old_data['all_tags'] = tags  # 短編は tags=all_tags
+                            self._save_raw_file(raw_path, old_data)
+                            return
+                        else:
+                            logging.info(f"{body.get('title')} : 更新はありません。")
+                            return
                     else:
-                        logging.info(f"{body.get('title')} : 更新はありません。")
-                        return
+                        # 資産が欠損している場合は再ダウンロード処理へ進む
+                        logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
+                        # returnしないことで、この後の通常ダウンロード処理が実行される
 
         cm.make_dir(f'n{novel_id}', folder_path)
         
@@ -585,25 +588,28 @@ class PixivCrawler:
                 # 日付が一致する場合
                 if old_date and series_update_date and old_date == series_update_date:
                     # 資産チェック
-                    if self._is_assets_missing(old_data, f's{series_id}'):
-                         logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
-                    # タグが変更されているかチェック
-                    elif old_data.get('tags', []) != series_tags:
-                        logging.info(f"{body.get('title')} : シリーズ更新なし、タグのみ更新します。")
-                        
-                        old_data['tags'] = series_tags
-                        
-                        # all_tags にも新しいシリーズタグを反映させる (重複排除してマージ)
-                        # ※各話のタグは再取得しないため、既存のall_tagsに新しいシリーズタグを追加する形にする
-                        current_all = set(old_data.get('all_tags', []))
-                        current_all.update(series_tags)
-                        old_data['all_tags'] = format_tags(list(current_all))
-                        
-                        self._save_raw_file(raw_path, old_data)
-                        return
+                    if not self._is_assets_missing(old_data, f's{series_id}'):
+                        # 資産が完全な場合のみ、タグチェックや更新なしチェックを行う
+                        if old_data.get('tags', []) != series_tags:
+                            logging.info(f"{body.get('title')} : シリーズ更新なし、タグのみ更新します。")
+
+                            old_data['tags'] = series_tags
+
+                            # all_tags にも新しいシリーズタグを反映させる (重複排除してマージ)
+                            # ※各話のタグは再取得しないため、既存のall_tagsに新しいシリーズタグを追加する形にする
+                            current_all = set(old_data.get('all_tags', []))
+                            current_all.update(series_tags)
+                            old_data['all_tags'] = format_tags(list(current_all))
+
+                            self._save_raw_file(raw_path, old_data)
+                            return
+                        else:
+                            logging.info(f"{body.get('title')} : 更新はありません。")
+                            return
                     else:
-                        logging.info(f"{body.get('title')} : 更新はありません。")
-                        return
+                        # 資産が欠損している場合は再ダウンロード処理へ進む
+                        logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
+                        # returnしないことで、この後の通常ダウンロード処理が実行される
 
         # --- 以下、通常ダウンロード処理 ---
         s_toc = self.get_json(f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles")
@@ -745,18 +751,21 @@ class PixivCrawler:
                 # 日付が一致する場合
                 if old_date and new_update_date and old_date == new_update_date:
                     # 資産チェック
-                    if self._is_assets_missing(old_data, f'a{art_id}'):
-                         logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
-                    # タグが変更されているかチェック
-                    elif old_data.get('tags') != tags:
-                        logging.info(f"{body.get('title')} : 更新なし、タグのみ更新します。")
-                        old_data['tags'] = tags
-                        old_data['all_tags'] = tags
-                        self._save_raw_file(raw_path, old_data)
-                        return
+                    if not self._is_assets_missing(old_data, f'a{art_id}'):
+                        # 資産が完全な場合のみ、タグチェックや更新なしチェックを行う
+                        if old_data.get('tags') != tags:
+                            logging.info(f"{body.get('title')} : 更新なし、タグのみ更新します。")
+                            old_data['tags'] = tags
+                            old_data['all_tags'] = tags
+                            self._save_raw_file(raw_path, old_data)
+                            return
+                        else:
+                            logging.info(f"{body.get('title')} : 更新はありません。")
+                            return
                     else:
-                        logging.info(f"{body.get('title')} : 更新はありません。")
-                        return
+                        # 資産が欠損している場合は再ダウンロード処理へ進む
+                        logging.info(f"{body.get('title')} : ローカルリソース欠損を検出、再取得を実行します。")
+                        # returnしないことで、この後の通常ダウンロード処理が実行される
 
         a_pages = self.get_json(f"https://www.pixiv.net/ajax/illust/{art_id}/pages")
         pages = a_pages.get('body', []) if a_pages else []
@@ -908,27 +917,31 @@ class PixivCrawler:
                  
                  if old_date and series_update_date and old_date == series_update_date:
                      # 資産チェック
-                     if self._is_assets_missing(old_data, f'c{comic_id}'):
-                         logging.info(f"{c_detail['extraData']['meta']['twitter']['title']} : ローカルリソース欠損を検出、再取得を実行します。")
-                     elif old_data.get('tags', []) != new_tags:
-                         # メタデータ
-                         meta = c_detail['extraData']['meta']
-                         title = meta['twitter']['title']
-                         logging.info(f"{title} : シリーズ更新なし、タグのみ更新します。")
-                         
-                         old_data['tags'] = new_tags
-                         
-                         # all_tags の更新 (既存 + 新規タグ)
-                         current_all = set(old_data.get('all_tags', []))
-                         current_all.update(new_tags)
-                         old_data['all_tags'] = format_tags(list(current_all))
-                         
-                         self._save_raw_file(raw_path, old_data)
-                         return
+                     if not self._is_assets_missing(old_data, f'c{comic_id}'):
+                         # 資産が完全な場合のみ、タグチェックや更新なしチェックを行う
+                         if old_data.get('tags', []) != new_tags:
+                             # メタデータ
+                             meta = c_detail['extraData']['meta']
+                             title = meta['twitter']['title']
+                             logging.info(f"{title} : シリーズ更新なし、タグのみ更新します。")
+
+                             old_data['tags'] = new_tags
+
+                             # all_tags の更新 (既存 + 新規タグ)
+                             current_all = set(old_data.get('all_tags', []))
+                             current_all.update(new_tags)
+                             old_data['all_tags'] = format_tags(list(current_all))
+
+                             self._save_raw_file(raw_path, old_data)
+                             return
+                         else:
+                             # メタデータ取得前なのでタイトルが出せないがログ出力
+                             logging.info(f"Comic {comic_id} : 更新はありません。")
+                             return
                      else:
-                         # メタデータ取得前なのでタイトルが出せないがログ出力
-                         logging.info(f"Comic {comic_id} : 更新はありません。")
-                         return
+                         # 資産が欠損している場合は再ダウンロード処理へ進む
+                         logging.info(f"{c_detail['extraData']['meta']['twitter']['title']} : ローカルリソース欠損を検出、再取得を実行します。")
+                         # returnしないことで、この後の通常ダウンロード処理が実行される
 
         # --- 以下、通常ダウンロード処理 ---
         # リンク取得（ページング対応）
