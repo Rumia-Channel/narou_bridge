@@ -321,21 +321,21 @@ class PixivCrawler:
             logging.info(f"Asset missing (Cover): {ncode}")
             return True
 
-        # 2. 本文画像チェック (実体存在)
+        # 2. 本文画像チェック (DB登録 & 実体存在)
         # 全エピソードのテキストを結合して検索
         all_text = ""
         if 'episodes' in raw_data:
             for ep in raw_data['episodes'].values():
                 all_text += ep.get('text', '') + "\n"
-        
+
         # [image](filename) 形式を抽出
         images = re.findall(r'\[image\]\((.*?)\)', all_text)
         for img_file in images:
-            img_path = os.path.join(self.img_path, img_file)
-            if not os.path.exists(img_path):
-                logging.info(f"Asset missing (Image): {img_file} in {ncode}")
+            # check_image_file は database.json への登録 & ファイル存在を両方チェック
+            if not cm.check_image_file(self.img_path, img_file):
+                logging.info(f"Asset missing (Image): {img_file} in {ncode} (not in DB or file missing)")
                 return True
-        
+
         return False
 
     def _snapshot_path(self, folder_path: str, user_id: str) -> str:
@@ -1668,17 +1668,80 @@ def update(folder_path, key_data, data_path, host_name):
     if corrupt_comics_pending:
         _crawler._corrupt_comics_pending.extend(corrupt_comics_pending)
         logging.info(f"Added {len(corrupt_comics_pending)} pending comics to repair queue")
-    
-    # 2. 通常の更新処理
-    # index.json から更新
+
+    # 2. raw.json と画像データベースの照合による破損チェック
+    logging.info("Starting asset integrity check for all works...")
+
+    # index.json から全作品リストを取得
     index_path = os.path.join(folder_path, 'index.json')
     if not os.path.exists(index_path): return
-    
+
     index_data = cm._load_json_safe(index_path)
     if not index_data: return
-    
+
     # .corrupt が見つかったフォルダ名のセット（高速検索用）
     corrupt_folder_names = {folder_name for folder_name, _ in corrupt_targets}
+
+    # 資産破損が見つかった作品のリスト
+    asset_missing_targets = []
+
+    # 全作品を走査して破損チェック
+    for folder_name in index_data.keys():
+        # .corrupt で既に処理済みのフォルダはスキップ
+        if folder_name in corrupt_folder_names:
+            continue
+
+        raw_path = os.path.join(folder_path, folder_name, 'raw', 'raw.json')
+        if not os.path.exists(raw_path):
+            continue
+
+        try:
+            raw_data = cm._load_json_safe(raw_path)
+            if not raw_data:
+                logging.warning(f"Failed to load raw.json for {folder_name}, skipping asset check")
+                continue
+
+            # 資産破損チェック
+            if _crawler._is_assets_missing(raw_data, folder_name):
+                title = raw_data.get('title', folder_name)
+                logging.warning(f"Asset missing detected: {folder_name} ({title})")
+                asset_missing_targets.append(folder_name)
+
+        except Exception as e:
+            logging.error(f"Asset check failed for {folder_name}: {e}")
+
+    # 破損した作品を再ダウンロード
+    if asset_missing_targets:
+        logging.info(f"Found {len(asset_missing_targets)} works with missing assets, re-downloading...")
+        for folder_name in asset_missing_targets:
+            try:
+                logging.info(f"Re-downloading due to asset missing: {folder_name}")
+
+                # フォルダ名から作品タイプと IDを推定
+                if folder_name.startswith('n'):
+                    nid = folder_name.lstrip('n')
+                    _crawler.download_novel(nid, folder_path, key_data, update=False)
+                elif folder_name.startswith('s'):
+                    sid = folder_name.lstrip('s')
+                    _crawler.download_series(sid, folder_path, key_data, update=False)
+                elif folder_name.startswith('a'):
+                    aid = folder_name.lstrip('a')
+                    _crawler.download_art(aid, folder_path, key_data, update=False)
+                elif folder_name.startswith('c'):
+                    cid = folder_name.lstrip('c')
+                    _crawler.download_comic(cid, folder_path, key_data, update=False)
+
+                logging.info(f"Successfully re-downloaded: {folder_name}")
+
+            except Exception as e:
+                logging.error(f"Failed to re-download {folder_name}: {e}", exc_info=True)
+
+        # 破損修復した作品も通常更新から除外
+        corrupt_folder_names.update(asset_missing_targets)
+    else:
+        logging.info("No asset integrity issues found.")
+
+    # 3. 通常の更新処理
     
     # user.json からユーザー更新
     user_json_path = os.path.join(folder_path, 'user.json')
@@ -1690,9 +1753,9 @@ def update(folder_path, key_data, data_path, host_name):
     
     # 個別作品更新
     for folder, meta in index_data.items():
-        # .corrupt で既に処理済みのフォルダはスキップ
+        # .corrupt や資産破損で既に再ダウンロード済みのフォルダはスキップ
         if folder in corrupt_folder_names:
-            logging.debug(f"Skipping {folder} (already re-downloaded due to corruption)")
+            logging.debug(f"Skipping {folder} (already re-downloaded due to corruption or asset missing)")
             continue
             
         try:
