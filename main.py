@@ -6,7 +6,7 @@ import util
 
 if __name__ == '__main__':
     # 設定の読み込み
-    config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, port, domain, use_proxy, proxy_port, proxy_ssl = util.load_config()
+    config, reload_time, auto_update, save_log, interval, auto_update_interval, site_dic, login_dic, folder_path, data_path, cookie_path, log_path, queue_path, pdf_path, port, domain, use_proxy, proxy_port, proxy_ssl, img_url = util.load_config()
 
     # Indexファイルを作成
     util.create_index(data_path, config)
@@ -33,5 +33,6 @@ if __name__ == '__main__':
         domain=domain,
         use_proxy=use_proxy,
         proxy_port=proxy_port,
-        proxy_ssl=proxy_ssl
+        proxy_ssl=proxy_ssl,
+        img_url=img_url
     )

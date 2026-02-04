@@ -344,7 +344,13 @@ class AutoUpdater(threading.Thread):
 def create_app(config: Dict[str, Any]):
     setup_logging(config['log_path'], config['save_log'])
     logging.debug("サーバー起動")
-    
+
+    # グローバル設定
+    img_url = config.get('img_url', '')
+    util.set_img_url(img_url)
+    if img_url:
+        logging.info(f"Image URL configured: {img_url}")
+
     # util モジュール初期化
     if 'site_dic' in config:
         try:

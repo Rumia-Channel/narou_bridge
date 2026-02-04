@@ -26,6 +26,7 @@ import apng  # 必要に応じて有効化
 import crawler.common as cm
 import crawler.convert_narou as cn
 from crawler.common import safe_fromiso
+import util
 
 # --- 定数定義 ---
 VERSION = 5
@@ -558,7 +559,7 @@ class PixivCrawler:
 
         cm.save_raw_diff(raw_path, novel_path, novel_data) if update else None
         self._save_raw_file(raw_path, novel_data)
-        cn.narou_gen(novel_data, novel_path, key_data, self.data_path, "")
+        cn.narou_gen(novel_data, novel_path, key_data, self.data_path, "", util.get_img_url())
         cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
     @suppress_errors()
@@ -720,7 +721,7 @@ class PixivCrawler:
         if update:
             cm.save_raw_diff(raw_path, series_path, novel_data)
         self._save_raw_file(raw_path, novel_data)
-        cn.narou_gen(novel_data, series_path, key_data, self.data_path, "")
+        cn.narou_gen(novel_data, series_path, key_data, self.data_path, "", util.get_img_url())
         cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
     @suppress_errors()
@@ -880,7 +881,7 @@ class PixivCrawler:
         # イラストは常に全データ取得なので差分保存不要
         # cm.save_raw_diff(raw_path, art_path, novel_data)
         self._save_raw_file(raw_path, novel_data)
-        cn.narou_gen(novel_data, art_path, key_data, self.data_path, "")
+        cn.narou_gen(novel_data, art_path, key_data, self.data_path, "", util.get_img_url())
         cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
     @suppress_errors()
@@ -1069,7 +1070,7 @@ class PixivCrawler:
 
         cm.save_raw_diff(raw_path, comic_dir, novel_data) if update else None
         self._save_raw_file(raw_path, novel_data)
-        cn.narou_gen(novel_data, comic_dir, key_data, self.data_path, "")
+        cn.narou_gen(novel_data, comic_dir, key_data, self.data_path, "", util.get_img_url())
         cm.gen_site_index(folder_path, key_data, 'Pixiv')
 
     @suppress_errors()
@@ -1895,7 +1896,7 @@ def convert(folder_path, key_data, data_path, host_name):
                 
                 cm._save_json(raw_path, data)
                 
-                cn.narou_gen(data, os.path.join(folder_path, folder), key_data, data_path, host_name)
+                cn.narou_gen(data, os.path.join(folder_path, folder), key_data, data_path, host_name, util.get_img_url())
             except Exception as e:
                 logging.error(f"Convert failed for {folder}: {e}")
     

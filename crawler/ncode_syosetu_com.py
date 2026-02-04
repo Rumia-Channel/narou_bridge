@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Tuple, Optional, Set
 import crawler.common as cm
 import crawler.convert_narou as cn
 from crawler.common import safe_fromiso
+import util
 
 # --- 定数定義 ---
 
@@ -529,7 +530,7 @@ def gen_from_pdf(pdf_path: str, pdf_name: str, author_id: str, author_url: str,
     cm._save_json(raw_path, results)
 
     # 4. HTML生成
-    cn.narou_gen(results, base_dir, key_data, data_path, host_name)
+    cn.narou_gen(results, base_dir, key_data, data_path, host_name, util.get_img_url())
     cm.gen_site_index(folder_path, key_data, '小説家になろう')
 
     # PDF削除
@@ -554,7 +555,7 @@ def convert(folder_path: str, key_data: str, data_path: str, host_name: str):
         if os.path.exists(raw_json_path) and os.path.exists(info_html_path):
             raw_json_data = cm._load_json_safe(raw_json_path)
             if raw_json_data:
-                cn.narou_gen(raw_json_data, target_dir, key_data, data_path, host_name)
+                cn.narou_gen(raw_json_data, target_dir, key_data, data_path, host_name, util.get_img_url())
 
     cm.gen_site_index(folder_path, key_data, '小説家になろう')
 
