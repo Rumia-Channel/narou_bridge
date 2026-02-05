@@ -13,10 +13,22 @@ import logging
 from jsondiff import diff
 from typing import Optional, Dict, Any, Union, List
 
+# グローバル設定
+_global_img_url = ''
+
 # --- 定数定義 ---
 
 # JST定義
 JST = timezone(timedelta(hours=9))
+
+def set_img_url(img_url: str):
+    """画像URL設定をグローバルに設定"""
+    global _global_img_url
+    _global_img_url = img_url
+
+def get_img_url() -> str:
+    """画像URL設定を取得"""
+    return _global_img_url
 
 # 字下げ処理用定数
 _INDENT_OMIT_CHARS = " 　「『（【〔〖〘〈《｛"
@@ -327,14 +339,19 @@ def check_image_file(img_path: str, file_name: str) -> Optional[str]:
     database.json を参照し、同名のファイルが存在するかチェックする。
     """
     db_path = os.path.join(img_path, 'database.json')
-    
+
     # DB初期化
     if not os.path.exists(db_path):
         _save_json(db_path, {})
 
     database = _load_json_safe(db_path)
     base_name = file_name.split('.')[0]
-    base_url = f'https://{read_domain_settings()}/images/'
+
+    # 画像URLの決定: img_url が設定されていればそれを使用、なければ従来通り
+    if _global_img_url:
+        base_url = _global_img_url if _global_img_url.endswith('/') else _global_img_url + '/'
+    else:
+        base_url = f'https://{read_domain_settings()}/images/'
     
     for key, value in database.items():
         if key == file_name or key.split('.')[0] == base_name:
