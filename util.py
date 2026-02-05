@@ -127,6 +127,8 @@ def set_img_url(img_url: str):
     """画像URL設定をグローバルに設定"""
     global _global_img_url
     _global_img_url = img_url
+    # common モジュールにも設定を伝播
+    cm.set_img_url(img_url)
 
 def get_img_url() -> str:
     """画像URL設定を取得"""
