@@ -56,6 +56,10 @@ def setup_logging(log_path: str, save_log: bool):
 
     logging.basicConfig(level=logging.DEBUG, handlers=handlers)
 
+    # requests/urllib3 のログレベルを上げて tqdm の進捗バーを見やすくする
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+    logging.getLogger('requests').setLevel(logging.WARNING)
+
 # --- ユーティリティ関数 ---
 
 def generate_request_id() -> str:
