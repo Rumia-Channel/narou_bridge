@@ -354,16 +354,21 @@ def check_image_file(img_path: str, file_name: str) -> Optional[str]:
         base_url = f'https://{read_domain_settings()}/images/'
     
     for key, value in database.items():
-        if key == file_name or key.split('.')[0] == base_name:
+        # パターン1: キー（元のファイル名）でマッチ（表紙など）
+        # パターン2: 値（ハッシュ）でマッチ（本文画像など）
+        key_match = (key == file_name or key.split('.')[0] == base_name)
+        value_match = (value == base_name or value + os.path.splitext(key)[1] == file_name)
+
+        if key_match or value_match:
             # 拡張子を元のキーから取得して構築
             target_ext = os.path.splitext(key)[1]
             check_path = os.path.join(img_path, value + target_ext)
             check_url = base_url + value + target_ext
-            
+
             # ローカルチェック
             if os.path.exists(check_path):
                 return value + target_ext
-            
+
             # リモートチェック (通信エラー時はNone扱いにして再DLへ)
             try:
                 if requests.head(check_url, timeout=5).status_code == 200:
