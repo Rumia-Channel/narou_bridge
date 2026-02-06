@@ -314,10 +314,10 @@ class PixivCrawler:
         cover_ok = False
         for ext in ['.jpg', '.jpeg', '.png', '.gif']:
             # check_image_file は database.json を確認し、かつファイルが存在すればそのパス(ファイル名)を返す
-            if cm.check_image_file(self.img_path, f'pixiv_{ncode}_cover{ext}'):
+            if cm.check_image_file(self.img_path, f'pixiv_{ncode}_cover{ext}', is_cover_check=True):
                 cover_ok = True
                 break
-        
+
         if not cover_ok:
             logging.info(f"Asset missing (Cover): {ncode}")
             return True
@@ -333,7 +333,8 @@ class PixivCrawler:
         images = re.findall(r'\[image\]\((.*?)\)', all_text)
         for img_file in images:
             # check_image_file は database.json への登録 & ファイル存在を両方チェック
-            if not cm.check_image_file(self.img_path, img_file):
+            # 本文画像チェックでは _cover. を含むエントリを除外
+            if not cm.check_image_file(self.img_path, img_file, is_cover_check=False):
                 logging.info(f"Asset missing (Image): {img_file} in {ncode} (not in DB or file missing)")
                 return True
 
