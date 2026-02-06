@@ -334,9 +334,14 @@ def _save_json(path: str, data: Dict, create_backup: bool = True, max_backups: i
         raise
 
 
-def check_image_file(img_path: str, file_name: str) -> Optional[str]:
+def check_image_file(img_path: str, file_name: str, is_cover_check: bool = False) -> Optional[str]:
     """
     database.json を参照し、同名のファイルが存在するかチェックする。
+
+    Args:
+        img_path: 画像ディレクトリパス
+        file_name: 検索するファイル名
+        is_cover_check: True=表紙チェック（キーマッチのみ）, False=本文画像チェック（値マッチ、ただし_cover除外）
     """
     db_path = os.path.join(img_path, 'database.json')
 
@@ -352,29 +357,39 @@ def check_image_file(img_path: str, file_name: str) -> Optional[str]:
         base_url = _global_img_url if _global_img_url.endswith('/') else _global_img_url + '/'
     else:
         base_url = f'https://{read_domain_settings()}/images/'
-    
+
     for key, value in database.items():
-        # パターン1: キー（元のファイル名）でマッチ（表紙など）
-        # パターン2: 値（ハッシュ）でマッチ（本文画像など）
-        key_match = (key == file_name or key.split('.')[0] == base_name)
-        value_match = (value == base_name or value + os.path.splitext(key)[1] == file_name)
+        if is_cover_check:
+            # 表紙チェック: キーのみでマッチ
+            key_match = (key == file_name or key.split('.')[0] == base_name)
+            if not key_match:
+                continue
+        else:
+            # 本文画像チェック: 値でマッチ、ただし_coverを含むキーは除外
+            if '_cover.' in key:
+                continue  # 表紙専用エントリはスキップ
 
-        if key_match or value_match:
-            # 拡張子を元のキーから取得して構築
-            target_ext = os.path.splitext(key)[1]
-            check_path = os.path.join(img_path, value + target_ext)
-            check_url = base_url + value + target_ext
+            key_match = (key == file_name or key.split('.')[0] == base_name)
+            value_match = (value == base_name or value + os.path.splitext(key)[1] == file_name)
 
-            # ローカルチェック
-            if os.path.exists(check_path):
+            if not (key_match or value_match):
+                continue
+
+        # 拡張子を元のキーから取得して構築
+        target_ext = os.path.splitext(key)[1]
+        check_path = os.path.join(img_path, value + target_ext)
+        check_url = base_url + value + target_ext
+
+        # ローカルチェック
+        if os.path.exists(check_path):
+            return value + target_ext
+
+        # リモートチェック (通信エラー時はNone扱いにして再DLへ)
+        try:
+            if requests.head(check_url, timeout=5).status_code == 200:
                 return value + target_ext
-
-            # リモートチェック (通信エラー時はNone扱いにして再DLへ)
-            try:
-                if requests.head(check_url, timeout=5).status_code == 200:
-                    return value + target_ext
-            except requests.RequestException:
-                pass 
+        except requests.RequestException:
+            pass
 
     return None
 
