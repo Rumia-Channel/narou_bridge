@@ -81,10 +81,19 @@ let hiddenCols = [];
 let filteredAuthors = [];
 let hiddenAuthors = [];
 let typeFilter = 'all';
+// サイト別フィルター
 let includedTags = [];
 let excludedTags = [];
 let includeOperator = 'AND';
 let excludeOperator = 'AND';
+// グローバルフィルター（全サイト共通）
+let globalIncludedTags = [];
+let globalExcludedTags = [];
+let globalIncludeOperator = 'AND';
+let globalExcludeOperator = 'AND';
+let globalHiddenAuthors = [];
+// フィルターモード: 'both'（両方）, 'global'（グローバルのみ）, 'site'（サイト別のみ）
+let filterMode = 'both';
 const selectedRows = new Set();
 const fixedWidthMapping = { serialization: 6, type: 3, create_date: 14, update_date: 14 };
 const variableWeightMapping = { title: 50, author: 20, tags: 30 };
@@ -92,6 +101,12 @@ let sortInfo = { column: null, ascending: true };
 let isIncludeTagsCollapsed = false;
 let isExcludeTagsCollapsed = false;
 let isHiddenAuthorsCollapsed = false;
+let isColumnSelectorCollapsed = false;
+let isGlobalIncludeTagsCollapsed = false;
+let isGlobalExcludeTagsCollapsed = false;
+let isGlobalHiddenAuthorsCollapsed = false;
+let isGlobalSectionCollapsed = false;
+let isSiteSectionCollapsed = false;
 
 /* --------------------------------------------------
    データ取得（ETagによるキャッシュ判定を導入）
@@ -174,8 +189,11 @@ async function fetchData() {
 
 /* --------------------------------------------------
    ローカルストレージ（設定の保存・読込）
+   - tableSettings: サイト別設定（従来互換）
+   - globalFilterSettings: 全サイト共通フィルター
 -------------------------------------------------- */
 function loadSettings() {
+  // サイト別設定の読み込み
   const s = JSON.parse(localStorage.getItem('tableSettings')) || {};
   rowsPerPage = typeof s.rowsPerPage === 'number' ? s.rowsPerPage : 10;
   hiddenCols = s.hiddenCols || [];
@@ -191,9 +209,25 @@ function loadSettings() {
   isIncludeTagsCollapsed = s.isIncludeTagsCollapsed || false;
   isExcludeTagsCollapsed = s.isExcludeTagsCollapsed || false;
   isHiddenAuthorsCollapsed = s.isHiddenAuthorsCollapsed || false;
+  isColumnSelectorCollapsed = s.isColumnSelectorCollapsed || false;
+  filterMode = s.filterMode || 'both';
+  isGlobalSectionCollapsed = s.isGlobalSectionCollapsed || false;
+  isSiteSectionCollapsed = s.isSiteSectionCollapsed || false;
+
+  // グローバル設定の読み込み
+  const g = JSON.parse(localStorage.getItem('globalFilterSettings')) || {};
+  globalIncludedTags = g.includedTags || [];
+  globalExcludedTags = g.excludedTags || [];
+  globalIncludeOperator = g.includeOperator || 'AND';
+  globalExcludeOperator = g.excludeOperator || 'AND';
+  globalHiddenAuthors = g.hiddenAuthors || [];
+  isGlobalIncludeTagsCollapsed = g.isIncludeTagsCollapsed || false;
+  isGlobalExcludeTagsCollapsed = g.isExcludeTagsCollapsed || false;
+  isGlobalHiddenAuthorsCollapsed = g.isHiddenAuthorsCollapsed || false;
 }
 
 function saveSettings() {
+  // サイト別設定の保存
   const s = {
     rowsPerPage: rowsPerPage,
     hiddenCols: hiddenCols,
@@ -208,23 +242,74 @@ function saveSettings() {
     excludeOperator: excludeOperator,
     isIncludeTagsCollapsed: isIncludeTagsCollapsed,
     isExcludeTagsCollapsed: isExcludeTagsCollapsed,
-    isHiddenAuthorsCollapsed: isHiddenAuthorsCollapsed
+    isHiddenAuthorsCollapsed: isHiddenAuthorsCollapsed,
+    isColumnSelectorCollapsed: isColumnSelectorCollapsed,
+    filterMode: filterMode,
+    isGlobalSectionCollapsed: isGlobalSectionCollapsed,
+    isSiteSectionCollapsed: isSiteSectionCollapsed
   };
   localStorage.setItem('tableSettings', JSON.stringify(s));
+}
+
+function saveGlobalSettings() {
+  const g = {
+    includedTags: globalIncludedTags,
+    excludedTags: globalExcludedTags,
+    includeOperator: globalIncludeOperator,
+    excludeOperator: globalExcludeOperator,
+    hiddenAuthors: globalHiddenAuthors,
+    isIncludeTagsCollapsed: isGlobalIncludeTagsCollapsed,
+    isExcludeTagsCollapsed: isGlobalExcludeTagsCollapsed,
+    isHiddenAuthorsCollapsed: isGlobalHiddenAuthorsCollapsed
+  };
+  localStorage.setItem('globalFilterSettings', JSON.stringify(g));
 }
 
 /* --------------------------------------------------
    UI 構築（初期描画）
 -------------------------------------------------- */
+/**
+ * 統一折りたたみヘッダーを生成する
+ * @param {string} label - 見出しテキスト
+ * @param {boolean} collapsed - 現在折りたたみ中か
+ * @param {Function} onToggle - クリック時のコールバック
+ * @param {Object} [options] - 追加オプション
+ * @param {boolean} [options.isGlobal] - グローバル変種（紫色左ボーダー）
+ * @returns {HTMLElement} ヘッダー要素
+ */
+function createCollapsibleHeader(label, collapsed, onToggle, options) {
+  options = options || {};
+  var head = document.createElement('div');
+  head.className = 'collapsible-header' + (collapsed ? ' collapsed' : '') + (options.isGlobal ? ' global-variant' : '');
+
+  var labelSpan = document.createElement('span');
+  labelSpan.className = 'collapsible-header-label';
+  labelSpan.textContent = label;
+  head.appendChild(labelSpan);
+
+  var icon = document.createElement('span');
+  icon.className = 'collapsible-header-icon';
+  icon.textContent = '▼';
+  head.appendChild(icon);
+
+  head.addEventListener('click', onToggle);
+  return head;
+}
+
 function buildUI() {
+  renderFilterModeSelector();
+  renderGlobalFilters();
   renderTagFilters();
   updateAuthorDropdownOptions();
   updateAuthorDropdownValue();
   renderHiddenAuthors();
+  renderColumnSelector();
   renderTableHeaders();
   renderTable();
   updatePagination();
   applySettingsToUI();
+  updateFilterPanelVisibility();
+  applySectionCollapseState();
 }
 
 function applySettingsToUI() {
@@ -234,6 +319,57 @@ function applySettingsToUI() {
     const cb = document.getElementById('show-' + col);
     if (cb) cb.checked = !hiddenCols.includes(col);
   });
+}
+
+/* --------------------------------------------------
+   表示項目の選択（折りたたみ対応）
+-------------------------------------------------- */
+function renderColumnSelector() {
+  var container = document.getElementById('column-selector-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  var head = createCollapsibleHeader(
+    '表示項目の選択',
+    isColumnSelectorCollapsed,
+    function () {
+      isColumnSelectorCollapsed = !isColumnSelectorCollapsed;
+      saveSettings();
+      renderColumnSelector();
+    }
+  );
+  container.appendChild(head);
+
+  if (isColumnSelectorCollapsed) return;
+
+  var body = document.createElement('div');
+  body.className = 'collapsible-body column-selector';
+
+  var columnDefs = [
+    { key: 'serialization', label: '連載状況' },
+    { key: 'title', label: 'タイトル' },
+    { key: 'author', label: '作者名' },
+    { key: 'type', label: '形式' },
+    { key: 'tags', label: 'タグ' },
+    { key: 'create_date', label: '掲載日時' },
+    { key: 'update_date', label: '更新日時' }
+  ];
+
+  columnDefs.forEach(function (def) {
+    var label = document.createElement('label');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'show-' + def.key;
+    cb.checked = !hiddenCols.includes(def.key);
+    cb.addEventListener('click', (function (key) {
+      return function () { toggleColumn(key); };
+    })(def.key));
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(' ' + def.label));
+    body.appendChild(label);
+  });
+
+  container.appendChild(body);
 }
 
 /* --------------------------------------------------
@@ -274,53 +410,74 @@ function updateAuthorDropdownValue() {
 
 function handleAuthorFiltering(author, authorId, ev) {
   ev.preventDefault();
-  if (confirm('この作者で絞り込みますか？  キャンセルを押すと非表示リストに追加します。')) {
+  const action = prompt(
+    'この作者の処理を選択してください:\n' +
+    '1 = この作者で絞り込み\n' +
+    '2 = サイト別の非表示リストに追加\n' +
+    '3 = 共通の非表示リストに追加（全サイト適用）\n' +
+    'それ以外 = キャンセル',
+    '1'
+  );
+  if (action === '1') {
     filteredAuthors = [authorId];
-  } else {
+    saveSettings();
+  } else if (action === '2') {
     if (!hiddenAuthors.includes(author)) hiddenAuthors.push(author);
+    saveSettings();
+    renderHiddenAuthors();
+  } else if (action === '3') {
+    if (!globalHiddenAuthors.includes(author)) globalHiddenAuthors.push(author);
+    saveGlobalSettings();
+    renderGlobalHiddenAuthors();
+  } else {
+    return;
   }
   currentPage = 1;
-  saveSettings();
-  renderHiddenAuthors();
   renderTable();
   updatePagination();
 }
 
 /* --------------------------------------------------
-   非表示作者エリア
+   非表示作者エリア（サイト別）
 -------------------------------------------------- */
 function renderHiddenAuthors() {
-  const c = document.getElementById('hidden-author-container');
+  var c = document.getElementById('hidden-author-container');
   if (!c) return;
   c.innerHTML = '';
-  const head = document.createElement('div');
-  head.style.cursor = 'pointer';
-  head.style.fontWeight = 'bold';
-  head.textContent = `非表示作者${isHiddenAuthorsCollapsed ? ' [+]' : ' [-]'}`;
-  head.addEventListener('click', () => {
-    isHiddenAuthorsCollapsed = !isHiddenAuthorsCollapsed;
-    saveSettings();
-    renderHiddenAuthors();
-  });
+
+  var head = createCollapsibleHeader(
+    '非表示作者（サイト別）',
+    isHiddenAuthorsCollapsed,
+    function () {
+      isHiddenAuthorsCollapsed = !isHiddenAuthorsCollapsed;
+      saveSettings();
+      renderHiddenAuthors();
+    }
+  );
   c.appendChild(head);
+
   if (isHiddenAuthorsCollapsed) return;
-  hiddenAuthors.forEach(name => {
-    const s = document.createElement('span');
+
+  var body = document.createElement('div');
+  body.className = 'collapsible-body';
+  hiddenAuthors.forEach(function (name) {
+    var s = document.createElement('span');
     s.textContent = name;
     s.classList.add('hidden-author-tag');
-    s.addEventListener('click', () => {
-      hiddenAuthors = hiddenAuthors.filter(a => a !== name);
+    s.addEventListener('click', function () {
+      hiddenAuthors = hiddenAuthors.filter(function (a) { return a !== name; });
       saveSettings();
       renderHiddenAuthors();
       renderTable();
     });
-    c.appendChild(s);
-    c.appendChild(document.createTextNode(' '));
+    body.appendChild(s);
+    body.appendChild(document.createTextNode(' '));
   });
+  c.appendChild(body);
 }
 
 /* --------------------------------------------------
-   タグフィルター UI
+   タグフィルター UI（サイト別）
 -------------------------------------------------- */
 function renderTagFilters() {
   buildTagSection(
@@ -329,7 +486,8 @@ function renderTagFilters() {
     isIncludeTagsCollapsed,
     includeOperator,
     op => includeOperator = op,
-    tags => includedTags = tags
+    tags => includedTags = tags,
+    false
   );
   buildTagSection(
     'exclude',
@@ -337,93 +495,300 @@ function renderTagFilters() {
     isExcludeTagsCollapsed,
     excludeOperator,
     op => excludeOperator = op,
-    tags => excludedTags = tags
+    tags => excludedTags = tags,
+    false
   );
 }
 
 function getFilteredEntries() {
+  const useGlobal = filterMode === 'both' || filterMode === 'global';
+  const useSite = filterMode === 'both' || filterMode === 'site';
+
   return Object.entries(tableData).filter(([, it]) => {
     if (typeFilter !== 'all' && it.type !== typeFilter) return false;
-    if (hiddenAuthors.includes(it.author)) return false;
+
+    // 作者フィルター（サイト別）
+    if (useSite) {
+      if (hiddenAuthors.includes(it.author)) return false;
+    }
+    // 作者フィルター（グローバル）— グローバル非表示作者は常に適用
+    if (useGlobal) {
+      if (globalHiddenAuthors.includes(it.author)) return false;
+    }
     if (filteredAuthors.length && !filteredAuthors.includes(it.author_id || it.author)) return false;
 
     const tags = it.all_tags || [];
 
-    // 含むタグ判定（includeOperatorに応じて）
-    let includeResult = true;
-    if (includedTags.length) {
-      if (includeOperator === 'AND') {
-        includeResult = includedTags.every(tag => tags.includes(tag));
-      } else {
-        includeResult = includedTags.some(tag => tags.includes(tag));
+    // --- グローバルフィルター ---
+    if (useGlobal) {
+      // グローバル含むタグ判定
+      if (globalIncludedTags.length) {
+        if (globalIncludeOperator === 'AND') {
+          if (!globalIncludedTags.every(tag => tags.includes(tag))) return false;
+        } else {
+          if (!globalIncludedTags.some(tag => tags.includes(tag))) return false;
+        }
+      }
+      // グローバル含まないタグ判定
+      if (globalExcludedTags.length) {
+        if (globalExcludeOperator === 'AND') {
+          if (globalExcludedTags.every(tag => tags.includes(tag))) return false;
+        } else {
+          if (globalExcludedTags.some(tag => tags.includes(tag))) return false;
+        }
       }
     }
 
-    // 含まないタグ判定（excludeOperatorに応じて）
-    let excludeResult = true;
-    if (excludedTags.length) {
-      if (excludeOperator === 'AND') {
-        excludeResult = !excludedTags.every(tag => tags.includes(tag));
-      } else {
-        excludeResult = !excludedTags.some(tag => tags.includes(tag));
+    // --- サイト別フィルター ---
+    if (useSite) {
+      // 含むタグ判定（includeOperatorに応じて）
+      let includeResult = true;
+      if (includedTags.length) {
+        if (includeOperator === 'AND') {
+          includeResult = includedTags.every(tag => tags.includes(tag));
+        } else {
+          includeResult = includedTags.some(tag => tags.includes(tag));
+        }
       }
+
+      // 含まないタグ判定（excludeOperatorに応じて）
+      let excludeResult = true;
+      if (excludedTags.length) {
+        if (excludeOperator === 'AND') {
+          excludeResult = !excludedTags.every(tag => tags.includes(tag));
+        } else {
+          excludeResult = !excludedTags.some(tag => tags.includes(tag));
+        }
+      }
+
+      if (!includeResult || !excludeResult) return false;
     }
 
-    // 両方の条件を満たした場合のみ表示
-    return includeResult && excludeResult;
+    return true;
   });
 }
 
-function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
-  const root = document.getElementById(kind === 'include' ? 'include-tags' : 'exclude-tags');
+function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags, isGlobal) {
+  var prefix = isGlobal ? 'global-' : '';
+  var root = document.getElementById(prefix + (kind === 'include' ? 'include-tags' : 'exclude-tags'));
   if (!root) return;
   root.innerHTML = '';
-  const head = document.createElement('div');
-  head.style.cursor = 'pointer';
-  head.style.fontWeight = 'bold';
-  head.textContent = `${kind === 'include' ? '含むタグ' : '含まないタグ'}${collapsed ? ' [+]' : ' [-]'}`;
-  head.addEventListener('click', () => {
-    if (kind === 'include') isIncludeTagsCollapsed = !isIncludeTagsCollapsed;
-    if (kind === 'exclude') isExcludeTagsCollapsed = !isExcludeTagsCollapsed;
-    saveSettings();
-    renderTagFilters();
-  });
+  var labelPrefix = isGlobal ? '【共通】' : '';
+  var labelText = labelPrefix + (kind === 'include' ? '含むタグ' : '含まないタグ');
+
+  var head = createCollapsibleHeader(
+    labelText,
+    collapsed,
+    function () {
+      if (isGlobal) {
+        if (kind === 'include') isGlobalIncludeTagsCollapsed = !isGlobalIncludeTagsCollapsed;
+        if (kind === 'exclude') isGlobalExcludeTagsCollapsed = !isGlobalExcludeTagsCollapsed;
+        saveGlobalSettings();
+      } else {
+        if (kind === 'include') isIncludeTagsCollapsed = !isIncludeTagsCollapsed;
+        if (kind === 'exclude') isExcludeTagsCollapsed = !isExcludeTagsCollapsed;
+        saveSettings();
+      }
+      if (isGlobal) renderGlobalFilters();
+      else renderTagFilters();
+    },
+    { isGlobal: isGlobal }
+  );
   root.appendChild(head);
+
   if (collapsed) return;
 
-  const sel = document.createElement('select');
+  var body = document.createElement('div');
+  body.className = 'collapsible-body';
+
+  var sel = document.createElement('select');
   sel.className = 'tag-filter-op-select';
-  ['AND', 'OR'].forEach(op => {
-    const o = document.createElement('option');
+  ['AND', 'OR'].forEach(function (op) {
+    var o = document.createElement('option');
     o.value = o.textContent = op;
     sel.appendChild(o);
   });
   sel.value = operator;
-  sel.addEventListener('change', () => {
+  sel.addEventListener('change', function () {
     setOp(sel.value);
-    saveSettings();
+    if (isGlobal) saveGlobalSettings();
+    else saveSettings();
     renderTable();
     updatePagination();
   });
-  root.appendChild(document.createTextNode(' 条件: '));
-  root.appendChild(sel);
-  root.appendChild(document.createElement('br'));
+  body.appendChild(document.createTextNode(' 条件: '));
+  body.appendChild(sel);
+  body.appendChild(document.createElement('br'));
 
-  tagArr.forEach(tag => {
-    const cb = document.createElement('input');
+  tagArr.forEach(function (tag) {
+    var cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = true;
-    cb.addEventListener('change', () => {
-      setTags(tagArr.filter(t => t !== tag));
-      saveSettings();
-      renderTagFilters();
+    cb.addEventListener('change', function () {
+      setTags(tagArr.filter(function (t) { return t !== tag; }));
+      if (isGlobal) {
+        saveGlobalSettings();
+        renderGlobalFilters();
+      } else {
+        saveSettings();
+        renderTagFilters();
+      }
       renderTable();
       updatePagination();
     });
-    root.appendChild(cb);
-    root.appendChild(document.createTextNode(' ' + tag));
-    root.appendChild(document.createElement('br'));
+    body.appendChild(cb);
+    body.appendChild(document.createTextNode(' ' + tag));
+    body.appendChild(document.createElement('br'));
   });
+
+  root.appendChild(body);
+}
+
+/* --------------------------------------------------
+   フィルターモード切り替えUI
+-------------------------------------------------- */
+function renderFilterModeSelector() {
+  const container = document.getElementById('filter-mode-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const label = document.createElement('span');
+  label.className = 'filter-label';
+  label.textContent = 'フィルターモード';
+  label.style.marginBottom = '0';
+  container.appendChild(label);
+
+  const sel = document.createElement('select');
+  sel.className = 'filter-select';
+  sel.id = 'filterModeSelect';
+  [
+    { value: 'both', text: '共通 + サイト別' },
+    { value: 'global', text: '共通のみ' },
+    { value: 'site', text: 'サイト別のみ' }
+  ].forEach(opt => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.text;
+    sel.appendChild(o);
+  });
+  sel.value = filterMode;
+  sel.addEventListener('change', () => {
+    filterMode = sel.value;
+    currentPage = 1;
+    saveSettings();
+    updateFilterPanelVisibility();
+    renderTable();
+    updatePagination();
+  });
+  container.appendChild(sel);
+}
+
+/**
+ * フィルターモードに応じて、グローバル/サイト別フィルターパネルの表示を切り替え
+ */
+function updateFilterPanelVisibility() {
+  const globalPanel = document.getElementById('global-filter-panel');
+  const sitePanel = document.getElementById('site-filter-panel');
+  if (globalPanel) {
+    globalPanel.style.display = (filterMode === 'both' || filterMode === 'global') ? 'block' : 'none';
+  }
+  if (sitePanel) {
+    sitePanel.style.display = (filterMode === 'both' || filterMode === 'site') ? 'block' : 'none';
+  }
+}
+
+/**
+ * セクションヘッダーの折りたたみ状態をDOMに反映
+ */
+function applySectionCollapseState() {
+  var globalToggle = document.getElementById('global-section-toggle');
+  var globalBody = document.getElementById('global-section-body');
+  if (globalToggle && globalBody) {
+    if (isGlobalSectionCollapsed) {
+      globalToggle.classList.add('collapsed');
+      globalBody.style.display = 'none';
+    } else {
+      globalToggle.classList.remove('collapsed');
+      globalBody.style.display = '';
+    }
+  }
+
+  var siteToggle = document.getElementById('site-section-toggle');
+  var siteBody = document.getElementById('site-section-body');
+  if (siteToggle && siteBody) {
+    if (isSiteSectionCollapsed) {
+      siteToggle.classList.add('collapsed');
+      siteBody.style.display = 'none';
+    } else {
+      siteToggle.classList.remove('collapsed');
+      siteBody.style.display = '';
+    }
+  }
+}
+
+/* --------------------------------------------------
+   グローバルフィルターUI
+-------------------------------------------------- */
+function renderGlobalFilters() {
+  // グローバルタグフィルター
+  buildTagSection(
+    'include',
+    globalIncludedTags,
+    isGlobalIncludeTagsCollapsed,
+    globalIncludeOperator,
+    op => globalIncludeOperator = op,
+    tags => globalIncludedTags = tags,
+    true
+  );
+  buildTagSection(
+    'exclude',
+    globalExcludedTags,
+    isGlobalExcludeTagsCollapsed,
+    globalExcludeOperator,
+    op => globalExcludeOperator = op,
+    tags => globalExcludedTags = tags,
+    true
+  );
+
+  // グローバル非表示作者
+  renderGlobalHiddenAuthors();
+}
+
+function renderGlobalHiddenAuthors() {
+  var c = document.getElementById('global-hidden-author-container');
+  if (!c) return;
+  c.innerHTML = '';
+
+  var head = createCollapsibleHeader(
+    '【共通】非表示作者',
+    isGlobalHiddenAuthorsCollapsed,
+    function () {
+      isGlobalHiddenAuthorsCollapsed = !isGlobalHiddenAuthorsCollapsed;
+      saveGlobalSettings();
+      renderGlobalHiddenAuthors();
+    },
+    { isGlobal: true }
+  );
+  c.appendChild(head);
+
+  if (isGlobalHiddenAuthorsCollapsed) return;
+
+  var body = document.createElement('div');
+  body.className = 'collapsible-body';
+  globalHiddenAuthors.forEach(function (name) {
+    var s = document.createElement('span');
+    s.textContent = name;
+    s.classList.add('hidden-author-tag', 'global-hidden-author-tag');
+    s.addEventListener('click', function () {
+      globalHiddenAuthors = globalHiddenAuthors.filter(function (a) { return a !== name; });
+      saveGlobalSettings();
+      renderGlobalHiddenAuthors();
+      renderTable();
+    });
+    body.appendChild(s);
+    body.appendChild(document.createTextNode(' '));
+  });
+  c.appendChild(body);
 }
 
 /* --------------------------------------------------
@@ -491,18 +856,118 @@ function formatDateTime(str) {
 }
 
 function tagFilterClick(tag) {
-  if (confirm(`「${tag}」を含むフィルターに追加しますか？`)) {
+  showTagFilterPopup(tag);
+}
+
+/**
+ * タグクリック時のポップアップ: 共通/サイト別 × 含む/含まない を選択
+ */
+function showTagFilterPopup(tag) {
+  // 既存のポップアップがあれば閉じる
+  const existing = document.getElementById('tag-filter-popup-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'tag-filter-popup-overlay';
+  overlay.className = 'tag-popup-overlay';
+
+  const box = document.createElement('div');
+  box.className = 'tag-popup-box';
+
+  const title = document.createElement('div');
+  title.className = 'tag-popup-title';
+  title.textContent = `「${tag}」をフィルターに追加`;
+  box.appendChild(title);
+
+  const desc = document.createElement('div');
+  desc.className = 'tag-popup-desc';
+  desc.textContent = '追加先とフィルター種別を選択してください';
+  box.appendChild(desc);
+
+  const btnGroup = document.createElement('div');
+  btnGroup.className = 'tag-popup-btn-group';
+
+  // 共通 含む
+  const globalIncBtn = document.createElement('button');
+  globalIncBtn.className = 'btn btn-sm tag-popup-btn tag-popup-global-include';
+  globalIncBtn.textContent = '共通: 含む';
+  globalIncBtn.addEventListener('click', () => {
+    if (!globalIncludedTags.includes(tag)) globalIncludedTags.push(tag);
+    globalExcludedTags = globalExcludedTags.filter(t => t !== tag);
+    saveGlobalSettings();
+    renderGlobalFilters();
+    currentPage = 1;
+    renderTable();
+    updatePagination();
+    overlay.remove();
+  });
+  btnGroup.appendChild(globalIncBtn);
+
+  // 共通 含まない
+  const globalExcBtn = document.createElement('button');
+  globalExcBtn.className = 'btn btn-sm tag-popup-btn tag-popup-global-exclude';
+  globalExcBtn.textContent = '共通: 含まない';
+  globalExcBtn.addEventListener('click', () => {
+    if (!globalExcludedTags.includes(tag)) globalExcludedTags.push(tag);
+    globalIncludedTags = globalIncludedTags.filter(t => t !== tag);
+    saveGlobalSettings();
+    renderGlobalFilters();
+    currentPage = 1;
+    renderTable();
+    updatePagination();
+    overlay.remove();
+  });
+  btnGroup.appendChild(globalExcBtn);
+
+  // サイト別 含む
+  const siteIncBtn = document.createElement('button');
+  siteIncBtn.className = 'btn btn-sm tag-popup-btn tag-popup-site-include';
+  siteIncBtn.textContent = 'サイト別: 含む';
+  siteIncBtn.addEventListener('click', () => {
     if (!includedTags.includes(tag)) includedTags.push(tag);
     excludedTags = excludedTags.filter(t => t !== tag);
-  } else {
+    saveSettings();
+    renderTagFilters();
+    currentPage = 1;
+    renderTable();
+    updatePagination();
+    overlay.remove();
+  });
+  btnGroup.appendChild(siteIncBtn);
+
+  // サイト別 含まない
+  const siteExcBtn = document.createElement('button');
+  siteExcBtn.className = 'btn btn-sm tag-popup-btn tag-popup-site-exclude';
+  siteExcBtn.textContent = 'サイト別: 含まない';
+  siteExcBtn.addEventListener('click', () => {
     if (!excludedTags.includes(tag)) excludedTags.push(tag);
     includedTags = includedTags.filter(t => t !== tag);
-  }
-  currentPage = 1;
-  saveSettings();
-  renderTagFilters();
-  renderTable();
-  updatePagination();
+    saveSettings();
+    renderTagFilters();
+    currentPage = 1;
+    renderTable();
+    updatePagination();
+    overlay.remove();
+  });
+  btnGroup.appendChild(siteExcBtn);
+
+  box.appendChild(btnGroup);
+
+  // キャンセルボタン
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-sm btn-outline tag-popup-cancel';
+  cancelBtn.textContent = 'キャンセル';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  box.appendChild(cancelBtn);
+
+  overlay.appendChild(box);
+
+  // オーバーレイクリックで閉じる
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  document.body.appendChild(overlay);
 }
 
 function updateAuthorFilter(id) {
@@ -775,8 +1240,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('copy-selected-button').addEventListener('click', copySelected);
 
   document.getElementById('reset-localstorage-button').addEventListener('click', () => {
-    if (confirm('ローカルストレージをリセットしますか？')) {
-      // このページで使っている設定 only
+    if (confirm('ローカルストレージをリセットしますか？（サイト別設定のみ）')) {
       localStorage.removeItem('tableSettings');
       localStorage.removeItem('pageWidth');
       localStorage.removeItem('siteIndexWidth');
@@ -785,7 +1249,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('reset-hidden-authors-button').addEventListener('click', () => {
-    if (confirm('非表示作者をリセットしますか？')) {
+    if (confirm('サイト別の非表示作者をリセットしますか？')) {
       hiddenAuthors = [];
       saveSettings();
       renderHiddenAuthors();
@@ -794,7 +1258,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('reset-include-tags-button').addEventListener('click', () => {
-    if (confirm('含むタグをリセットしますか？')) {
+    if (confirm('サイト別の含むタグをリセットしますか？')) {
       includedTags = [];
       saveSettings();
       renderTagFilters();
@@ -803,7 +1267,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('reset-exclude-tags-button').addEventListener('click', () => {
-    if (confirm('含まないタグをリセットしますか？')) {
+    if (confirm('サイト別の含まないタグをリセットしますか？')) {
       excludedTags = [];
       saveSettings();
       renderTagFilters();
@@ -820,6 +1284,75 @@ document.addEventListener('DOMContentLoaded', () => {
       renderTable();
     }
   });
+
+  // グローバルフィルターリセットボタン
+  var globalResetIncBtn = document.getElementById('reset-global-include-tags-button');
+  if (globalResetIncBtn) {
+    globalResetIncBtn.addEventListener('click', () => {
+      if (confirm('共通の含むタグをリセットしますか？（全サイトに影響します）')) {
+        globalIncludedTags = [];
+        saveGlobalSettings();
+        renderGlobalFilters();
+        renderTable();
+      }
+    });
+  }
+
+  var globalResetExcBtn = document.getElementById('reset-global-exclude-tags-button');
+  if (globalResetExcBtn) {
+    globalResetExcBtn.addEventListener('click', () => {
+      if (confirm('共通の含まないタグをリセットしますか？（全サイトに影響します）')) {
+        globalExcludedTags = [];
+        saveGlobalSettings();
+        renderGlobalFilters();
+        renderTable();
+      }
+    });
+  }
+
+  var globalResetAuthorsBtn = document.getElementById('reset-global-hidden-authors-button');
+  if (globalResetAuthorsBtn) {
+    globalResetAuthorsBtn.addEventListener('click', () => {
+      if (confirm('共通の非表示作者をリセットしますか？（全サイトに影響します）')) {
+        globalHiddenAuthors = [];
+        saveGlobalSettings();
+        renderGlobalHiddenAuthors();
+        renderTable();
+      }
+    });
+  }
+
+  var globalResetAllBtn = document.getElementById('reset-global-all-button');
+  if (globalResetAllBtn) {
+    globalResetAllBtn.addEventListener('click', () => {
+      if (confirm('共通フィルター設定をすべてリセットしますか？（全サイトに影響します）')) {
+        localStorage.removeItem('globalFilterSettings');
+        location.reload();
+      }
+    });
+  }
+
+  // セクションヘッダーの折りたたみ切り替え
+  var globalSectionToggle = document.getElementById('global-section-toggle');
+  if (globalSectionToggle) {
+    globalSectionToggle.addEventListener('click', function () {
+      isGlobalSectionCollapsed = !isGlobalSectionCollapsed;
+      saveSettings();
+      applySectionCollapseState();
+    });
+  }
+
+  var siteSectionToggle = document.getElementById('site-section-toggle');
+  if (siteSectionToggle) {
+    siteSectionToggle.addEventListener('click', function () {
+      isSiteSectionCollapsed = !isSiteSectionCollapsed;
+      saveSettings();
+      applySectionCollapseState();
+    });
+  }
+
+  // 初期表示時のフィルターパネル表示切り替え
+  updateFilterPanelVisibility();
 });
 
 /* --------------------------------------------------

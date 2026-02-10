@@ -23,7 +23,7 @@ body {
   box-shadow: var(--shadow-md);
   border: 1px solid var(--border-color);
   margin-bottom: 0.75rem;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .card-header {
@@ -47,11 +47,16 @@ body {
 }
 
 /* --- Collapsible Filter Card --- */
+.filter-toggle-divider {
+  border-top: 1px solid var(--border-color);
+  margin: 0.75rem -1rem;
+}
+
 .filter-toggle-btn {
   width: 100%;
-  padding: 0.75rem 1rem;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
+  padding: 0.625rem 0.5rem;
+  background: transparent;
+  border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
   display: flex;
@@ -61,11 +66,11 @@ body {
   font-weight: 600;
   color: var(--text-primary);
   transition: all var(--transition-fast);
-  margin-bottom: 0.75rem;
+  margin-bottom: 0;
 }
 
 .filter-toggle-btn:hover {
-  background: var(--border-color);
+  background: var(--bg-tertiary);
 }
 
 .filter-toggle-btn .toggle-icon {
@@ -84,6 +89,16 @@ body {
 .filter-panel.expanded {
   display: block;
   animation: slideDown 0.2s ease;
+  margin-top: 0.75rem;
+}
+
+/* --- Section body (フィルターセクション内容エリア) --- */
+.section-body {
+  padding: 0.75rem 0;
+}
+
+.section-body.collapsed {
+  display: none;
 }
 
 @keyframes slideDown {
@@ -373,6 +388,245 @@ body {
 .hidden-author-tag:hover {
   background: rgba(239, 68, 68, 0.2);
   border-color: rgba(239, 68, 68, 0.4);
+}
+
+.global-hidden-author-tag {
+  background: rgba(168, 85, 247, 0.1);
+  color: #a855f7;
+  border-color: rgba(168, 85, 247, 0.2);
+}
+
+.global-hidden-author-tag:hover {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+/* --- Filter Section Headers --- */
+.filter-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  margin-bottom: 0.5rem;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+
+.filter-section-header:hover {
+  filter: brightness(0.95);
+}
+
+.filter-section-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.filter-section-icon {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+  margin-left: 0.5rem;
+}
+
+.filter-section-header.collapsed .filter-section-icon {
+  transform: rotate(-90deg);
+}
+
+.global-section-header {
+  background: rgba(168, 85, 247, 0.08);
+  color: #a855f7;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.site-section-header {
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--accent-primary);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+  .global-section-header {
+    background: rgba(168, 85, 247, 0.12);
+    color: #c084fc;
+    border-color: rgba(168, 85, 247, 0.3);
+  }
+
+  .site-section-header {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+
+  .global-hidden-author-tag {
+    color: #c084fc;
+  }
+}
+
+/* --- Collapsible Section Header (統一折りたたみヘッダー) --- */
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+
+.collapsible-header:hover {
+  background: var(--border-color);
+}
+
+.collapsible-header-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.collapsible-header-icon {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+  margin-left: 0.5rem;
+}
+
+.collapsible-header.collapsed .collapsible-header-icon {
+  transform: rotate(-90deg);
+}
+
+.collapsible-header.global-variant {
+  border-left: 3px solid rgba(168, 85, 247, 0.4);
+}
+
+.collapsible-header.global-variant .collapsible-header-label {
+  color: #a855f7;
+}
+
+@media (prefers-color-scheme: dark) {
+  .collapsible-header.global-variant .collapsible-header-label {
+    color: #c084fc;
+  }
+}
+
+.collapsible-body {
+  /* 展開時は通常表示、折りたたみ時はJSで非表示 */
+}
+
+.collapsible-body.collapsed {
+  display: none;
+}
+
+/* --- Tag Filter Popup (for choosing global/site) --- */
+.tag-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.tag-popup-box {
+  padding: 1.5rem;
+  border-radius: var(--radius-lg);
+  max-width: 90%;
+  width: 400px;
+  box-shadow: var(--shadow-lg);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.tag-popup-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.tag-popup-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.tag-popup-btn-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.tag-popup-btn {
+  padding: 0.5rem 0.75rem !important;
+  font-size: 0.85rem !important;
+  border-radius: var(--radius-md) !important;
+  cursor: pointer !important;
+  transition: all var(--transition-fast) !important;
+  border: 1px solid var(--border-color) !important;
+  text-align: center;
+}
+
+.tag-popup-global-include {
+  background: rgba(168, 85, 247, 0.1) !important;
+  color: #a855f7 !important;
+  border-color: rgba(168, 85, 247, 0.3) !important;
+}
+
+.tag-popup-global-include:hover {
+  background: rgba(168, 85, 247, 0.2) !important;
+}
+
+.tag-popup-global-exclude {
+  background: rgba(239, 68, 68, 0.08) !important;
+  color: var(--accent-danger) !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+}
+
+.tag-popup-global-exclude:hover {
+  background: rgba(239, 68, 68, 0.15) !important;
+}
+
+.tag-popup-site-include {
+  background: rgba(16, 185, 129, 0.1) !important;
+  color: #10b981 !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+}
+
+.tag-popup-site-include:hover {
+  background: rgba(16, 185, 129, 0.2) !important;
+}
+
+.tag-popup-site-exclude {
+  background: rgba(245, 158, 11, 0.1) !important;
+  color: #f59e0b !important;
+  border-color: rgba(245, 158, 11, 0.3) !important;
+}
+
+.tag-popup-site-exclude:hover {
+  background: rgba(245, 158, 11, 0.2) !important;
+}
+
+.tag-popup-cancel {
+  width: 100%;
+  margin-top: 0.25rem;
 }
 
 /* --- Modern Table --- */

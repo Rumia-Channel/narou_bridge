@@ -18,21 +18,24 @@ from flask import Flask, request, jsonify, Response, redirect, url_for
 import util
 
 # MIMEタイプの設定
-mimetypes.add_type('application/javascript', '.js')
-mimetypes.add_type('text/css', '.css')
-mimetypes.add_type('text/html', '.html')
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("text/html", ".html")
 
 # --- ロギング設定 ---
 
+
 class NoNewlineFormatter(logging.Formatter):
     """改行をスペースに置き換えるフォーマッター"""
+
     def format(self, record):
         message = super().format(record)
         return message.replace("\n", " ").replace("\r", " ")
 
+
 def setup_logging(log_path: str, save_log: bool):
     """ログ設定を初期化"""
-    common_format = '%(asctime)s - %(levelname)s - %(message)s'
+    common_format = "%(asctime)s - %(levelname)s - %(message)s"
     handlers = []
 
     # コンソールログ
@@ -43,35 +46,48 @@ def setup_logging(log_path: str, save_log: bool):
 
     if save_log:
         # 全レベルログ
-        server_handler = logging.FileHandler(os.path.join(log_path, 'server.log'), encoding='utf-8')
+        server_handler = logging.FileHandler(
+            os.path.join(log_path, "server.log"), encoding="utf-8"
+        )
         server_handler.setLevel(logging.DEBUG)
         server_handler.setFormatter(NoNewlineFormatter(common_format))
         handlers.append(server_handler)
 
         # エラーログ
-        error_handler = logging.FileHandler(os.path.join(log_path, 'error.log'), encoding='utf-8')
+        error_handler = logging.FileHandler(
+            os.path.join(log_path, "error.log"), encoding="utf-8"
+        )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(NoNewlineFormatter(common_format))
         handlers.append(error_handler)
 
-    logging.basicConfig(level=logging.DEBUG, handlers=handlers)
+    # force=True: 既存のハンドラを上書きしてカスタムハンドラを確実に適用
+    logging.basicConfig(level=logging.DEBUG, handlers=handlers, force=True)
 
     # requests/urllib3 のログレベルを上げて tqdm の進捗バーを見やすくする
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('requests').setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+
 
 # --- ユーティリティ関数 ---
+
 
 def generate_request_id() -> str:
     """JavaScriptと同じプロセスでリクエストIDを生成"""
     template = "xxxx-xxxx-4xxx-yxxx-xxxx"
+
     def replace_char(c):
         r = random.randint(0, 15)
-        if c == 'x': return hex(r)[2:]
-        if c == 'y': return hex(r & 0x3 | 0x8)[2:]
-        if c == '4': return '4'
+        if c == "x":
+            return hex(r)[2:]
+        if c == "y":
+            return hex(r & 0x3 | 0x8)[2:]
+        if c == "4":
+            return "4"
         return c
-    return ''.join(replace_char(c) for c in template)
+
+    return "".join(replace_char(c) for c in template)
+
 
 def secure_path(base_folder: str, requested_path: str) -> str:
     """ディレクトリトラバーサル対策を行ったパスを返す"""
@@ -81,34 +97,37 @@ def secure_path(base_folder: str, requested_path: str) -> str:
         raise ValueError(f"Access denied: {requested_path}")
     return abs_req
 
+
 def create_response(status_code: int, status: str, message: str) -> Response:
     """JSONレスポンス生成ヘルパー"""
     if status == "error":
         logging.error(f"Error {status_code}: {message}")
     else:
         logging.info(f"Success: {message}")
-    
+
     response = jsonify({"status": status, "message": message})
     response.status_code = status_code
     return response
 
+
 # --- タスク管理クラス ---
+
 
 class TaskManager:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.queue_path = config['queue_path']
+        self.queue_path = config["queue_path"]
         self.job_file_path = os.path.join(self.queue_path, "queue.pkl")
         self.task_json_path = os.path.join(self.queue_path, "task.json")
-        
+
         self.queue = queue.Queue()
-        
+
         # 【修正箇所】再入可能ロック(RLock)を使用することでデッドロックを回避
         self.lock = threading.RLock()
-        
-        self.request_datas = {} # リクエスト履歴管理
+
+        self.request_datas = {}  # リクエスト履歴管理
         self.current_task = None
-        
+
         # キューの復元とワーカーの開始
         self._load_queue()
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
@@ -122,12 +141,12 @@ class TaskManager:
                 # バックアップローテーション
                 if os.path.exists(self.job_file_path):
                     for i in range(3, 1, -1):
-                        old_backup = f"{self.job_file_path}.backup.{i-1}"
+                        old_backup = f"{self.job_file_path}.backup.{i - 1}"
                         new_backup = f"{self.job_file_path}.backup.{i}"
                         if os.path.exists(old_backup):
                             shutil.move(old_backup, new_backup)
                     shutil.copy2(self.job_file_path, f"{self.job_file_path}.backup.1")
-                
+
                 # アトミック書き込み
                 tmp_path = self.job_file_path + ".tmp"
                 with open(tmp_path, "wb") as f:
@@ -135,12 +154,12 @@ class TaskManager:
                 os.replace(tmp_path, self.job_file_path)
             except Exception as e:
                 logging.error(f"Failed to save queue pickle: {e}")
-            
+
             # JSON保存 (可視化用) - task.json はバックアップ不要
             try:
                 data = {
                     "current_task": self.current_task,
-                    "queue": list(self.queue.queue)
+                    "queue": list(self.queue.queue),
                 }
                 with open(self.task_json_path, "w", encoding="utf-8") as jf:
                     json.dump(data, jf, ensure_ascii=False, indent=4)
@@ -163,7 +182,7 @@ class TaskManager:
                 logging.info(f"Queue loaded from {self.job_file_path}")
             except Exception as e:
                 logging.error(f"Failed to load queue from main file: {e}")
-                
+
                 # バックアップからの復元試行
                 for i in range(1, 4):
                     backup_path = f"{self.job_file_path}.backup.{i}"
@@ -176,21 +195,26 @@ class TaskManager:
                             shutil.copy2(backup_path, self.job_file_path)
                             break
                         except Exception as backup_err:
-                            logging.error(f"Failed to restore from {backup_path}: {backup_err}")
+                            logging.error(
+                                f"Failed to restore from {backup_path}: {backup_err}"
+                            )
                             continue
-            
+
             if jobs:
                 compacted_jobs = self._compact_list(jobs)
                 for job in compacted_jobs:
                     self.queue.put(job)
                 logging.info(f"Queue restored with {len(compacted_jobs)} items.")
             else:
-                logging.warning("All queue restore attempts failed. Starting with empty queue.")
+                logging.warning(
+                    "All queue restore attempts failed. Starting with empty queue."
+                )
 
     def _compact_list(self, requests_list: List[Dict]) -> List[Dict]:
         """リスト内の重複リクエストをまとめる"""
-        if not requests_list: return []
-        
+        if not requests_list:
+            return []
+
         compacted = []
         seen = {}
 
@@ -198,57 +222,60 @@ class TaskManager:
             if req is None:
                 compacted.append(None)
                 continue
-            
+
             # request_id以外をキーにして重複判定
             key = tuple(sorted((k, v) for k, v in req.items() if k != "request_id"))
             if key not in seen:
                 seen[key] = [req]
             else:
                 seen[key].append(req)
-        
+
         # 先頭のリクエストを採用
         for group in seen.values():
             compacted.append(group[0])
-        
+
         return compacted
 
     def enqueue_request(self, req_data: Dict[str, Any]) -> str:
         """リクエストをキューに追加"""
         req_id = req_data.get("request_id")
-        
+
         with self.lock:
             # リロード連打対策
-            reload_time = int(self.config['reload_time'])
+            reload_time = int(self.config["reload_time"])
             if req_id in self.request_datas:
-                prev_time = self.request_datas[req_id]['time']
+                prev_time = self.request_datas[req_id]["time"]
                 if (datetime.now() - prev_time).total_seconds() <= reload_time:
                     raise ValueError(f"Request {req_id} ignored (reload time).")
 
             # 履歴保存
             self.request_datas[req_id] = {"time": datetime.now(), "data": req_data}
-            self.request_datas, _ = util.cleanup_expired_requests(self.request_datas, expiration_time=reload_time)
+            self.request_datas, _ = util.cleanup_expired_requests(
+                self.request_datas, expiration_time=reload_time
+            )
 
             # キューに追加
             self.queue.put(req_data)
-            
+
             # キュー圧縮（一度リストにして圧縮して戻す）
             all_items = list(self.queue.queue)
             with self.queue.mutex:
                 self.queue.queue.clear()
-            
+
             compacted = self._compact_list(all_items)
             for item in compacted:
                 self.queue.put(item)
-            
+
             self._save_queue()
-            
+
         return req_id
 
     def _worker_loop(self):
         """バックグラウンドでタスクを処理するループ"""
         while True:
             req_data = self.queue.get()
-            if req_data is None: break
+            if req_data is None:
+                break
 
             with self.lock:
                 self.current_task = req_data
@@ -258,31 +285,40 @@ class TaskManager:
                 self._execute_task(req_data)
             except Exception as e:
                 logging.exception(f"Task execution failed: {e}")
-            
+
             with self.lock:
                 self.current_task = None
                 self._save_queue()
-            
+
             self.queue.task_done()
 
     def _execute_task(self, req_data: Dict[str, Any]):
         """個々のタスク実行ロジック"""
         c = self.config
         host_name = self._get_host_name()
-        
+
         # パラメータと実行関数のマッピング
         actions = [
-            ('update', util.update),
-            ('re_download', util.re_download),
-            ('convert', util.convert),
-            ('add', util.download),
+            ("update", util.update),
+            ("re_download", util.re_download),
+            ("convert", util.convert),
+            ("add", util.download),
         ]
 
         for param_key, func in actions:
             val = req_data.get(param_key)
             if val:
-                ret = func(val, c['site_dic'], c['login_dic'], c['folder_path'], c['data_path'], 
-                           c['cookie_path'], '', c['interval'], host_name)
+                ret = func(
+                    val,
+                    c["site_dic"],
+                    c["login_dic"],
+                    c["folder_path"],
+                    c["data_path"],
+                    c["cookie_path"],
+                    "",
+                    c["interval"],
+                    host_name,
+                )
                 if ret == 400:
                     logging.error(f"Task {param_key} failed with 400")
                 else:
@@ -290,17 +326,25 @@ class TaskManager:
                 return
 
         # PDF/ZIP処理
-        if req_data.get('pdf_name'):
+        if req_data.get("pdf_name"):
             ret = util.pdf_to_text(
-                req_data['pdf_path'], req_data['pdf_name'], req_data['author_id'], req_data['author_url'],
-                req_data['novel_type'], req_data['chapter'], c['folder_path'], c['data_path'], '', host_name
+                req_data["pdf_path"],
+                req_data["pdf_name"],
+                req_data["author_id"],
+                req_data["author_url"],
+                req_data["novel_type"],
+                req_data["chapter"],
+                c["folder_path"],
+                c["data_path"],
+                "",
+                host_name,
             )
             logging.info(f"PDF Task result: {ret}")
             return
 
-        if req_data.get('zip_name'):
+        if req_data.get("zip_name"):
             ret = util.zip_to_text(
-                req_data['pdf_path'], req_data['zip_name'], c['data_path'], host_name
+                req_data["pdf_path"], req_data["zip_name"], c["data_path"], host_name
             )
             logging.info(f"ZIP Task result: {ret}")
             return
@@ -309,12 +353,14 @@ class TaskManager:
 
     def _get_host_name(self):
         c = self.config
-        if c['use_proxy']:
-            protocol = "https" if c['proxy_ssl'] else "http"
+        if c["use_proxy"]:
+            protocol = "https" if c["proxy_ssl"] else "http"
             return f"{protocol}://{c['domain']}:{c['proxy_port']}"
         return f"http://{c['domain']}:{c['port']}"
 
+
 # --- 自動更新クラス ---
+
 
 class AutoUpdater(threading.Thread):
     def __init__(self, config):
@@ -322,19 +368,16 @@ class AutoUpdater(threading.Thread):
         self.config = config
 
     def run(self):
-        time.sleep(30) # サーバー起動待ち
+        time.sleep(30)  # サーバー起動待ち
         c = self.config
         url = f"http://127.0.0.1:{c['port']}/api/"
-        interval = c['auto_update_interval']
+        interval = c["auto_update_interval"]
 
         while True:
-            if c['auto_update']:
+            if c["auto_update"]:
                 logging.info("Sending auto-update request")
                 try:
-                    payload = {
-                        "update": "all",
-                        "request_id": generate_request_id()
-                    }
+                    payload = {"update": "all", "request_id": generate_request_id()}
                     requests.post(url, data=payload)
                 except Exception as e:
                     logging.error(f"Auto-update failed: {e}")
@@ -343,36 +386,38 @@ class AutoUpdater(threading.Thread):
             logging.info(f"Next auto-update: {next_run}")
             time.sleep(interval)
 
+
 # --- Flask アプリケーション ---
 
+
 def create_app(config: Dict[str, Any]):
-    setup_logging(config['log_path'], config['save_log'])
+    setup_logging(config["log_path"], config["save_log"])
     logging.debug("サーバー起動")
 
     # グローバル設定
-    img_url = config.get('img_url', '')
+    img_url = config.get("img_url", "")
     util.set_img_url(img_url)
     if img_url:
         logging.info(f"Image URL configured: {img_url}")
 
     # util モジュール初期化
-    if 'site_dic' in config:
+    if "site_dic" in config:
         try:
-            util.init_import(config['site_dic'])
+            util.init_import(config["site_dic"])
             logging.info("Crawler modules loaded successfully.")
         except Exception as e:
             logging.error(f"Failed to load crawler modules: {e}")
 
     app = Flask(__name__)
-    app.config['DATA_FOLDER'] = config['data_path']
-    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+    app.config["DATA_FOLDER"] = config["data_path"]
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
     app.url_map.strict_slashes = True
 
     # タスクマネージャー初期化
     task_manager = TaskManager(config)
 
     # 自動更新スレッド開始
-    if config['auto_update']:
+    if config["auto_update"]:
         AutoUpdater(config).start()
 
     # --- ルーティング ---
@@ -381,36 +426,36 @@ def create_app(config: Dict[str, Any]):
     def log_request():
         logging.info(f"Request: {request.method} {request.url}")
 
-    @app.route('/', methods=["GET"])
+    @app.route("/", methods=["GET"])
     def serve_root():
         return handle_request("index.html")
 
-    @app.route('/<path:path>', methods=["GET"])
+    @app.route("/<path:path>", methods=["GET"])
     def handle_request(path):
-        data_folder = app.config['DATA_FOLDER']
+        data_folder = app.config["DATA_FOLDER"]
         full_path = os.path.join(data_folder, path)
-        
+
         try:
             abs_path = secure_path(data_folder, full_path)
         except ValueError as e:
             return create_response(403, "error", str(e))
 
         if os.path.isdir(abs_path):
-            if not path.endswith('/') and path != "index.html":
-                return redirect(url_for('handle_request', path=f'{path}/'))
-            
+            if not path.endswith("/") and path != "index.html":
+                return redirect(url_for("handle_request", path=f"{path}/"))
+
             index_file = os.path.join(abs_path, "index.html")
             if os.path.exists(index_file):
                 return _stream_file(index_file)
             else:
                 return _stream_folder_contents(abs_path, data_folder)
-        
+
         elif os.path.isfile(abs_path):
             return _stream_file(abs_path)
-        
+
         return create_response(404, "error", "Not found")
 
-    @app.route('/api/', methods=['POST'])
+    @app.route("/api/", methods=["POST"])
     def handle_post():
         request_id = request.values.get("request_id")
         if not request_id:
@@ -418,15 +463,15 @@ def create_app(config: Dict[str, Any]):
             logging.info(f"Request ID automatically generated: {request_id}")
 
         # ファイル保存処理
-        pdf_file = request.files.get('pdf')
-        zip_file = request.files.get('zip')
-        pdf_path = config['pdf_path']
-        
+        pdf_file = request.files.get("pdf")
+        zip_file = request.files.get("zip")
+        pdf_path = config["pdf_path"]
+
         pdf_file_name = None
         zip_file_name = None
 
-        author_id = request.values.get('author_id')
-        author_url = request.values.get('author_url')
+        author_id = request.values.get("author_id")
+        author_url = request.values.get("author_url")
 
         if pdf_file:
             if not author_id or not author_url:
@@ -470,12 +515,16 @@ def create_app(config: Dict[str, Any]):
             with open(file_path, "rb") as f:
                 while chunk := f.read(8192):
                     yield chunk
-        
+
         mime_type, _ = mimetypes.guess_type(file_path)
-        mime_type = mime_type or 'application/octet-stream'
+        mime_type = mime_type or "application/octet-stream"
         file_size = os.path.getsize(file_path)
-        
-        return Response(generate(), content_type=mime_type, headers={'Content-Length': str(file_size)})
+
+        return Response(
+            generate(),
+            content_type=mime_type,
+            headers={"Content-Length": str(file_size)},
+        )
 
     def _stream_folder_contents(folder_path, base_folder):
         def generate():
@@ -484,30 +533,33 @@ def create_app(config: Dict[str, Any]):
                     yield f"File: {os.path.relpath(os.path.join(root, name), base_folder)}\n"
                 for name in sorted(dirs):
                     yield f"Directory: {os.path.relpath(os.path.join(root, name), base_folder)}\n"
-        return Response(generate(), content_type='text/plain')
+
+        return Response(generate(), content_type="text/plain")
 
     # インデックス作成 (初回のみ)
-    if 'site_dic' in config:
-        config['crawler'] = config['site_dic']
-    util.create_index(config['data_path'], config, 'api')
+    if "site_dic" in config:
+        config["crawler"] = config["site_dic"]
+    util.create_index(config["data_path"], config, "api")
 
     return app
 
+
 # --- エントリーポイント ---
+
 
 def http_run(**kwargs):
     """外部から呼び出されるエントリポイント"""
     config = kwargs
-    
-    if 'site_dic' in config:
-        config['crawler'] = config['site_dic']
-    
+
+    if "site_dic" in config:
+        config["crawler"] = config["site_dic"]
+
     app = create_app(config)
-    port = int(config.get('port', 8080))
-    
+    port = int(config.get("port", 8080))
+
     server_thread = threading.Thread(
         target=app.run,
-        kwargs={'host': '0.0.0.0', 'debug': False, 'threaded': True, 'port': port}
+        kwargs={"host": "0.0.0.0", "debug": False, "threaded": True, "port": port},
     )
     server_thread.daemon = True
     server_thread.start()
