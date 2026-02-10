@@ -298,18 +298,13 @@ class TaskManager:
         host_name = self._get_host_name()
 
         # パラメータと実行関数のマッピング
-        actions = [
-            ("repair", util.repair),
-            ("update", util.update),
-            ("re_download", util.re_download),
-            ("convert", util.convert),
-            ("add", util.download),
-        ]
-
-        for param_key, func in actions:
+        # (util.ACTION_PRIORITY の順に優先度が高い)
+        for action_name in util.ACTION_PRIORITY:
+            param_key = util._resolve_param_key(action_name)
             val = req_data.get(param_key)
             if val:
-                ret = func(
+                ret = util.dispatch_action(
+                    action_name,
                     val,
                     c["site_dic"],
                     c["login_dic"],
@@ -487,11 +482,6 @@ def create_app(config: Dict[str, Any]):
         # キュー登録用データ構築
         req_data = {
             "request_id": request_id,
-            "add": request.values.get("add"),
-            "update": request.values.get("update"),
-            "convert": request.values.get("convert"),
-            "re_download": request.values.get("re_download"),
-            "repair": request.values.get("repair"),
             "pdf_path": pdf_path,
             "pdf_name": pdf_file_name,
             "zip_name": zip_file_name,
@@ -500,6 +490,10 @@ def create_app(config: Dict[str, Any]):
             "novel_type": request.values.get("novel_type"),
             "chapter": request.values.get("chapter"),
         }
+        # アクションパラメータを動的に収集
+        for action_name in util.ACTION_PRIORITY:
+            param_key = util._resolve_param_key(action_name)
+            req_data[param_key] = request.values.get(param_key)
 
         logging.debug(f"Queueing Task: {req_data}")
 

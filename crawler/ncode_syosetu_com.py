@@ -19,6 +19,10 @@ import util
 VERSION = 5
 JST = timezone(timedelta(hours=9))
 
+# このモジュールが対応するアクション一覧
+# (dispatch_action で未定義のアクションはスキップされる)
+ALLOWED_ACTIONS = ["convert", "repair"]
+
 # 除外・判定用パラメータ
 IGNORE_FONT_SIZE = 12.0
 LINE_SPACE_THRESHOLD_DEFAULT = 22

@@ -290,8 +290,30 @@ def create_manifest(data_path):
 
 # --- クローラー実行ロジック ---
 
+# アクション実行の優先順位 (先頭が最優先)
+# 新しいアクションを追加する場合はここに名前を追加し、
+# 各クローラーモジュールに同名の関数を実装するだけでよい。
+ACTION_PRIORITY = ["repair", "update", "re_download", "convert", "download"]
 
-def _execute_site_action(
+# POSTパラメータ名 → 内部アクション名のマッピング
+# (パラメータ名とアクション名が異なる場合のみ記載)
+_PARAM_TO_ACTION = {"add": "download"}
+
+
+def _resolve_action_name(param_key):
+    """POSTパラメータ名を内部アクション名に変換"""
+    return _PARAM_TO_ACTION.get(param_key, param_key)
+
+
+def _resolve_param_key(action_name):
+    """内部アクション名をPOSTパラメータ名に変換"""
+    for k, v in _PARAM_TO_ACTION.items():
+        if v == action_name:
+            return k
+    return action_name
+
+
+def dispatch_action(
     action_name,
     param,
     site_dic,
@@ -303,32 +325,25 @@ def _execute_site_action(
     interval,
     host_name,
 ):
-    """各サイトのアクション（update, convert, re_download, download）を共通処理"""
+    """各サイトのアクションを共通ディスパッチで実行する。
+
+    クローラーモジュールに action_name と同名の関数があれば呼び出す。
+    モジュールに ALLOWED_ACTIONS 属性があれば、そのリストに含まれる
+    アクションのみ許可する（未定義なら全アクション許可）。
+    """
 
     target_sites = []
 
-    # パラメータ解析: 'all' または 特定のサイトキー または URLの一部
+    # パラメータ解析: 'all' / サイトキー / URLの一部
     if param == "all":
-        target_sites = [
-            k for k in site_dic.keys() if k != "narou"
-        ]  # narouは一括処理対象外とする仕様
+        target_sites = list(site_dic.keys())
     elif param in site_dic:
-        if param == "narou" and action_name not in (
-            "convert",
-            "repair",
-        ):  # narouはconvert, repair以外許可しない
-            logging.debug(f"Skipping site: {param} for {action_name}")
-            return 400
         target_sites = [param]
     else:
         # URLの一部からサイト判定 (download用)
         for site_key, value in site_dic.items():
-            # ファイル名からモジュール判定ロジック (元コード準拠)
             module_sig = value.replace("_", ".").replace(".py", "")
             if module_sig in param:
-                if site_key == "narou":
-                    logging.debug("Skipping site: narou")
-                    return 400
                 target_sites = [site_key]
                 break
         else:
@@ -336,156 +351,39 @@ def _execute_site_action(
 
     # 実行ループ
     for site in target_sites:
+        module = globals()[site]
+
+        # モジュールの ALLOWED_ACTIONS でフィルタリング
+        allowed = getattr(module, "ALLOWED_ACTIONS", None)
+        if allowed is not None and action_name not in allowed:
+            logging.debug(
+                f"Skipping site: {site} for {action_name} (not in ALLOWED_ACTIONS)"
+            )
+            continue
+
+        # モジュールに該当関数が存在するかチェック
+        func = getattr(module, action_name, None)
+        if func is None:
+            logging.debug(f"Skipping site: {site} — no '{action_name}' function")
+            continue
+
         # ログイン設定チェック
         login_val = int(login_dic[site])
         if login_val not in [0, 1]:
             return 400
 
         logging.info(f"{action_name.capitalize()}: {site}")
-        module = globals()[site]
 
         # 共通初期化
         module.init(cookie_path[site], data_path, login_val, interval)
 
-        # アクション実行
-        if action_name == "update":
-            module.update(folder_path[site], key_data, data_path, host_name)
-        elif action_name == "re_download":
-            module.re_download(folder_path[site], key_data, data_path, host_name)
-        elif action_name == "convert":
-            module.convert(folder_path[site], key_data, data_path, host_name)
-        elif action_name == "repair":
-            module.repair(folder_path[site], key_data, data_path, host_name)
-        elif action_name == "download":
-            # downloadだけ引数が異なる (param=URL)
-            module.download(param, folder_path[site], key_data, data_path, host_name)
+        # アクション実行 (downloadだけ引数が異なる: URLが先頭に来る)
+        if action_name == "download":
+            func(param, folder_path[site], key_data, data_path, host_name)
+        else:
+            func(folder_path[site], key_data, data_path, host_name)
 
     return 200
-
-
-def update(
-    update_param,
-    site_dic,
-    login_dic,
-    folder_path,
-    data_path,
-    cookie_path,
-    key_data,
-    interval,
-    host_name,
-):
-    return _execute_site_action(
-        "update",
-        update_param,
-        site_dic,
-        login_dic,
-        folder_path,
-        data_path,
-        cookie_path,
-        key_data,
-        interval,
-        host_name,
-    )
-
-
-def re_download(
-    re_download_param,
-    site_dic,
-    login_dic,
-    folder_path,
-    data_path,
-    cookie_path,
-    key_data,
-    interval,
-    host_name,
-):
-    return _execute_site_action(
-        "re_download",
-        re_download_param,
-        site_dic,
-        login_dic,
-        folder_path,
-        data_path,
-        cookie_path,
-        key_data,
-        interval,
-        host_name,
-    )
-
-
-def convert(
-    convert_param,
-    site_dic,
-    login_dic,
-    folder_path,
-    data_path,
-    cookie_path,
-    key_data,
-    interval,
-    host_name,
-):
-    return _execute_site_action(
-        "convert",
-        convert_param,
-        site_dic,
-        login_dic,
-        folder_path,
-        data_path,
-        cookie_path,
-        key_data,
-        interval,
-        host_name,
-    )
-
-
-def download(
-    add_param,
-    site_dic,
-    login_dic,
-    folder_path,
-    data_path,
-    cookie_path,
-    key_data,
-    interval,
-    host_name,
-):
-    return _execute_site_action(
-        "download",
-        add_param,
-        site_dic,
-        login_dic,
-        folder_path,
-        data_path,
-        cookie_path,
-        key_data,
-        interval,
-        host_name,
-    )
-
-
-def repair(
-    repair_param,
-    site_dic,
-    login_dic,
-    folder_path,
-    data_path,
-    cookie_path,
-    key_data,
-    interval,
-    host_name,
-):
-    return _execute_site_action(
-        "repair",
-        repair_param,
-        site_dic,
-        login_dic,
-        folder_path,
-        data_path,
-        cookie_path,
-        key_data,
-        interval,
-        host_name,
-    )
 
 
 # --- ファイル変換処理 (PDF/ZIP) ---

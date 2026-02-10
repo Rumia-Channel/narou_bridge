@@ -25,7 +25,7 @@ import apng  # 必要に応じて有効化
 # 内部モジュール (環境に合わせてパス解決してください)
 import crawler.common as cm
 import crawler.convert_narou as cn
-from crawler.common import safe_fromiso
+from crawler.common import safe_fromiso, safe_date_str
 import util
 
 # --- 定数定義 ---
@@ -633,8 +633,8 @@ class PixivCrawler:
             "serialization": "短編",
             "tags": tags,
             "all_tags": tags,
-            "createDate": str(safe_fromiso(body.get("createDate")).astimezone(JST)),
-            "updateDate": str(safe_fromiso(body.get("uploadDate")).astimezone(JST)),
+            "createDate": safe_date_str(body.get("createDate")),
+            "updateDate": safe_date_str(body.get("uploadDate")),
             "episodes": {
                 1: {
                     "id": novel_id,
@@ -647,12 +647,8 @@ class PixivCrawler:
                     ),
                     "text": text,
                     "postscript": format_survey(poll) if poll else "",
-                    "createDate": str(
-                        safe_fromiso(body.get("createDate")).astimezone(JST)
-                    ),
-                    "updateDate": str(
-                        safe_fromiso(body.get("uploadDate")).astimezone(JST)
-                    ),
+                    "createDate": safe_date_str(body.get("createDate")),
+                    "updateDate": safe_date_str(body.get("uploadDate")),
                 }
             },
         }
@@ -811,12 +807,8 @@ class PixivCrawler:
                     ),
                     "text": text,
                     "postscript": format_survey(poll) if poll else "",
-                    "createDate": str(
-                        safe_fromiso(ep_body.get("createDate")).astimezone(JST)
-                    ),
-                    "updateDate": str(
-                        safe_fromiso(ep_body.get("uploadDate")).astimezone(JST)
-                    ),
+                    "createDate": safe_date_str(ep_body.get("createDate")),
+                    "updateDate": safe_date_str(ep_body.get("uploadDate")),
                 }
 
                 # 重複フォルダ削除（元コードロジック）
@@ -845,8 +837,8 @@ class PixivCrawler:
             "tags": series_tags,
             # all_tags は重複除去した上で format_tags に通す
             "all_tags": format_tags(list(set(all_tags))),
-            "createDate": str(safe_fromiso(body.get("createDate")).astimezone(JST)),
-            "updateDate": str(safe_fromiso(body.get("updateDate")).astimezone(JST)),
+            "createDate": safe_date_str(body.get("createDate")),
+            "updateDate": safe_date_str(body.get("updateDate")),
             "episodes": episodes_data,
         }
 
@@ -1016,8 +1008,8 @@ class PixivCrawler:
             "serialization": "短編",
             "tags": tags,
             "all_tags": tags,
-            "createDate": str(safe_fromiso(body.get("createDate")).astimezone(JST)),
-            "updateDate": str(safe_fromiso(body.get("uploadDate")).astimezone(JST)),
+            "createDate": safe_date_str(body.get("createDate")),
+            "updateDate": safe_date_str(body.get("uploadDate")),
             "episodes": {
                 1: {
                     "id": art_id,
@@ -1030,12 +1022,8 @@ class PixivCrawler:
                     ),
                     "text": art_text,
                     "postscript": format_survey(poll) if poll else "",
-                    "createDate": str(
-                        safe_fromiso(body.get("createDate")).astimezone(JST)
-                    ),
-                    "updateDate": str(
-                        safe_fromiso(body.get("uploadDate")).astimezone(JST)
-                    ),
+                    "createDate": safe_date_str(body.get("createDate")),
+                    "updateDate": safe_date_str(body.get("uploadDate")),
                 }
             },
         }
@@ -1229,12 +1217,8 @@ class PixivCrawler:
                     ),
                     "text": text,
                     "postscript": format_survey(poll) if poll else "",
-                    "createDate": str(
-                        safe_fromiso(body.get("createDate")).astimezone(JST)
-                    ),
-                    "updateDate": str(
-                        safe_fromiso(body.get("uploadDate")).astimezone(JST)
-                    ),
+                    "createDate": safe_date_str(body.get("createDate")),
+                    "updateDate": safe_date_str(body.get("uploadDate")),
                 }
 
                 # 重複フォルダ削除
@@ -1260,15 +1244,11 @@ class PixivCrawler:
             "serialization": "連載中",
             "tags": new_tags,
             "all_tags": format_tags(list(set(all_tags))),
-            "createDate": str(
-                safe_fromiso(
-                    c_detail.get("illustSeries", [{}])[0].get("createDate")
-                ).astimezone(JST)
+            "createDate": safe_date_str(
+                c_detail.get("illustSeries", [{}])[0].get("createDate")
             ),
-            "updateDate": str(
-                safe_fromiso(
-                    c_detail.get("illustSeries", [{}])[0].get("updateDate")
-                ).astimezone(JST)
+            "updateDate": safe_date_str(
+                c_detail.get("illustSeries", [{}])[0].get("updateDate")
             ),
             "episodes": episodes_data,
         }

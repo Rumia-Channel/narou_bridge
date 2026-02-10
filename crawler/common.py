@@ -392,7 +392,7 @@ def check_image_hash(
 def safe_fromiso(date_str: Optional[str], tzinfo=JST) -> Optional[datetime]:
     """ISO フォーマット文字列を安全に datetime に変換"""
     if not date_str:
-        logging.warning("safe_fromiso: empty or None date_str received")
+        logging.debug("safe_fromiso: empty or None date_str received")
         return None
     try:
         dt = datetime.fromisoformat(date_str)
@@ -402,6 +402,16 @@ def safe_fromiso(date_str: Optional[str], tzinfo=JST) -> Optional[datetime]:
     except ValueError:
         logging.warning(f"safe_fromiso: invalid ISO format: {date_str}")
         return None
+
+
+def safe_date_str(date_str: Optional[str], fallback: str = "") -> str:
+    """ISO 日付文字列を JST 変換した文字列として安全に返す。
+
+    safe_fromiso のラッパーで、None の場合は fallback を返す。
+    結果は str(datetime) 形式。
+    """
+    dt = safe_fromiso(date_str)
+    return str(dt) if dt else fallback
 
 
 # --- その他ユーティリティ ---
