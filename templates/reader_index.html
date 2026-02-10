@@ -6,7 +6,7 @@
   <title>Web小説リーダー</title>
   <link rel="stylesheet" href="/css/reader_modern.css">
   <link rel="icon" href="/icon/favicon.ico">
-  <link rel="manifest" href="/manifest.json">
+  <script>fetch('/manifest.json',{method:'HEAD'}).then(function(r){if(r.ok){var l=document.createElement('link');l.rel='manifest';l.href='/manifest.json';document.head.appendChild(l)}}).catch(function(){})</script>
   <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
   <link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
   <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
