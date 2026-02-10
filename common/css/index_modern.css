@@ -9,28 +9,18 @@ body {
   padding-bottom: 2rem;
 }
 
-/* --- Header --- */
+/* --- Header (overrides for top page - larger padding) --- */
 .app-header {
-  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
-  color: white;
   padding: 0.5rem 1rem;
-  box-shadow: var(--shadow-md);
-  position: sticky;
-  top: 0;
-  z-index: 100;
 }
 
 .app-header h1 {
-  font-size: 1.1rem;
-  font-weight: 600;
   text-align: center;
-  margin: 0;
-  letter-spacing: -0.025em;
 }
 
 /* --- Container --- */
 .container {
-  width: 100%;
+  width: var(--page-width, 100%);
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 1rem;

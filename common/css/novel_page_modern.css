@@ -95,8 +95,7 @@ body {
 /* --- Novel Text Content --- */
 .js-novel-text,
 .p-novel__text {
-  max-width: 48rem;
-  margin: 1.5rem auto;
+  margin: 1.5rem 0;
   padding: 0 1rem;
   font-size: 1rem;
   line-height: 2;
@@ -105,8 +104,7 @@ body {
 
 .p-novel__text--preface {
   padding: 1rem 1.25rem;
-  margin: 1rem auto;
-  max-width: 48rem;
+  margin: 1rem 0;
   background: var(--bg-tertiary);
   border-radius: var(--radius-md);
   border-left: 4px solid var(--accent-primary);
@@ -116,8 +114,7 @@ body {
 
 .p-novel__text--afterword {
   padding: 1rem 1.25rem;
-  margin: 1rem auto;
-  max-width: 48rem;
+  margin: 1rem 0;
   background: var(--bg-tertiary);
   border-radius: var(--radius-md);
   border-left: 4px solid var(--accent-secondary);
@@ -195,9 +192,31 @@ rt {
   text-indent: 1em;
 }
 
+/* --- Header Nav Links (in-header supplementary navigation) --- */
+.header-nav-link {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: white;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-xl);
+  text-decoration: none;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.header-nav-link:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+  color: white;
+}
+
 /* --- Container for content (applied by template) --- */
 .novel-container {
-  max-width: 60rem;
+  width: var(--page-width, 60rem);
+  max-width: 100%;
   margin: 0 auto;
   padding: 1rem;
 }
@@ -233,6 +252,11 @@ rt {
     font-size: 0.8rem;
   }
 
+  .header-nav-link {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.7rem;
+  }
+
   .novel_title {
     font-size: 1.25rem;
   }
@@ -259,7 +283,9 @@ rt {
 
 /* --- Print --- */
 @media print {
-  .header-link {
+  .app-header,
+  .header-link,
+  .header-nav-link {
     display: none;
   }
 
@@ -268,8 +294,13 @@ rt {
     color: #333;
   }
 
+  .novel-container {
+    width: 100%;
+    max-width: none;
+  }
+
   .js-novel-text,
   .p-novel__text {
-    max-width: none;
+    padding: 0;
   }
 }

@@ -769,50 +769,16 @@ function copySelected() {
 }
 
 /* --------------------------------------------------
-   横幅セレクター
--------------------------------------------------- */
-function initWidthSelector() {
-  const header = document.querySelector('.app-header');
-  if (!header || document.getElementById('index-width-select')) return;
-
-  const select = document.createElement('select');
-  select.id = 'index-width-select';
-  select.className = 'header-width-select';
-  ['55%', '65%', '75%', '85%', '95%', '100%'].forEach((v) => {
-    const o = document.createElement('option');
-    o.value = o.textContent = v;
-    select.appendChild(o);
-  });
-
-  const saved = localStorage.getItem('siteIndexWidth') || '100%';
-  select.value = saved;
-  applyIndexWidth(saved);
-
-  select.addEventListener('change', () => {
-    const w = select.value;
-    localStorage.setItem('siteIndexWidth', w);
-    applyIndexWidth(w);
-  });
-
-  header.appendChild(select);
-}
-
-function applyIndexWidth(w) {
-  document.documentElement.style.setProperty('--index-width', w);
-}
-
-/* --------------------------------------------------
    初期イベント登録
 -------------------------------------------------- */
 document.addEventListener('DOMContentLoaded', () => {
-  initWidthSelector();
-
   document.getElementById('copy-selected-button').addEventListener('click', copySelected);
 
   document.getElementById('reset-localstorage-button').addEventListener('click', () => {
     if (confirm('ローカルストレージをリセットしますか？')) {
       // このページで使っている設定 only
       localStorage.removeItem('tableSettings');
+      localStorage.removeItem('pageWidth');
       localStorage.removeItem('siteIndexWidth');
       location.reload();
     }
