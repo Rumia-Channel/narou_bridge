@@ -193,6 +193,15 @@ body {
   background: var(--accent-danger-hover);
 }
 
+.btn-warning {
+  background: var(--accent-warning);
+  color: white;
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: var(--accent-warning-hover);
+}
+
 .btn-sm {
   padding: 0.5rem 1rem;
   font-size: 0.875rem;

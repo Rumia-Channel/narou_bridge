@@ -146,6 +146,28 @@ function submitReDownload(key) {
   xhr.send("re_download=" + encodeURIComponent(key) + "&request_id=" + requestId);
 }
 
+// データ修復用
+function submitRepair(key) {
+  if (!confirm("データ修復を実行しますか？\n一次ファイルを削除し、全てのraw.jsonからデータを再構築します。")) {
+    return;
+  }
+
+  var requestId = generateRequestId();
+  var url = POST_URL + "?repair=" + encodeURIComponent(key);
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", url, true);
+  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState === 4) {
+      var res = JSON.parse(xhr.responseText);
+      if (xhr.status === 200) showMessage("green", res.message || "データ修復を開始しました");
+      else showMessage("red", res.message || "データ修復の開始に失敗しました");
+    }
+  };
+  xhr.send("repair=" + encodeURIComponent(key) + "&request_id=" + requestId);
+}
+
 // PDF 送信用
 function submitPdfData() {
   var pdfFile = document.getElementById("pdfFile").files[0];

@@ -299,6 +299,7 @@ class TaskManager:
 
         # パラメータと実行関数のマッピング
         actions = [
+            ("repair", util.repair),
             ("update", util.update),
             ("re_download", util.re_download),
             ("convert", util.convert),
@@ -490,6 +491,7 @@ def create_app(config: Dict[str, Any]):
             "update": request.values.get("update"),
             "convert": request.values.get("convert"),
             "re_download": request.values.get("re_download"),
+            "repair": request.values.get("repair"),
             "pdf_path": pdf_path,
             "pdf_name": pdf_file_name,
             "zip_name": zip_file_name,

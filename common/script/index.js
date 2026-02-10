@@ -95,7 +95,7 @@ let globalHiddenAuthors = [];
 // フィルターモード: 'both'（両方）, 'global'（グローバルのみ）, 'site'（サイト別のみ）
 let filterMode = 'both';
 const selectedRows = new Set();
-const fixedWidthMapping = { serialization: 6, type: 3, create_date: 14, update_date: 14 };
+const fixedWidthMapping = { serialization: 10, type: 6, create_date: 14, update_date: 14 };
 const variableWeightMapping = { title: 50, author: 20, tags: 30 };
 let sortInfo = { column: null, ascending: true };
 let isIncludeTagsCollapsed = false;
