@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Web小説リーダー</title>
+  <link rel="stylesheet" href="/css/reader.css">
+  <link rel="icon" href="/icon/favicon.ico">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
+</head>
+<body>
+  <header>
+    <h1>Web小説リーダー</h1>
+    <button id="btn-clear-cache">キャッシュクリア</button>
+  </header>
+
+  <div id="progress-container">
+    <div id="progress-bar"></div>
+    <div id="progress-info">0.00% (0/0)</div>
+  </div>
+
+  <main id="app">
+    </main>
+
+  <script>
+  const sources = {site_list_json};
+  </script>
+  <script src="/script/reader.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {{
+      const p = new URLSearchParams(location.search);
+      if (p.has('site') && p.has('nid') && typeof window.adjustImages === 'function') {{
+        window.adjustImages();
+      }}
+    }});
+  </script>
+</body>
+</html>
