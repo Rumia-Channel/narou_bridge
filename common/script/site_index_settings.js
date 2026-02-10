@@ -1,7 +1,9 @@
 // site_index_settings.js — グローバル変数・ローカルストレージ設定
 
-const basePath = window.location.pathname.replace(/\/[^/]*$/, '/');
-const siteSettingsKey = 'tableSettings_' + basePath;
+// var を使用: Cloudflare等のスクリプト注入やキャッシュにより
+// 同一スコープで再評価された場合の重複宣言エラーを防止する
+var basePath = window.location.pathname.replace(/\/[^/]*$/, '/');
+var siteSettingsKey = 'tableSettings_' + basePath;
 
 /* --------------------------------------------------
    グローバル変数・初期設定
