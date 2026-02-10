@@ -61,7 +61,7 @@ if (typeof Set === 'undefined') {
 }
 
 const basePath = window.location.pathname.replace(/\/[^/]*$/, '/');
-
+const siteSettingsKey = 'tableSettings_' + basePath;
 /* --------------------------------------------------
    グローバル変数・初期設定
 -------------------------------------------------- */
@@ -189,12 +189,19 @@ async function fetchData() {
 
 /* --------------------------------------------------
    ローカルストレージ（設定の保存・読込）
-   - tableSettings: サイト別設定（従来互換）
+   - tableSettings_<path>: サイト別設定（パスごとに独立）
    - globalFilterSettings: 全サイト共通フィルター
 -------------------------------------------------- */
 function loadSettings() {
+  // 旧キー 'tableSettings' からのマイグレーション
+  // (以前は全サイト共通だったため、新キーが未設定なら旧データを引き継ぐ)
+  if (!localStorage.getItem(siteSettingsKey) && localStorage.getItem('tableSettings')) {
+    localStorage.setItem(siteSettingsKey, localStorage.getItem('tableSettings'));
+    localStorage.removeItem('tableSettings');
+  }
+
   // サイト別設定の読み込み
-  const s = JSON.parse(localStorage.getItem('tableSettings')) || {};
+  const s = JSON.parse(localStorage.getItem(siteSettingsKey)) || {};
   rowsPerPage = typeof s.rowsPerPage === 'number' ? s.rowsPerPage : 10;
   hiddenCols = s.hiddenCols || [];
   currentPage = s.currentPage || 1;
@@ -248,7 +255,7 @@ function saveSettings() {
     isGlobalSectionCollapsed: isGlobalSectionCollapsed,
     isSiteSectionCollapsed: isSiteSectionCollapsed
   };
-  localStorage.setItem('tableSettings', JSON.stringify(s));
+  localStorage.setItem(siteSettingsKey, JSON.stringify(s));
 }
 
 function saveGlobalSettings() {
@@ -1241,7 +1248,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('reset-localstorage-button').addEventListener('click', () => {
     if (confirm('ローカルストレージをリセットしますか？（サイト別設定のみ）')) {
-      localStorage.removeItem('tableSettings');
+      localStorage.removeItem(siteSettingsKey);
       localStorage.removeItem('pageWidth');
       localStorage.removeItem('siteIndexWidth');
       location.reload();
