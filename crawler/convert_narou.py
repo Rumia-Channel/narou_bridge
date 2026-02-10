@@ -40,12 +40,25 @@ def _format_date_jp(
     return default_msg
 
 
-def _save_html(path: str, title: str, body_content: str, extra_head: str = ""):
+def _save_html(
+    path: str,
+    title: str,
+    body_content: str,
+    extra_head: str = "",
+    back_url: str = "../",
+    header_title: str = "",
+    nav_links: str = "",
+):
     """HTMLファイルを保存する共通関数"""
     # 外部テンプレートを使用
     template = _load_template("novel_page")
     html_content = template.format(
-        title=title, extra_head=extra_head, body=body_content
+        title=title,
+        extra_head=extra_head,
+        body=body_content,
+        back_url=back_url,
+        header_title=header_title or title,
+        nav_links=nav_links,
     )
     # ディレクトリ作成
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -178,14 +191,8 @@ def _generate_index_content(data: Dict, key_data: str, a_link_base: str) -> str:
 def _generate_info_content(data: Dict, key_data: str, site_name: str, nid: str) -> str:
     """作品情報ページの中身を生成"""
 
-    # 共通ヘッダーリンク
-    links = [
-        f'<a href="../{key_data}" class="header-link">戻る</a>',
-        f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>',
-    ]
-
-    # 作品タイトル・種別
-    content_parts = list(links)
+    # 作品タイトル・種別 (nav links moved to header)
+    content_parts = []
     content_parts.append(
         f'<h1><a href="{data.get("url")}" target="_blank">{data.get("title")}</a></h1>'
     )
@@ -317,10 +324,11 @@ def narou_gen(
 
     # 3. index.html (目次) の生成
     if data.get("serialization") != "短編":
+        index_nav_links = (
+            f'<a href="./info/{key_data}" class="header-nav-link">作品情報</a>'
+            f'<a href="/reader/?site={site_name}&nid={nid}" class="header-nav-link">簡易リーダー</a>'
+        )
         index_body_parts = [
-            f'<a href="../{key_data}" class="header-link">戻る</a>',
-            f'<a href="./info/{key_data}" class="header-link">作品情報</a>',
-            f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>',
             f'<p class="novel_title">{data.get("title")}</p>',
             '<div class="index_box">',
             _generate_index_content(data, key_data, a_link_base),
@@ -330,14 +338,21 @@ def narou_gen(
             os.path.join(nove_path, "index.html"),
             title="Index Pixiv",
             body_content="\n".join(index_body_parts),
+            back_url=f"../{key_data}",
+            header_title=data.get("title", ""),
+            nav_links=index_nav_links,
         )
 
     # 4. info/index.html (作品情報) の生成
+    info_nav_links = f'<a href="/reader/?site={site_name}&nid={nid}" class="header-nav-link">簡易リーダー</a>'
     info_body = _generate_info_content(data, key_data, site_name, nid)
     _save_html(
         os.path.join(nove_path, "info", "index.html"),
         title="Index Pixiv",
         body_content=info_body,
+        back_url=f"../{key_data}",
+        header_title=data.get("title", ""),
+        nav_links=info_nav_links,
     )
 
     # 5. 各エピソードページの生成
@@ -346,25 +361,27 @@ def narou_gen(
     for ep in data["episodes"].values():
         if is_short_story:
             ep_path = os.path.join(nove_path, "index.html")
-            # 短編用のナビゲーション
-            nav_links = [
-                f'<a href="../{key_data}" class="header-link">戻る</a>',
-                f'<a href="./info/{key_data}" class="header-link">作品情報</a>',
-                f'<a href="/reader/?site={site_name}&nid={nid}" class="header-link">簡易リーダーで読む</a>',
-                f'<p class="novel_title">{data.get("title")}</p>',
-            ]
+            # 短編用のナビゲーション（ヘッダーに表示）
+            ep_back_url = f"../{key_data}"
+            ep_header_title = data.get("title", "")
+            ep_nav_links = (
+                f'<a href="./info/{key_data}" class="header-nav-link">作品情報</a>'
+                f'<a href="/reader/?site={site_name}&nid={nid}" class="header-nav-link">簡易リーダー</a>'
+            )
+            ep_body_title = f'<p class="novel_title">{data.get("title")}</p>'
         else:
             ep_path = os.path.join(nove_path, f"{ep['id']}", "index.html")
-            # 連載用のナビゲーション
-            nav_links = [
-                f'<a href="../{key_data}" class="header-link">戻る</a>',
-                f'<a href="../info/{key_data}" class="header-link">作品情報</a>',
-                f'<a href="/reader/?site={site_name}&nid={nid}&eid={ep["id"]}" class="header-link">簡易リーダーで読む</a>',
-                f'<p class="novel_subtitle">{ep["title"]}</p>',
-            ]
+            # 連載用のナビゲーション（ヘッダーに表示）
+            ep_back_url = f"../{key_data}"
+            ep_header_title = ep["title"]
+            ep_nav_links = (
+                f'<a href="../info/{key_data}" class="header-nav-link">作品情報</a>'
+                f'<a href="/reader/?site={site_name}&nid={nid}&eid={ep["id"]}" class="header-nav-link">簡易リーダー</a>'
+            )
+            ep_body_title = f'<p class="novel_subtitle">{ep["title"]}</p>'
 
         # 本文組み立て
-        ep_body_parts = nav_links
+        ep_body_parts = [ep_body_title]
 
         # 前書き
         if ep.get("introduction"):
@@ -405,6 +422,9 @@ def narou_gen(
             title=ep["title"],
             body_content="\n".join(ep_body_parts),
             extra_head=extra_css,
+            back_url=ep_back_url,
+            header_title=ep_header_title,
+            nav_links=ep_nav_links,
         )
 
     logging.info(f"{data.get('title')}の変換が完了しました。")
