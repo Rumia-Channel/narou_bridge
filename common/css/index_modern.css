@@ -483,3 +483,67 @@ body {
     border: 1px solid #ddd;
   }
 }
+
+/* --- Chapter Row UI --- */
+.chapter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.chapter-row .chapter-start,
+.chapter-row .chapter-end {
+  width: 5rem;
+  flex: 0 0 5rem;
+  text-align: center;
+  /* Hide number input spinners */
+  -moz-appearance: textfield;
+}
+
+.chapter-row .chapter-start::-webkit-outer-spin-button,
+.chapter-row .chapter-start::-webkit-inner-spin-button,
+.chapter-row .chapter-end::-webkit-outer-spin-button,
+.chapter-row .chapter-end::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.chapter-separator {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.chapter-row .chapter-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.chapter-row .chapter-remove {
+  flex-shrink: 0;
+  padding: 0.5rem;
+  line-height: 1;
+}
+
+/* Stack chapter rows vertically on small screens */
+@media (max-width: 480px) {
+  .chapter-row {
+    flex-wrap: wrap;
+  }
+
+  .chapter-row .chapter-start,
+  .chapter-row .chapter-end {
+    width: calc(50% - 1.25rem);
+    flex: 0 0 calc(50% - 1.25rem);
+  }
+
+  .chapter-row .chapter-title {
+    flex: 1 1 100%;
+    order: 1;
+  }
+
+  .chapter-row .chapter-remove {
+    order: 2;
+  }
+}
