@@ -321,12 +321,21 @@ TagFilter.prototype.handleTagClick = function(tag, anchorElement) {
       }
     });
   } else {
-    // フォールバック: confirmダイアログ
-    if (confirm('「' + tag + '」を含むフィルターに追加しますか？\nキャンセルを押すと含まないフィルターに追加します。')) {
-      self.addTag('include', tag);
-    } else {
-      self.addTag('exclude', tag);
-    }
+    // フォールバック: コンテキストメニューで選択
+    showContextMenu(
+      window.innerWidth / 2, window.innerHeight / 2,
+      [
+        { label: '含むフィルターに追加', value: 'include' },
+        { label: '含まないフィルターに追加', value: 'exclude' }
+      ],
+      { title: '「' + tag + '」' }
+    ).then(function (action) {
+      if (action === 'include') {
+        self.addTag('include', tag);
+      } else if (action === 'exclude') {
+        self.addTag('exclude', tag);
+      }
+    });
   }
 };
 
