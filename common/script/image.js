@@ -1,7 +1,7 @@
 function adjustImages() {
     var header = document.querySelector("header.app-header");
     var headerH = header ? header.offsetHeight : 0;
-    var viewH = window.innerHeight - headerH;
+    var viewH = (window.innerHeight - headerH) * 0.95;
     var images = document.querySelectorAll("img");
 
     // WebKit compatibility: use for loop instead of forEach

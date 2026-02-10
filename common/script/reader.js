@@ -296,6 +296,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // ─── ライブラリ画面フロー ───
+  initWidthSelector();
   initNavOnLibrary();
   const app = document.getElementById('app');
   const pc = document.getElementById('progress-container');
@@ -1375,7 +1376,14 @@ function renderToc(container, novel, query) {
         const li = document.createElement('li');
         const a = document.createElement('a');
         a.href = `?site=${query.site}&nid=${query.nid}&eid=${ep.id}`;
-        a.textContent = `${ep.title} — ${formatDate(ep.updateDate)} `;
+        const spanTitle = document.createElement('span');
+        spanTitle.className = 'toc-ep-title';
+        spanTitle.textContent = ep.title;
+        const spanDate = document.createElement('span');
+        spanDate.className = 'toc-ep-date';
+        spanDate.textContent = formatDate(ep.updateDate);
+        a.appendChild(spanTitle);
+        a.appendChild(spanDate);
         li.appendChild(a);
         list.appendChild(li);
       });
@@ -1387,7 +1395,14 @@ function renderToc(container, novel, query) {
         const li = document.createElement('li');
         const a = document.createElement('a');
         a.href = `?site=${query.site}&nid=${query.nid}&eid=${ep.id}`;
-        a.textContent = `${ep.title} — ${formatDate(ep.updateDate)} `;
+        const spanTitle = document.createElement('span');
+        spanTitle.className = 'toc-ep-title';
+        spanTitle.textContent = ep.title;
+        const spanDate = document.createElement('span');
+        spanDate.className = 'toc-ep-date';
+        spanDate.textContent = formatDate(ep.updateDate);
+        a.appendChild(spanTitle);
+        a.appendChild(spanDate);
         li.appendChild(a);
         toc.appendChild(li);
       });
@@ -1455,7 +1470,9 @@ function adjustImages() {
   const padL = parseFloat(cs.paddingLeft);
   const padR = parseFloat(cs.paddingRight);
   const maxW = rect.width - padL - padR;
-  const maxH = window.innerHeight;
+  const header = document.querySelector('header');
+  const headerH = header ? header.offsetHeight : 0;
+  const maxH = (window.innerHeight - headerH) * 0.95;
 
   document.querySelectorAll('body.reader #app img').forEach(img => {
     if (!img.complete || !img.naturalWidth) {
