@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>const POST_URL = "{post_url}";</script>
+<script src="script/top_page.js"></script>
+<link rel="stylesheet" href="/css/common.css">
+<link rel="icon" href="/icon/favicon.ico">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
+<link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
+<title>Index</title>
+</head>
+<body>
+<input type="text" id="input1" placeholder="登録URL">
+<button onclick="debouncedSubmit()">送信</button><br><br><br>
+
+<button onclick="submitUpdate('all')">全て 更新</button>
+<button onclick="submitConvert('all')">全て 変換</button>
+<button onclick="submitReDownload('all')">全て 再ダウンロード</button>
+<br>
+{site_buttons}
+
+<br><br>
+<label for="pdfFile">PDFファイル選択:</label>
+<input type="file" id="pdfFile" accept="application/pdf">
+<br>
+<label for="authorId">author_id:</label>
+<input type="text" id="authorId" placeholder="author_id">
+<br>
+<label for="authorUrl">author_url:</label>
+<input type="text" id="authorUrl" placeholder="author_url">
+<br>
+<label for="chapter">chapter:</label>
+<input type="text" id="chapter" placeholder="exa:1-3:ああ,4-5:いい">
+<br>
+<label for="novelType">作品タイプ:</label>
+<select id="novelType">
+<option value="1">完結済</option>
+<option value="0">連載中</option>
+<option value="2">短編</option>
+</select>
+<br>
+<button onclick="submitPdfData()">送信</button>
+
+<br><br>
+<label for="zipFile">ZIPファイル選択:</label>
+<input type="file" id="zipFile" accept="application/zip">
+<br>
+<br>
+<button onclick="submitZipData()">送信</button>
+
+<br><br><br>
+{site_links}
+<br><br><br><br><a href="#" onclick="redirectWithParams(/reader/)">簡易リーダーへ移動</a>
+</body>
+</html>

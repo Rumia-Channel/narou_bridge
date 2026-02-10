@@ -26,3 +26,4 @@ requirements-dev.lock
 *.tar.gz
 
 !unit-config.json
+!templates/*.html
