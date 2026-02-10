@@ -1468,19 +1468,21 @@ document.addEventListener('keydown', (event) => {
   }
   if ((event.ctrlKey || event.shiftKey) && event.key.toLowerCase() === 'a') {
     event.preventDefault();
+    // フィルタ適用後のエントリを取得
+    const filtered = getFilteredEntries();
     if (event.shiftKey && !event.ctrlKey) {
-      // すべてのフィルタ後データを選択
-      const keys = Object.keys(tableData);
-      for (let i = 0; i < keys.length; i++) {
-        selectedRows.add(keys[i]);
+      // フィルタ後の全データを選択（全ページ）
+      for (let i = 0; i < filtered.length; i++) {
+        selectedRows.add(filtered[i][0]);
       }
     } else if (event.ctrlKey && !event.shiftKey) {
-      // 表示中の行だけ選択
-      const checkboxes = document.querySelectorAll('#user-table-body .row-checkbox');
-      for (let i = 0; i < checkboxes.length; i++) {
-        const cb = checkboxes[i];
-        cb.checked = true;
-        selectedRows.add(cb.dataset.key);
+      // フィルタ後の現在ページの行だけ選択
+      const start = (currentPage - 1) * rowsPerPage;
+      const pageEntries = rowsPerPage
+        ? filtered.slice(start, start + rowsPerPage)
+        : filtered;
+      for (let i = 0; i < pageEntries.length; i++) {
+        selectedRows.add(pageEntries[i][0]);
       }
     }
     updateSelectedCount();
