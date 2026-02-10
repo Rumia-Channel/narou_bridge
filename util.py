@@ -119,6 +119,12 @@ def load_config():
     # 静的リソースのコピー (css, script, icon, default_cover)
     _copy_static_resources(data_path)
 
+    # サイトインデックスHTMLの再生成 (テンプレート更新を反映)
+    display_names = (
+        dict(config["display_name"]) if config.has_section("display_name") else {}
+    )
+    _regenerate_site_index_html(folder_path, display_names)
+
     print("Initialize successfully!")
 
     return (
@@ -165,6 +171,23 @@ def _copy_static_resources(data_path):
         if os.path.exists(cover_dst):
             os.remove(cover_dst)
         shutil.copy2(cover_src, cover_dst)
+
+
+def _regenerate_site_index_html(
+    folder_path: Dict[str, str], display_names: Dict[str, str]
+):
+    """各サイトフォルダの index.html をテンプレートから再生成する (HTMLのみ、index.jsonは変更しない)"""
+    template = _load_template("site_index")
+    for site_key, path in folder_path.items():
+        site_name = display_names.get(site_key, site_key)
+        html_path = os.path.join(path, "index.html")
+        try:
+            html_content = template.format(site_name=site_name)
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+            logging.info(f"Regenerated site index HTML: {html_path}")
+        except Exception as e:
+            logging.error(f"Failed to regenerate site index HTML for {site_key}: {e}")
 
 
 # --- ファイル生成関連 ---

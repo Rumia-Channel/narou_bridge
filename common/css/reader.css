@@ -44,6 +44,18 @@ body {
     --bg-color: #f2f2f2;
     --text-color: #444444;
     --link-color: #6699cc;
+    --border-color: #cccccc;
+  }
+
+  .author-group {
+    border: 1px solid var(--border-color);
+    border-radius: 0.5em;
+    overflow: hidden;
+  }
+
+  .cover-container {
+    border: 1px solid var(--border-color);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
 }
 

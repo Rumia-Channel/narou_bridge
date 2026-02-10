@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{site_name} Index</title>
-    <link rel="stylesheet" href="/css/index.css">
+    <link rel="stylesheet" href="/css/site_index_modern.css">
     <link rel="icon" href="/icon/favicon.ico">
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
@@ -12,104 +12,181 @@
     <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
 </head>
 <body>
-    <div><a href="../" class="header-link">戻る</a></div><br><br>
-    <div style='display: flex; justify-content: space-between;'><h1>{site_name} Index</h1><button id='reset-localstorage-button'>ローカルストレージリセット</button></div>
-    <div class="type-selector">
-        <label for="typeSelect">表示タイプ: </label>
-        <select id="typeSelect" onchange="filterByType()">
-            <option value="all">すべて</option>
-            <option value="novel">小説のみ</option>
-            <option value="comic">漫画のみ</option>
-        </select>
-    </div>
+    <!-- Header -->
+    <header class="app-header">
+        <a href="../" class="back-link">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            <span>戻る</span>
+        </a>
+        <h1>{site_name}</h1>
+    </header>
 
-    <div class="row-selector">
-        <label for="rowsPerPageSelect">1ページあたりの行数: </label>
-        <select id="rowsPerPageSelect" onchange="updateRowsPerPage()">
-            <option value="10">10</option>
-            <option value="20">20</option>
-            <option value="30">30</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-            <option value="150">150</option>
-            <option value="200">200</option>
-            <option value="0">すべて</option>
-        </select>
-    </div>
-
-    <div style="display: flex; justify-content: space-between;">
-        <div class="author-filter">
-            <label for="author-filter-dropdown">作者絞り込み:</label>
-            <select id="author-filter-dropdown" onchange="updateAuthorFilter(this.value)">
-                <option value="">全て表示</option>
-                </select>
-        </div>
-        <button id="reset-author-filter-button">作者絞り込みリセット</button>
-    </div>
-    <div style="display: flex; justify-content: space-between;">
-        <div class="hidden-author-filter">
-            <span id="hidden-author-container"></span>
-        </div>
-        <button id="reset-hidden-authors-button">非表示作者リセット</button>
-    </div>
-    <br>
-    <div class="selection-controls" style="margin-top: 1em;">
-        <span id="selected-count">選択された件数: 0</span>
-        <button id="copy-selected-button">選択項目のリンクをコピー</button>
-    </div>
-    <br>
-    <div>
-        <label>表示項目の選択</label>
-        <div class="column-selector">
-            <label><input type="checkbox" id="show-serialization" checked onclick="toggleColumn('serialization')"> 連載状況</label>
-            <label><input type="checkbox" id="show-title" checked onclick="toggleColumn('title')"> タイトル</label>
-            <label><input type="checkbox" id="show-author" checked onclick="toggleColumn('author')"> 作者名</label>
-            <label><input type="checkbox" id="show-type" checked onclick="toggleColumn('type')"> 形式</label>
-            <label><input type="checkbox" id="show-tags" checked onclick="toggleColumn('tags')"> タグ</label>
-            <label><input type="checkbox" id="show-create_date" checked onclick="toggleColumn('create_date')"> 掲載日時</label>
-            <label><input type="checkbox" id="show-update_date" checked onclick="toggleColumn('update_date')"> 更新日時</label>
-        </div>
-    </div>
-    <br>
-
-    <div class="tag-filter">
-        <div style="display: flex; justify-content: space-between;">
-            <div>
-                <div id="include-tags"></div>
+    <div class="container">
+        <!-- Quick Controls (常時表示) -->
+        <div class="card">
+            <div class="card-body">
+                <div class="filter-grid">
+                    <div class="filter-group">
+                        <label class="filter-label" for="typeSelect">表示タイプ</label>
+                        <select id="typeSelect" class="filter-select" onchange="filterByType()">
+                            <option value="all">すべて</option>
+                            <option value="novel">小説のみ</option>
+                            <option value="comic">漫画のみ</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label" for="rowsPerPageSelect">1ページあたりの行数</label>
+                        <select id="rowsPerPageSelect" class="filter-select" onchange="updateRowsPerPage()">
+                            <option value="10">10</option>
+                            <option value="20">20</option>
+                            <option value="30">30</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                            <option value="150">150</option>
+                            <option value="200">200</option>
+                            <option value="0">すべて</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label" for="author-filter-dropdown">作者絞り込み</label>
+                        <div class="filter-row">
+                            <select id="author-filter-dropdown" class="filter-select" onchange="updateAuthorFilter(this.value)">
+                                <option value="">全て表示</option>
+                            </select>
+                            <button id="reset-author-filter-button" class="btn btn-sm btn-outline">リセット</button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <button id="reset-include-tags-button">含むタグリセット</button>
         </div>
-        <div style="display: flex; justify-content: space-between;">
-            <div>
-                <div id="exclude-tags"></div>
+
+        <!-- Filter Toggle Button -->
+        <button class="filter-toggle-btn collapsed" id="filter-toggle" onclick="toggleFilterPanel()">
+            <span style="display: flex; align-items: center; gap: 0.5rem;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                </svg>
+                フィルター・設定
+            </span>
+            <span class="toggle-icon">▼</span>
+        </button>
+
+        <!-- Collapsible Filter Panel -->
+        <div class="filter-panel" id="filter-panel">
+            <!-- Hidden Authors -->
+            <div class="card">
+                <div class="card-body">
+                    <div class="filter-row" style="justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span class="filter-label" style="margin-bottom: 0;">非表示作者</span>
+                        <button id="reset-hidden-authors-button" class="btn btn-sm btn-outline">リセット</button>
+                    </div>
+                    <div class="hidden-author-container-wrapper">
+                        <span id="hidden-author-container"></span>
+                    </div>
+                </div>
             </div>
-            <button id="reset-exclude-tags-button">含まないタグリセット</button>
+
+            <!-- Column Visibility -->
+            <div class="card">
+                <div class="card-body">
+                    <span class="filter-label">表示項目の選択</span>
+                    <div class="column-selector">
+                        <label><input type="checkbox" id="show-serialization" checked onclick="toggleColumn('serialization')"> 連載状況</label>
+                        <label><input type="checkbox" id="show-title" checked onclick="toggleColumn('title')"> タイトル</label>
+                        <label><input type="checkbox" id="show-author" checked onclick="toggleColumn('author')"> 作者名</label>
+                        <label><input type="checkbox" id="show-type" checked onclick="toggleColumn('type')"> 形式</label>
+                        <label><input type="checkbox" id="show-tags" checked onclick="toggleColumn('tags')"> タグ</label>
+                        <label><input type="checkbox" id="show-create_date" checked onclick="toggleColumn('create_date')"> 掲載日時</label>
+                        <label><input type="checkbox" id="show-update_date" checked onclick="toggleColumn('update_date')"> 更新日時</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tag Filters -->
+            <div class="card">
+                <div class="card-body">
+                    <div class="tag-filter" id="tag-filter-container">
+                        <div id="include-tags"></div>
+                        <div id="exclude-tags"></div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
+                        <button id="reset-include-tags-button" class="btn btn-sm btn-outline">含むタグリセット</button>
+                        <button id="reset-exclude-tags-button" class="btn btn-sm btn-outline">含まないタグリセット</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Utility Buttons (常時表示) -->
+        <div class="card">
+            <div class="card-body">
+                <div class="filter-row" style="justify-content: space-between;">
+                    <div class="selection-controls">
+                        <span id="selected-count">選択された件数: 0</span>
+                        <button id="copy-selected-button" class="btn btn-sm btn-primary">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                            リンクコピー
+                        </button>
+                    </div>
+                    <button id="reset-localstorage-button" class="btn btn-sm btn-danger">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="1 4 1 10 7 10"/>
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                        </svg>
+                        LS リセット
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loading-overlay">
+            <div class="spinner"></div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="table-wrapper">
+            <table>
+                <thead id="table-head">
+                    <tr></tr>
+                </thead>
+                <tbody id="user-table-body"></tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination">
+            <button onclick="prevPage()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
+                    <polyline points="15 18 9 12 15 6"/>
+                </svg>
+                前へ
+            </button>
+            <span id="page-info">1 / 1</span>
+            <button onclick="nextPage()">
+                次へ
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
+                    <polyline points="9 18 15 12 9 6"/>
+                </svg>
+            </button>
         </div>
     </div>
 
-    <br>
-    <br>
-
-    <div id="loading-overlay">
-        <div class="spinner"></div>
-    </div>
-
-    <table>
-        <thead id="table-head">
-            <tr>
-                </tr>
-        </thead>
-        <tbody id="user-table-body">
-            </tbody>
-    </table>
-
-    <div class="pagination">
-        <button onclick="prevPage()">前へ</button>
-        <span id="page-info">1 / 1</span>
-        <button onclick="nextPage()">次へ</button>
-    </div>
-
+    <script src="/script/tag_filter.js"></script>
     <script src="/script/index.js"></script>
-    <link rel="stylesheet" href="/css/common.css">
+    <script>
+    function toggleFilterPanel() {{
+        var btn = document.getElementById('filter-toggle');
+        var panel = document.getElementById('filter-panel');
+        btn.classList.toggle('collapsed');
+        panel.classList.toggle('expanded');
+    }}
+    </script>
 </body>
 </html>
