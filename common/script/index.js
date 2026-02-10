@@ -60,22 +60,12 @@ if (typeof Set === 'undefined') {
   });
 }
 
-// WebKit compatibility: Promise polyfill check
-if (typeof Promise === 'undefined') {
-  console.warn('Promise is not supported in this browser. Some features may not work.');
-}
-
-// WebKit compatibility: fetch polyfill check
-if (typeof fetch === 'undefined') {
-  console.warn('fetch is not supported in this browser. XMLHttpRequest will be used instead.');
-}
-
-var basePath = window.location.pathname.replace(/\/[^/]*$/, '/');
+const basePath = window.location.pathname.replace(/\/[^/]*$/, '/');
 
 /* --------------------------------------------------
    グローバル変数・初期設定
 -------------------------------------------------- */
-var columns = [
+const columns = [
   'serialization',
   'title',
   'author',
@@ -84,44 +74,44 @@ var columns = [
   'create_date',
   'update_date'
 ];
-var tableData = {};
-var currentPage = 1;
-var rowsPerPage = 10;
-var hiddenCols = [];
-var filteredAuthors = [];
-var hiddenAuthors = [];
-var typeFilter = 'all';
-var includedTags = [];
-var excludedTags = [];
-var includeOperator = 'AND';
-var excludeOperator = 'AND';
-var selectedRows = new Set();
-var fixedWidthMapping = { serialization: 6, type: 3, create_date: 14, update_date: 14 };
-var variableWeightMapping = { title: 50, author: 20, tags: 30 };
-var sortInfo = { column: null, ascending: true };
-var isIncludeTagsCollapsed = false;
-var isExcludeTagsCollapsed = false;
-var isHiddenAuthorsCollapsed = false;
+let tableData = {};
+let currentPage = 1;
+let rowsPerPage = 10;
+let hiddenCols = [];
+let filteredAuthors = [];
+let hiddenAuthors = [];
+let typeFilter = 'all';
+let includedTags = [];
+let excludedTags = [];
+let includeOperator = 'AND';
+let excludeOperator = 'AND';
+const selectedRows = new Set();
+const fixedWidthMapping = { serialization: 6, type: 3, create_date: 14, update_date: 14 };
+const variableWeightMapping = { title: 50, author: 20, tags: 30 };
+let sortInfo = { column: null, ascending: true };
+let isIncludeTagsCollapsed = false;
+let isExcludeTagsCollapsed = false;
+let isHiddenAuthorsCollapsed = false;
 
 /* --------------------------------------------------
    データ取得（ETagによるキャッシュ判定を導入）
 -------------------------------------------------- */
 async function fetchData() {
-  var overlay = document.getElementById('loading-overlay');
+  const overlay = document.getElementById('loading-overlay');
   overlay.style.display = 'flex';
 
   // 以前に保存したETagを取得（初回はnullになります）
-  var etagKey = 'indexJsonEtag_' + basePath;
-  var savedEtag = localStorage.getItem(etagKey);
+  const etagKey = 'indexJsonEtag_' + basePath;
+  const savedEtag = localStorage.getItem(etagKey);
 
   try {
-    var response;
-    var newEtag = null;
+    let response;
+    let newEtag = null;
 
     if (savedEtag) {
       // 1) サーバーにHEADリクエストを送り、最新のETagだけを取得する
       try {
-        var headResp = await fetch(basePath + 'index.json', {
+        const headResp = await fetch(basePath + 'index.json', {
           method: 'HEAD'
         });
         if (!headResp.ok) {
@@ -186,7 +176,7 @@ async function fetchData() {
    ローカルストレージ（設定の保存・読込）
 -------------------------------------------------- */
 function loadSettings() {
-  var s = JSON.parse(localStorage.getItem('tableSettings')) || {};
+  const s = JSON.parse(localStorage.getItem('tableSettings')) || {};
   rowsPerPage = typeof s.rowsPerPage === 'number' ? s.rowsPerPage : 10;
   hiddenCols = s.hiddenCols || [];
   currentPage = s.currentPage || 1;
@@ -204,7 +194,7 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  var s = {
+  const s = {
     rowsPerPage: rowsPerPage,
     hiddenCols: hiddenCols,
     currentPage: currentPage,
@@ -250,27 +240,27 @@ function applySettingsToUI() {
    作者関連
 -------------------------------------------------- */
 function updateAuthorDropdownOptions() {
-  var dd = document.getElementById('author-filter-dropdown');
+  const dd = document.getElementById('author-filter-dropdown');
   if (!dd) return;
   while (dd.options.length > 1) dd.remove(1);
-  var map = {};
+  const map = {};
 
   // WebKit compatibility: avoid Object.values
-  var keys = Object.keys(tableData);
-  for (var i = 0; i < keys.length; i++) {
-    var it = tableData[keys[i]];
-    var id = it.author_id || it.author;
-    var time = new Date(it.update_date).getTime();
+  const keys = Object.keys(tableData);
+  for (let i = 0; i < keys.length; i++) {
+    const it = tableData[keys[i]];
+    const id = it.author_id || it.author;
+    const time = new Date(it.update_date).getTime();
     if (!map[id] || time > map[id].time) map[id] = { name: it.author, time: time };
   }
 
-  var sortedIds = Object.keys(map).sort(function (a, b) {
-    return map[a].name.localeCompare(map[b].name);
-  });
+  const sortedIds = Object.keys(map).sort((a, b) =>
+    map[a].name.localeCompare(map[b].name)
+  );
 
-  for (var i = 0; i < sortedIds.length; i++) {
-    var id = sortedIds[i];
-    var o = document.createElement('option');
+  for (let i = 0; i < sortedIds.length; i++) {
+    const id = sortedIds[i];
+    const o = document.createElement('option');
     o.value = id;
     o.textContent = map[id].name;
     dd.appendChild(o);
@@ -278,7 +268,7 @@ function updateAuthorDropdownOptions() {
 }
 
 function updateAuthorDropdownValue() {
-  var dd = document.getElementById('author-filter-dropdown');
+  const dd = document.getElementById('author-filter-dropdown');
   if (dd) dd.value = filteredAuthors[0] || '';
 }
 
@@ -402,6 +392,7 @@ function buildTagSection(kind, tagArr, collapsed, operator, setOp, setTags) {
   if (collapsed) return;
 
   const sel = document.createElement('select');
+  sel.className = 'tag-filter-op-select';
   ['AND', 'OR'].forEach(op => {
     const o = document.createElement('option');
     o.value = o.textContent = op;
@@ -523,19 +514,19 @@ function updateAuthorFilter(id) {
 }
 
 function renderTable() {
-  var tbody = document.getElementById('user-table-body');
+  const tbody = document.getElementById('user-table-body');
   tbody.innerHTML = '';
 
   // 1) フィルター適用
-  var entries = getFilteredEntries();
+  const entries = getFilteredEntries();
 
   // 2) ソート
   if (sortInfo.column) {
-    entries.sort(function (a, b) {
-      var entryA = a[1];
-      var entryB = b[1];
-      var A = entryA[sortInfo.column] || '';
-      var B = entryB[sortInfo.column] || '';
+    entries.sort((a, b) => {
+      const entryA = a[1];
+      const entryB = b[1];
+      let A = entryA[sortInfo.column] || '';
+      let B = entryB[sortInfo.column] || '';
       if (!isNaN(A) && !isNaN(B)) {
         A = parseFloat(A);
         B = parseFloat(B);
@@ -545,8 +536,8 @@ function renderTable() {
   }
 
   // 3) 総ページ数計算・currentPage を clamp
-  var totalItems = entries.length;
-  var totalPages = rowsPerPage
+  const totalItems = entries.length;
+  const totalPages = rowsPerPage
     ? Math.ceil(totalItems / rowsPerPage)
     : 1;
   currentPage = Math.min(Math.max(1, currentPage), totalPages);
@@ -555,26 +546,26 @@ function renderTable() {
   document.getElementById('page-info').textContent = currentPage + ' / ' + totalPages;
 
   // 5) ページネーション（スライス）
-  var start = (currentPage - 1) * rowsPerPage;
-  var pageEntries = rowsPerPage
+  const start = (currentPage - 1) * rowsPerPage;
+  const pageEntries = rowsPerPage
     ? entries.slice(start, start + rowsPerPage)
     : entries;
 
   // 6) 行レンダリング
-  for (var i = 0; i < pageEntries.length; i++) {
-    var key = pageEntries[i][0];
-    var it = pageEntries[i][1];
-    var tr = document.createElement('tr');
+  for (let i = 0; i < pageEntries.length; i++) {
+    const key = pageEntries[i][0];
+    const it = pageEntries[i][1];
+    const tr = document.createElement('tr');
 
     // チェックボックス
-    var tdChk = document.createElement('td');
+    const tdChk = document.createElement('td');
     tdChk.style.width = '3ch';
-    var cb = document.createElement('input');
+    const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.classList.add('row-checkbox');
     cb.dataset.key = key;
     cb.checked = selectedRows.has(key);
-    cb.addEventListener('change', (function (k) {
+    cb.addEventListener('change', ((k) => {
       return function () {
         this.checked ? selectedRows.add(k) : selectedRows.delete(k);
         updateSelectedCount();
@@ -584,17 +575,17 @@ function renderTable() {
     tr.appendChild(tdChk);
 
     // セル描画のための幅計算
-    var fixedTotal = fixedWidthMapping.serialization
+    const fixedTotal = fixedWidthMapping.serialization
       + fixedWidthMapping.type
       + fixedWidthMapping.create_date
       + fixedWidthMapping.update_date;
-    var varTotal = variableWeightMapping.title
+    const varTotal = variableWeightMapping.title
       + variableWeightMapping.author
       + variableWeightMapping.tags;
 
-    for (var j = 0; j < columns.length; j++) {
-      var c = columns[j];
-      var td = document.createElement('td');
+    for (let j = 0; j < columns.length; j++) {
+      const c = columns[j];
+      const td = document.createElement('td');
       if (hiddenCols.includes(c)) {
         td.classList.add('hidden-column');
       } else {
@@ -610,7 +601,7 @@ function renderTable() {
             td.textContent = it.serialization || '';
             break;
           case 'title': {
-            var a = document.createElement('a');
+            const a = document.createElement('a');
             a.href = './' + key + '/';
             a.textContent = it.title;
             td.appendChild(a);
@@ -634,17 +625,14 @@ function renderTable() {
             break;
           case 'tags':
             if (Array.isArray(it.all_tags)) {
-              for (var k = 0; k < it.all_tags.length; k++) {
-                var t = it.all_tags[k];
-                var s = document.createElement('span');
+              for (let k = 0; k < it.all_tags.length; k++) {
+                const t = it.all_tags[k];
+                const s = document.createElement('span');
                 s.textContent = t;
                 s.classList.add('tag-item');
                 s.style.cursor = 'pointer';
-                // Use IIFE to capture the tag value properly
-                s.addEventListener('click', (function (tagValue) {
-                  return function () {
-                    tagFilterClick(tagValue);
-                  };
+                s.addEventListener('click', ((tagValue) => {
+                  return () => tagFilterClick(tagValue);
                 })(t));
                 td.appendChild(s);
               }
@@ -674,12 +662,6 @@ function renderTable() {
 function updatePagination() {
   const pageInfo = document.getElementById('page-info');
   const totalItems = getFilteredEntries().length;
-  console.log(
-    '≪DEBUG≫ includeOp=', includeOperator,
-    'includedTags=', includedTags,
-    'filteredCount=', totalItems,
-    'rowsPerPage=', rowsPerPage
-  );
   const totalPages = rowsPerPage
     ? Math.ceil(totalItems / rowsPerPage)
     : 1;
@@ -734,13 +716,13 @@ function updateSelectedCount() {
 }
 
 function showCopyPopup(titles) {
-  var overlay = document.createElement('div');
+  const overlay = document.createElement('div');
   overlay.className = 'copy-popup-overlay';
 
-  var box = document.createElement('div');
+  const box = document.createElement('div');
   box.className = 'copy-popup-box';
 
-  var content = '<strong>リンク先をコピーしました</strong><br><br>' +
+  const content = '<strong>リンク先をコピーしました</strong><br><br>' +
     titles.join('<br>') +
     '<br><br><button id="close-copy-popup" class="copy-popup-close">閉じる</button>';
   box.innerHTML = content;
@@ -748,17 +730,17 @@ function showCopyPopup(titles) {
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
-  document.getElementById('close-copy-popup').addEventListener('click', function () {
+  document.getElementById('close-copy-popup').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
 }
 
 function copySelected() {
-  var links = [];
-  var titles = [];
+  const links = [];
+  const titles = [];
 
-  selectedRows.forEach(function (key) {
-    var item = tableData[key];
+  selectedRows.forEach((key) => {
+    const item = tableData[key];
     if (item) {
       links.push(window.location.origin + basePath + key + '/');
       titles.push(item.title);
@@ -768,11 +750,11 @@ function copySelected() {
   // WebKit compatibility: check if clipboard API is available
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(links.join('\n'))
-      .then(function () { showCopyPopup(titles); })
-      .catch(function (err) { alert('コピーに失敗しました: ' + err); });
+      .then(() => showCopyPopup(titles))
+      .catch((err) => alert('コピーに失敗しました: ' + err));
   } else {
     // Fallback for older browsers
-    var textarea = document.createElement('textarea');
+    const textarea = document.createElement('textarea');
     textarea.value = links.join('\n');
     document.body.appendChild(textarea);
     textarea.select();
@@ -787,15 +769,51 @@ function copySelected() {
 }
 
 /* --------------------------------------------------
+   横幅セレクター
+-------------------------------------------------- */
+function initWidthSelector() {
+  const header = document.querySelector('.app-header');
+  if (!header || document.getElementById('index-width-select')) return;
+
+  const select = document.createElement('select');
+  select.id = 'index-width-select';
+  select.className = 'header-width-select';
+  ['55%', '65%', '75%', '85%', '95%', '100%'].forEach((v) => {
+    const o = document.createElement('option');
+    o.value = o.textContent = v;
+    select.appendChild(o);
+  });
+
+  const saved = localStorage.getItem('siteIndexWidth') || '100%';
+  select.value = saved;
+  applyIndexWidth(saved);
+
+  select.addEventListener('change', () => {
+    const w = select.value;
+    localStorage.setItem('siteIndexWidth', w);
+    applyIndexWidth(w);
+  });
+
+  header.appendChild(select);
+}
+
+function applyIndexWidth(w) {
+  document.documentElement.style.setProperty('--index-width', w);
+}
+
+/* --------------------------------------------------
    初期イベント登録
 -------------------------------------------------- */
 document.addEventListener('DOMContentLoaded', () => {
+  initWidthSelector();
+
   document.getElementById('copy-selected-button').addEventListener('click', copySelected);
 
   document.getElementById('reset-localstorage-button').addEventListener('click', () => {
     if (confirm('ローカルストレージをリセットしますか？')) {
       // このページで使っている設定 only
       localStorage.removeItem('tableSettings');
+      localStorage.removeItem('siteIndexWidth');
       location.reload();
     }
   });
@@ -841,7 +859,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* --------------------------------------------------
    キーボードショートカット
 -------------------------------------------------- */
-document.addEventListener('keydown', function (event) {
+document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     event.preventDefault();
     selectedRows.clear();
@@ -852,15 +870,15 @@ document.addEventListener('keydown', function (event) {
     event.preventDefault();
     if (event.shiftKey && !event.ctrlKey) {
       // すべてのフィルタ後データを選択
-      var keys = Object.keys(tableData);
-      for (var i = 0; i < keys.length; i++) {
+      const keys = Object.keys(tableData);
+      for (let i = 0; i < keys.length; i++) {
         selectedRows.add(keys[i]);
       }
     } else if (event.ctrlKey && !event.shiftKey) {
       // 表示中の行だけ選択
-      var checkboxes = document.querySelectorAll('#user-table-body .row-checkbox');
-      for (var i = 0; i < checkboxes.length; i++) {
-        var cb = checkboxes[i];
+      const checkboxes = document.querySelectorAll('#user-table-body .row-checkbox');
+      for (let i = 0; i < checkboxes.length; i++) {
+        const cb = checkboxes[i];
         cb.checked = true;
         selectedRows.add(cb.dataset.key);
       }
