@@ -243,7 +243,11 @@ body {
   background: rgba(255, 255, 255, 0.95);
   border: none;
   font-size: 1rem;
-  color: var(--text-primary);
+  color: #1e293b;
+}
+
+.url-input-group .form-input::placeholder {
+  color: #94a3b8;
 }
 
 .url-input-group .form-input:focus {

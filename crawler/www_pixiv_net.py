@@ -816,6 +816,13 @@ class PixivCrawler:
                 if os.path.exists(dup):
                     shutil.rmtree(dup)
 
+        # エピソードを createDate 昇順でソートしてキーを振り直す
+        sorted_eps = sorted(
+            episodes_data.values(),
+            key=lambda ep: ep.get("createDate") or "",
+        )
+        episodes_data = {i: ep for i, ep in enumerate(sorted_eps, 1)}
+
         novel_data = {
             "version": VERSION,
             "get_date": str(datetime.now(JST)),
@@ -1225,6 +1232,13 @@ class PixivCrawler:
                 dup = os.path.join(folder_path, f"a{work_id}")
                 if os.path.exists(dup):
                     shutil.rmtree(dup)
+
+        # エピソードを createDate 昇順でソートしてキーを振り直す
+        sorted_eps = sorted(
+            episodes_data.values(),
+            key=lambda ep: ep.get("createDate") or "",
+        )
+        episodes_data = {i: ep for i, ep in enumerate(sorted_eps, 1)}
 
         novel_data = {
             "version": VERSION,
