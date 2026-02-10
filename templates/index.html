@@ -5,55 +5,200 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>const POST_URL = "{post_url}";</script>
 <script src="script/top_page.js"></script>
+<script src="script/index_modern.js"></script>
 <link rel="stylesheet" href="/css/common.css">
+<link rel="stylesheet" href="/css/index_modern.css">
 <link rel="icon" href="/icon/favicon.ico">
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
 <link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
 <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
-<title>Index</title>
+<title>Narou Bridge</title>
 </head>
 <body>
-<input type="text" id="input1" placeholder="登録URL">
-<button onclick="debouncedSubmit()">送信</button><br><br><br>
+  <!-- Header -->
+  <header class="app-header">
+    <h1>Narou Bridge</h1>
+  </header>
 
-<button onclick="submitUpdate('all')">全て 更新</button>
-<button onclick="submitConvert('all')">全て 変換</button>
-<button onclick="submitReDownload('all')">全て 再ダウンロード</button>
-<br>
-{site_buttons}
+  <div class="container">
+    <!-- URL Registration Section -->
+    <div class="card" style="margin-top: 1rem;">
+      <div class="card-body" style="padding: 0;">
+        <div class="url-section" style="margin: 0; border-radius: var(--radius-lg);">
+          <div class="url-input-group">
+            <input type="text" id="input1" class="form-input" placeholder="小説のURLを入力..." aria-label="登録URL">
+            <button onclick="debouncedSubmit()" class="btn btn-lg" style="background: white; color: var(--accent-primary); white-space: nowrap;">
+              <span>登録</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-<br><br>
-<label for="pdfFile">PDFファイル選択:</label>
-<input type="file" id="pdfFile" accept="application/pdf">
-<br>
-<label for="authorId">author_id:</label>
-<input type="text" id="authorId" placeholder="author_id">
-<br>
-<label for="authorUrl">author_url:</label>
-<input type="text" id="authorUrl" placeholder="author_url">
-<br>
-<label for="chapter">chapter:</label>
-<input type="text" id="chapter" placeholder="exa:1-3:ああ,4-5:いい">
-<br>
-<label for="novelType">作品タイプ:</label>
-<select id="novelType">
-<option value="1">完結済</option>
-<option value="0">連載中</option>
-<option value="2">短編</option>
-</select>
-<br>
-<button onclick="submitPdfData()">送信</button>
+    <!-- Bulk Operations Card -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 7V4h3M4 17v3h3M20 7V4h-3M20 17v3h-3M9 9h6v6H9z"/>
+        </svg>
+        <h2 class="card-title">一括操作</h2>
+      </div>
+      <div class="card-body">
+        <div class="btn-group">
+          <button onclick="submitUpdate('all')" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+            <span>全て更新</span>
+          </button>
+          <button onclick="submitConvert('all')" class="btn btn-success">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <path d="M12 18v-6M9 15l3-3 3 3"/>
+            </svg>
+            <span>全て変換</span>
+          </button>
+          <button onclick="submitReDownload('all')" class="btn btn-danger">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span>全て再DL</span>
+          </button>
+        </div>
+      </div>
+    </div>
 
-<br><br>
-<label for="zipFile">ZIPファイル選択:</label>
-<input type="file" id="zipFile" accept="application/zip">
-<br>
-<br>
-<button onclick="submitZipData()">送信</button>
+    <!-- Site Operations Card -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+        <h2 class="card-title">サイト別操作</h2>
+      </div>
+      <div class="card-body">
+        {site_buttons}
+      </div>
+    </div>
 
-<br><br><br>
-{site_links}
-<br><br><br><br><a href="#" onclick="redirectWithParams(/reader/)">簡易リーダーへ移動</a>
+    <!-- File Conversion Section (Collapsible) -->
+    <div class="collapsible-section">
+      <button class="collapsible-header" onclick="toggleCollapsible(this)">
+        <span style="display: flex; align-items: center; gap: 0.5rem;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <line x1="9" y1="15" x2="15" y2="15"/>
+          </svg>
+          ファイル変換
+        </span>
+      </button>
+      <div class="collapsible-content">
+        <!-- PDF Conversion -->
+        <div style="margin-bottom: 1.5rem;">
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--text-secondary);">PDF変換</h3>
+          <div class="form-group">
+            <div class="form-file-wrapper">
+              <input type="file" id="pdfFile" accept="application/pdf" onchange="updateFileLabel(this, 'pdf-label')">
+              <label for="pdfFile" class="form-file-label" id="pdf-label">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span>PDFファイルを選択</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="authorId">作者ID</label>
+            <input type="text" id="authorId" class="form-input" placeholder="author_id">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="authorUrl">作者URL</label>
+            <input type="text" id="authorUrl" class="form-input" placeholder="author_url">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="chapter">章構成</label>
+            <input type="text" id="chapter" class="form-input" placeholder="例: 1-3:ああ,4-5:いい">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="novelType">作品タイプ</label>
+            <select id="novelType" class="form-select">
+              <option value="1">完結済</option>
+              <option value="0">連載中</option>
+              <option value="2">短編</option>
+            </select>
+          </div>
+          <button onclick="submitPdfData()" class="btn btn-primary btn-block">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span>PDFを変換</span>
+          </button>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
+
+        <!-- ZIP Conversion -->
+        <div>
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--text-secondary);">ZIP展開</h3>
+          <div class="form-group">
+            <div class="form-file-wrapper">
+              <input type="file" id="zipFile" accept="application/zip" onchange="updateFileLabel(this, 'zip-label')">
+              <label for="zipFile" class="form-file-label" id="zip-label">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span>ZIPファイルを選択</span>
+              </label>
+            </div>
+          </div>
+          <button onclick="submitZipData()" class="btn btn-secondary btn-block">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span>ZIPを展開</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Site Links Card -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+        <h2 class="card-title">サイト一覧</h2>
+      </div>
+      <div class="card-body">
+        <div class="site-grid">
+          {site_links}
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="nav-links">
+      <a href="#" onclick="redirectWithParams('/reader/')" class="nav-link">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+          <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+        </svg>
+        <span>簡易リーダー</span>
+      </a>
+    </nav>
+  </div>
 </body>
 </html>
