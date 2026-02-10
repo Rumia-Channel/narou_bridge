@@ -1,14 +1,17 @@
 // site_index_settings.js — グローバル変数・ローカルストレージ設定
 
-// var を使用: Cloudflare等のスクリプト注入やキャッシュにより
-// 同一スコープで再評価された場合の重複宣言エラーを防止する
+// トップレベル変数は全て var を使用:
+// Cloudflare Access / Tunnel 等のスクリプト注入・キャッシュにより
+// 同一スコープで再評価された場合の重複宣言エラー (SyntaxError:
+// Identifier '...' has already been declared) を防止する。
+// const/let はトップレベルで再宣言不可のため var に統一。
 var basePath = window.location.pathname.replace(/\/[^/]*$/, '/');
 var siteSettingsKey = 'tableSettings_' + basePath;
 
 /* --------------------------------------------------
    グローバル変数・初期設定
 -------------------------------------------------- */
-const columns = [
+var columns = [
   'serialization',
   'title',
   'author',
@@ -17,39 +20,39 @@ const columns = [
   'create_date',
   'update_date'
 ];
-let tableData = {};
-let currentPage = 1;
-let rowsPerPage = 10;
-let hiddenCols = [];
-let filteredAuthors = [];
-let hiddenAuthors = [];
-let typeFilter = 'all';
+var tableData = {};
+var currentPage = 1;
+var rowsPerPage = 10;
+var hiddenCols = [];
+var filteredAuthors = [];
+var hiddenAuthors = [];
+var typeFilter = 'all';
 // サイト別フィルター
-let includedTags = [];
-let excludedTags = [];
-let includeOperator = 'AND';
-let excludeOperator = 'AND';
+var includedTags = [];
+var excludedTags = [];
+var includeOperator = 'AND';
+var excludeOperator = 'AND';
 // グローバルフィルター（全サイト共通）
-let globalIncludedTags = [];
-let globalExcludedTags = [];
-let globalIncludeOperator = 'AND';
-let globalExcludeOperator = 'AND';
-let globalHiddenAuthors = [];
+var globalIncludedTags = [];
+var globalExcludedTags = [];
+var globalIncludeOperator = 'AND';
+var globalExcludeOperator = 'AND';
+var globalHiddenAuthors = [];
 // フィルターモード: 'both'（両方）, 'global'（グローバルのみ）, 'site'（サイト別のみ）
-let filterMode = 'both';
-const selectedRows = new Set();
-const fixedWidthMapping = { serialization: 10, type: 8, create_date: 14, update_date: 14 };
-const variableWeightMapping = { title: 50, author: 20, tags: 30 };
-let sortInfo = { column: null, ascending: true };
-let isIncludeTagsCollapsed = false;
-let isExcludeTagsCollapsed = false;
-let isHiddenAuthorsCollapsed = false;
-let isColumnSelectorCollapsed = false;
-let isGlobalIncludeTagsCollapsed = false;
-let isGlobalExcludeTagsCollapsed = false;
-let isGlobalHiddenAuthorsCollapsed = false;
-let isGlobalSectionCollapsed = false;
-let isSiteSectionCollapsed = false;
+var filterMode = 'both';
+var selectedRows = new Set();
+var fixedWidthMapping = { serialization: 10, type: 8, create_date: 14, update_date: 14 };
+var variableWeightMapping = { title: 50, author: 20, tags: 30 };
+var sortInfo = { column: null, ascending: true };
+var isIncludeTagsCollapsed = false;
+var isExcludeTagsCollapsed = false;
+var isHiddenAuthorsCollapsed = false;
+var isColumnSelectorCollapsed = false;
+var isGlobalIncludeTagsCollapsed = false;
+var isGlobalExcludeTagsCollapsed = false;
+var isGlobalHiddenAuthorsCollapsed = false;
+var isGlobalSectionCollapsed = false;
+var isSiteSectionCollapsed = false;
 
 /* --------------------------------------------------
    ローカルストレージ（設定の保存・読込）
