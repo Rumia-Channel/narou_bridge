@@ -174,33 +174,40 @@ def create_index(data_path, config, post_path=""):
     """ルート用index.htmlを作成"""
     post_url = "/api/" if post_path == "api" else "#"
 
-    # ボタン生成ロジック
+    # サイト別ボタン生成（新デザイン対応）
     buttons_html = []
-    links_html = []
-
     for key in config["crawler"]:
-        # リンク
-        links_html.append(
-            f'<a href="#" onclick="redirectWithParams(\'{key}/\')">{key}</a><br>'
-        )
-
-        # ボタン
         if key == "narou":
-            buttons_html.append(f"<button disabled>{key} 更新</button>")
-            buttons_html.append(
-                f"<button onclick=\"submitConvert('{key}')\">{key} 変換</button>"
-            )
-            buttons_html.append(f"<button disabled>{key} 再ダウンロード</button><br>")
+            buttons_html.append(f"""
+            <div style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-md);">
+              <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--text-primary);">{key}</h3>
+              <div class="btn-group">
+                <button disabled class="btn btn-sm btn-secondary">更新</button>
+                <button onclick="submitConvert('{key}')" class="btn btn-sm btn-success">変換</button>
+                <button disabled class="btn btn-sm btn-secondary">再DL</button>
+              </div>
+            </div>""")
         else:
-            buttons_html.append(
-                f"<button onclick=\"submitUpdate('{key}')\">{key} 更新</button>"
-            )
-            buttons_html.append(
-                f"<button onclick=\"submitConvert('{key}')\">{key} 変換</button>"
-            )
-            buttons_html.append(
-                f"<button onclick=\"submitReDownload('{key}')\">{key} 再ダウンロード</button><br>"
-            )
+            buttons_html.append(f"""
+            <div style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-md);">
+              <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--text-primary);">{key}</h3>
+              <div class="btn-group">
+                <button onclick="submitUpdate('{key}')" class="btn btn-sm btn-primary">更新</button>
+                <button onclick="submitConvert('{key}')" class="btn btn-sm btn-success">変換</button>
+                <button onclick="submitReDownload('{key}')" class="btn btn-sm btn-danger">再DL</button>
+              </div>
+            </div>""")
+
+    # サイトリンク生成（新デザイン対応 - カード形式）
+    links_html = []
+    for key in config["crawler"]:
+        links_html.append(f"""
+          <a href="#" onclick="redirectWithParams('{key}/')" class="site-card">
+            <span class="site-name">{key}</span>
+            <svg class="site-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </a>""")
 
     template = _load_template("index")
     html_content = template.format(
