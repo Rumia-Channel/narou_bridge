@@ -313,9 +313,10 @@ def _execute_site_action(
             k for k in site_dic.keys() if k != "narou"
         ]  # narouは一括処理対象外とする仕様
     elif param in site_dic:
-        if (
-            param == "narou" and action_name != "convert"
-        ):  # narouはconvert以外許可しない
+        if param == "narou" and action_name not in (
+            "convert",
+            "repair",
+        ):  # narouはconvert, repair以外許可しない
             logging.debug(f"Skipping site: {param} for {action_name}")
             return 400
         target_sites = [param]
@@ -353,6 +354,8 @@ def _execute_site_action(
             module.re_download(folder_path[site], key_data, data_path, host_name)
         elif action_name == "convert":
             module.convert(folder_path[site], key_data, data_path, host_name)
+        elif action_name == "repair":
+            module.repair(folder_path[site], key_data, data_path, host_name)
         elif action_name == "download":
             # downloadだけ引数が異なる (param=URL)
             module.download(param, folder_path[site], key_data, data_path, host_name)
@@ -449,6 +452,31 @@ def download(
     return _execute_site_action(
         "download",
         add_param,
+        site_dic,
+        login_dic,
+        folder_path,
+        data_path,
+        cookie_path,
+        key_data,
+        interval,
+        host_name,
+    )
+
+
+def repair(
+    repair_param,
+    site_dic,
+    login_dic,
+    folder_path,
+    data_path,
+    cookie_path,
+    key_data,
+    interval,
+    host_name,
+):
+    return _execute_site_action(
+        "repair",
+        repair_param,
         site_dic,
         login_dic,
         folder_path,
