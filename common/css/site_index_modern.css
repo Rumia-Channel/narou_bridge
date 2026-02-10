@@ -629,6 +629,22 @@ body {
   margin-top: 0.25rem;
 }
 
+.tag-popup-author-link {
+  display: block;
+  width: 100%;
+  text-align: center;
+  margin-bottom: 0.75rem;
+  background: rgba(59, 130, 246, 0.08) !important;
+  color: var(--accent-primary) !important;
+  border-color: rgba(59, 130, 246, 0.3) !important;
+  text-decoration: none;
+}
+
+.tag-popup-author-link:hover {
+  background: rgba(59, 130, 246, 0.18) !important;
+  text-decoration: none;
+}
+
 /* --- Modern Table --- */
 .table-wrapper {
   overflow-x: auto;
