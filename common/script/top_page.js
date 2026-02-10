@@ -67,56 +67,86 @@ function getUrlParameter(name) {
 
 // 更新用
 function submitUpdate(key) {
-  var requestId = generateRequestId();
-  var url = POST_URL + "?update=" + encodeURIComponent(key);
+  var label = key === 'all' ? '全サイト' : key;
+  showModal({
+    title: '更新',
+    message: '「' + label + '」の更新を実行しますか？',
+    confirmText: '更新を実行',
+    confirmStyle: 'primary'
+  }).then(function (ok) {
+    if (!ok) return;
 
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", url, true);
-  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState === 4) {
-      var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showToast(res.message || "更新成功", { type: 'success' });
-      else showToast(res.message || "更新失敗", { type: 'error' });
-    }
-  };
-  xhr.send("update=" + encodeURIComponent(key) + "&request_id=" + requestId);
+    var requestId = generateRequestId();
+    var url = POST_URL + "?update=" + encodeURIComponent(key);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", url, true);
+    xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState === 4) {
+        var res = JSON.parse(xhr.responseText);
+        if (xhr.status === 200) showToast(res.message || "更新成功", { type: 'success' });
+        else showToast(res.message || "更新失敗", { type: 'error' });
+      }
+    };
+    xhr.send("update=" + encodeURIComponent(key) + "&request_id=" + requestId);
+  });
 }
 
 // 変換用
 function submitConvert(key) {
-  var requestId = generateRequestId();
-  var url = POST_URL + "?convert=" + encodeURIComponent(key);
+  var label = key === 'all' ? '全サイト' : key;
+  showModal({
+    title: '変換',
+    message: '「' + label + '」の変換を実行しますか？',
+    confirmText: '変換を実行',
+    confirmStyle: 'primary'
+  }).then(function (ok) {
+    if (!ok) return;
 
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", url, true);
-  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState === 4) {
-      var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showToast(res.message || "変換成功", { type: 'success' });
-      else showToast(res.message || "変換失敗", { type: 'error' });
-    }
-  };
-  xhr.send("convert=" + encodeURIComponent(key) + "&request_id=" + requestId);
+    var requestId = generateRequestId();
+    var url = POST_URL + "?convert=" + encodeURIComponent(key);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", url, true);
+    xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState === 4) {
+        var res = JSON.parse(xhr.responseText);
+        if (xhr.status === 200) showToast(res.message || "変換成功", { type: 'success' });
+        else showToast(res.message || "変換失敗", { type: 'error' });
+      }
+    };
+    xhr.send("convert=" + encodeURIComponent(key) + "&request_id=" + requestId);
+  });
 }
 
 // 再ダウンロード用
 function submitReDownload(key) {
-  var requestId = generateRequestId();
-  var url = POST_URL + "?re_download=" + encodeURIComponent(key);
+  var label = key === 'all' ? '全サイト' : key;
+  showModal({
+    title: '再ダウンロード',
+    message: '「' + label + '」の再ダウンロードを実行しますか？\nすべてのデータを再取得します。',
+    confirmText: '再DLを実行',
+    confirmStyle: 'danger'
+  }).then(function (ok) {
+    if (!ok) return;
 
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", url, true);
-  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState === 4) {
-      var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showToast(res.message || "再ダウンロード成功", { type: 'success' });
-      else showToast(res.message || "再ダウンロード失敗", { type: 'error' });
-    }
-  };
-  xhr.send("re_download=" + encodeURIComponent(key) + "&request_id=" + requestId);
+    var requestId = generateRequestId();
+    var url = POST_URL + "?re_download=" + encodeURIComponent(key);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", url, true);
+    xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState === 4) {
+        var res = JSON.parse(xhr.responseText);
+        if (xhr.status === 200) showToast(res.message || "再ダウンロード成功", { type: 'success' });
+        else showToast(res.message || "再ダウンロード失敗", { type: 'error' });
+      }
+    };
+    xhr.send("re_download=" + encodeURIComponent(key) + "&request_id=" + requestId);
+  });
 }
 
 // データ修復用
@@ -163,34 +193,42 @@ function submitPdfData() {
     return;
   }
 
-  var formData = new FormData();
-  formData.append("pdf", pdfFile);
-  formData.append("author_id", authorId);
-  formData.append("author_url", authorUrl);
-  formData.append("novel_type", novelType);
-  formData.append("chapter", chapter);
-  formData.append("request_id", generateRequestId());
+  showModal({
+    title: 'PDF変換',
+    message: '「' + pdfFile.name + '」を変換しますか？',
+    confirmText: '変換を実行',
+    confirmStyle: 'primary'
+  }).then(function (ok) {
+    if (!ok) return;
 
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", POST_URL, true);
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState === 4) {
-      var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showToast(res.message || "PDF送信成功", { type: 'success' });
-      else showToast(res.message || "PDF送信失敗", { type: 'error' });
-    }
-  };
-  xhr.send(formData);
+    var formData = new FormData();
+    formData.append("pdf", pdfFile);
+    formData.append("author_id", authorId);
+    formData.append("author_url", authorUrl);
+    formData.append("novel_type", novelType);
+    formData.append("chapter", chapter);
+    formData.append("request_id", generateRequestId());
 
-  // 入力フィールドをクリア
-  document.getElementById("pdfFile").value = "";
-  document.getElementById("authorId").value = "";
-  document.getElementById("authorUrl").value = "";
-  document.getElementById("novelType").value = "novel";
-  document.getElementById("chapter").value = "";
-  // フォーカスを戻す
-  document.getElementById("pdfFile").focus();
-  
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", POST_URL, true);
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState === 4) {
+        var res = JSON.parse(xhr.responseText);
+        if (xhr.status === 200) showToast(res.message || "PDF送信成功", { type: 'success' });
+        else showToast(res.message || "PDF送信失敗", { type: 'error' });
+      }
+    };
+    xhr.send(formData);
+
+    // 入力フィールドをクリア
+    document.getElementById("pdfFile").value = "";
+    document.getElementById("authorId").value = "";
+    document.getElementById("authorUrl").value = "";
+    document.getElementById("novelType").value = "novel";
+    document.getElementById("chapter").value = "";
+    // フォーカスを戻す
+    document.getElementById("pdfFile").focus();
+  });
 }
 
 // ZIP 送信用
@@ -202,22 +240,30 @@ function submitZipData() {
     return;
   }
 
-  var formData = new FormData();
-  formData.append("zip", zipFile);
-  formData.append("request_id", generateRequestId());
+  showModal({
+    title: 'ZIP展開',
+    message: '「' + zipFile.name + '」を展開しますか？',
+    confirmText: '展開を実行',
+    confirmStyle: 'primary'
+  }).then(function (ok) {
+    if (!ok) return;
 
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", POST_URL, true);
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState === 4) {
-      var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showToast(res.message || "ZIP送信成功", { type: 'success' });
-      else showToast(res.message || "ZIP送信失敗", { type: 'error' });
-    }
-  };
-  xhr.send(formData);
+    var formData = new FormData();
+    formData.append("zip", zipFile);
+    formData.append("request_id", generateRequestId());
 
-  // 入力フィールドをクリア
-  document.getElementById("zipFile").value = "";
-  
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", POST_URL, true);
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState === 4) {
+        var res = JSON.parse(xhr.responseText);
+        if (xhr.status === 200) showToast(res.message || "ZIP送信成功", { type: 'success' });
+        else showToast(res.message || "ZIP送信失敗", { type: 'error' });
+      }
+    };
+    xhr.send(formData);
+
+    // 入力フィールドをクリア
+    document.getElementById("zipFile").value = "";
+  });
 }
