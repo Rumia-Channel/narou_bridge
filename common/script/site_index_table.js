@@ -243,12 +243,12 @@ function renderTable() {
           case 'author': {
             const authorName = it.author;
             const authorId = it.author_id || it.author;
+            const authorUrl = it.author_url || '';
             const a = document.createElement('a');
-            a.href = it.author_url;
-            a.target = '_blank';
+            a.href = 'javascript:void(0)';
             a.textContent = authorName;
             a.addEventListener('click', (e) => {
-              if (e.ctrlKey) handleAuthorFiltering(authorName, authorId, e);
+              handleAuthorFiltering(authorName, authorId, e, authorUrl);
             });
             td.appendChild(a);
             break;

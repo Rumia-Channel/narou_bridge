@@ -36,7 +36,7 @@ function updateAuthorDropdownValue() {
   if (dd) dd.value = filteredAuthors[0] || '';
 }
 
-function handleAuthorFiltering(author, authorId, ev) {
+function handleAuthorFiltering(author, authorId, ev, authorUrl) {
   ev.preventDefault();
 
   // 既存のポップアップがあれば閉じる
@@ -60,6 +60,20 @@ function handleAuthorFiltering(author, authorId, ev) {
   desc.textContent = '作者フィルターの操作を選択してください';
   box.appendChild(desc);
 
+  // 作者のページを開くリンク
+  if (authorUrl) {
+    var linkBtn = document.createElement('a');
+    linkBtn.href = authorUrl;
+    linkBtn.target = '_blank';
+    linkBtn.rel = 'noopener noreferrer';
+    linkBtn.className = 'btn btn-sm tag-popup-btn tag-popup-author-link';
+    linkBtn.textContent = '作者のページを開く ↗';
+    linkBtn.addEventListener('click', function () {
+      overlay.remove();
+    });
+    box.appendChild(linkBtn);
+  }
+
   var btnGroup = document.createElement('div');
   btnGroup.className = 'tag-popup-btn-group';
   btnGroup.style.gridTemplateColumns = '1fr';
@@ -68,6 +82,7 @@ function handleAuthorFiltering(author, authorId, ev) {
     if (action === '1') {
       filteredAuthors = [authorId];
       saveSettings();
+      updateAuthorDropdownValue();
     } else if (action === '2') {
       if (!hiddenAuthors.includes(author)) hiddenAuthors.push(author);
       saveSettings();
