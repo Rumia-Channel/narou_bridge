@@ -801,51 +801,6 @@ tbody tr:nth-child(even) {
   to { transform: rotate(360deg); }
 }
 
-/* --- Copy Popup --- */
-.copy-popup-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-
-.copy-popup-box {
-  padding: 1.5rem;
-  border-radius: var(--radius-lg);
-  max-width: 80%;
-  max-height: 80%;
-  overflow: auto;
-  box-shadow: var(--shadow-lg);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-}
-
-.copy-popup-close {
-  display: inline-block;
-  margin-top: 1rem;
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  background: var(--accent-primary);
-  color: white;
-  font-size: 0.875rem;
-  transition: all var(--transition-fast);
-}
-
-.copy-popup-close:hover {
-  background: var(--accent-primary-hover);
-}
-
 /* --- Responsive --- */
 @media (min-width: 640px) {
   .container {

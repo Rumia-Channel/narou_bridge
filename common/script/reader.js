@@ -281,8 +281,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     coverUrlMap.clear();
     coverHashMap.clear();
 
-    alert('キャッシュをクリアしました。ページを再読み込みします。');
-    window.location.reload();
+    showToast('キャッシュをクリアしました。ページを再読み込みします。', { type: 'success', duration: 1500 });
+    setTimeout(function () { window.location.reload(); }, 1500);
   });
   // ────────────────────────────────────────────────────────
 

@@ -417,31 +417,84 @@ function updateAuthorDropdownValue() {
 
 function handleAuthorFiltering(author, authorId, ev) {
   ev.preventDefault();
-  const action = prompt(
-    'この作者の処理を選択してください:\n' +
-    '1 = この作者で絞り込み\n' +
-    '2 = サイト別の非表示リストに追加\n' +
-    '3 = 共通の非表示リストに追加（全サイト適用）\n' +
-    'それ以外 = キャンセル',
-    '1'
-  );
-  if (action === '1') {
-    filteredAuthors = [authorId];
-    saveSettings();
-  } else if (action === '2') {
-    if (!hiddenAuthors.includes(author)) hiddenAuthors.push(author);
-    saveSettings();
-    renderHiddenAuthors();
-  } else if (action === '3') {
-    if (!globalHiddenAuthors.includes(author)) globalHiddenAuthors.push(author);
-    saveGlobalSettings();
-    renderGlobalHiddenAuthors();
-  } else {
-    return;
+
+  // 既存のポップアップがあれば閉じる
+  var existing = document.getElementById('author-filter-popup-overlay');
+  if (existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'author-filter-popup-overlay';
+  overlay.className = 'tag-popup-overlay';
+
+  var box = document.createElement('div');
+  box.className = 'tag-popup-box';
+
+  var title = document.createElement('div');
+  title.className = 'tag-popup-title';
+  title.textContent = '「' + author + '」';
+  box.appendChild(title);
+
+  var desc = document.createElement('div');
+  desc.className = 'tag-popup-desc';
+  desc.textContent = '作者フィルターの操作を選択してください';
+  box.appendChild(desc);
+
+  var btnGroup = document.createElement('div');
+  btnGroup.className = 'tag-popup-btn-group';
+  btnGroup.style.gridTemplateColumns = '1fr';
+
+  function doAction(action) {
+    if (action === '1') {
+      filteredAuthors = [authorId];
+      saveSettings();
+    } else if (action === '2') {
+      if (!hiddenAuthors.includes(author)) hiddenAuthors.push(author);
+      saveSettings();
+      renderHiddenAuthors();
+    } else if (action === '3') {
+      if (!globalHiddenAuthors.includes(author)) globalHiddenAuthors.push(author);
+      saveGlobalSettings();
+      renderGlobalHiddenAuthors();
+    }
+    currentPage = 1;
+    renderTable();
+    updatePagination();
+    overlay.remove();
   }
-  currentPage = 1;
-  renderTable();
-  updatePagination();
+
+  var actions = [
+    { label: 'この作者で絞り込み', value: '1', cls: 'tag-popup-site-include' },
+    { label: 'サイト別の非表示リストに追加', value: '2', cls: 'tag-popup-site-exclude' },
+    { label: '共通の非表示リストに追加（全サイト適用）', value: '3', cls: 'tag-popup-global-exclude' }
+  ];
+
+  actions.forEach(function (item) {
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-sm tag-popup-btn ' + item.cls;
+    btn.textContent = item.label;
+    btn.addEventListener('click', function () {
+      doAction(item.value);
+    });
+    btnGroup.appendChild(btn);
+  });
+
+  box.appendChild(btnGroup);
+
+  // キャンセルボタン
+  var cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-sm btn-outline tag-popup-cancel';
+  cancelBtn.textContent = 'キャンセル';
+  cancelBtn.addEventListener('click', function () { overlay.remove(); });
+  box.appendChild(cancelBtn);
+
+  overlay.appendChild(box);
+
+  // オーバーレイクリックで閉じる
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  document.body.appendChild(overlay);
 }
 
 /* --------------------------------------------------
@@ -1187,26 +1240,6 @@ function updateSelectedCount() {
   document.getElementById('selected-count').textContent = '選択された件数: ' + selectedRows.size;
 }
 
-function showCopyPopup(titles) {
-  const overlay = document.createElement('div');
-  overlay.className = 'copy-popup-overlay';
-
-  const box = document.createElement('div');
-  box.className = 'copy-popup-box';
-
-  const content = '<strong>リンク先をコピーしました</strong><br><br>' +
-    titles.join('<br>') +
-    '<br><br><button id="close-copy-popup" class="copy-popup-close">閉じる</button>';
-  box.innerHTML = content;
-
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-
-  document.getElementById('close-copy-popup').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-}
-
 function copySelected() {
   const links = [];
   const titles = [];
@@ -1219,11 +1252,18 @@ function copySelected() {
     }
   });
 
+  if (links.length === 0) return;
+
+  function onCopySuccess() {
+    var msg = titles.length + '件のリンクをコピーしました';
+    showToast(msg, { type: 'success' });
+  }
+
   // WebKit compatibility: check if clipboard API is available
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(links.join('\n'))
-      .then(() => showCopyPopup(titles))
-      .catch((err) => alert('コピーに失敗しました: ' + err));
+      .then(function () { onCopySuccess(); })
+      .catch((err) => showToast('コピーに失敗しました: ' + err, { type: 'error' }));
   } else {
     // Fallback for older browsers
     const textarea = document.createElement('textarea');
@@ -1232,9 +1272,9 @@ function copySelected() {
     textarea.select();
     try {
       document.execCommand('copy');
-      showCopyPopup(titles);
+      onCopySuccess();
     } catch (err) {
-      alert('コピーに失敗しました: ' + err);
+      showToast('コピーに失敗しました: ' + err, { type: 'error' });
     }
     document.body.removeChild(textarea);
   }
@@ -1247,95 +1287,149 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('copy-selected-button').addEventListener('click', copySelected);
 
   document.getElementById('reset-localstorage-button').addEventListener('click', () => {
-    if (confirm('ローカルストレージをリセットしますか？（サイト別設定のみ）')) {
+    showModal({
+      title: 'ローカルストレージリセット',
+      message: 'ローカルストレージをリセットしますか？（サイト別設定のみ）',
+      confirmText: 'リセット',
+      confirmStyle: 'danger'
+    }).then(function (ok) {
+      if (!ok) return;
       localStorage.removeItem(siteSettingsKey);
       localStorage.removeItem('pageWidth');
       localStorage.removeItem('siteIndexWidth');
       location.reload();
-    }
+    });
   });
 
   document.getElementById('reset-hidden-authors-button').addEventListener('click', () => {
-    if (confirm('サイト別の非表示作者をリセットしますか？')) {
+    showModal({
+      title: '非表示作者リセット',
+      message: 'サイト別の非表示作者をリセットしますか？',
+      confirmText: 'リセット',
+      confirmStyle: 'danger'
+    }).then(function (ok) {
+      if (!ok) return;
       hiddenAuthors = [];
       saveSettings();
       renderHiddenAuthors();
       renderTable();
-    }
+    });
   });
 
   document.getElementById('reset-include-tags-button').addEventListener('click', () => {
-    if (confirm('サイト別の含むタグをリセットしますか？')) {
+    showModal({
+      title: '含むタグリセット',
+      message: 'サイト別の含むタグをリセットしますか？',
+      confirmText: 'リセット',
+      confirmStyle: 'danger'
+    }).then(function (ok) {
+      if (!ok) return;
       includedTags = [];
       saveSettings();
       renderTagFilters();
       renderTable();
-    }
+    });
   });
 
   document.getElementById('reset-exclude-tags-button').addEventListener('click', () => {
-    if (confirm('サイト別の含まないタグをリセットしますか？')) {
+    showModal({
+      title: '含まないタグリセット',
+      message: 'サイト別の含まないタグをリセットしますか？',
+      confirmText: 'リセット',
+      confirmStyle: 'danger'
+    }).then(function (ok) {
+      if (!ok) return;
       excludedTags = [];
       saveSettings();
       renderTagFilters();
       renderTable();
-    }
+    });
   });
 
   document.getElementById('reset-author-filter-button').addEventListener('click', () => {
-    if (confirm('作者絞り込みをリセットしますか？')) {
+    showModal({
+      title: '作者絞り込みリセット',
+      message: '作者絞り込みをリセットしますか？',
+      confirmText: 'リセット',
+      confirmStyle: 'danger'
+    }).then(function (ok) {
+      if (!ok) return;
       filteredAuthors = [];
       const dd = document.getElementById('author-filter-dropdown');
       if (dd) dd.value = '';
       saveSettings();
       renderTable();
-    }
+    });
   });
 
   // グローバルフィルターリセットボタン
   var globalResetIncBtn = document.getElementById('reset-global-include-tags-button');
   if (globalResetIncBtn) {
     globalResetIncBtn.addEventListener('click', () => {
-      if (confirm('共通の含むタグをリセットしますか？（全サイトに影響します）')) {
+      showModal({
+        title: '共通 含むタグリセット',
+        message: '共通の含むタグをリセットしますか？（全サイトに影響します）',
+        confirmText: 'リセット',
+        confirmStyle: 'danger'
+      }).then(function (ok) {
+        if (!ok) return;
         globalIncludedTags = [];
         saveGlobalSettings();
         renderGlobalFilters();
         renderTable();
-      }
+      });
     });
   }
 
   var globalResetExcBtn = document.getElementById('reset-global-exclude-tags-button');
   if (globalResetExcBtn) {
     globalResetExcBtn.addEventListener('click', () => {
-      if (confirm('共通の含まないタグをリセットしますか？（全サイトに影響します）')) {
+      showModal({
+        title: '共通 含まないタグリセット',
+        message: '共通の含まないタグをリセットしますか？（全サイトに影響します）',
+        confirmText: 'リセット',
+        confirmStyle: 'danger'
+      }).then(function (ok) {
+        if (!ok) return;
         globalExcludedTags = [];
         saveGlobalSettings();
         renderGlobalFilters();
         renderTable();
-      }
+      });
     });
   }
 
   var globalResetAuthorsBtn = document.getElementById('reset-global-hidden-authors-button');
   if (globalResetAuthorsBtn) {
     globalResetAuthorsBtn.addEventListener('click', () => {
-      if (confirm('共通の非表示作者をリセットしますか？（全サイトに影響します）')) {
+      showModal({
+        title: '共通 非表示作者リセット',
+        message: '共通の非表示作者をリセットしますか？（全サイトに影響します）',
+        confirmText: 'リセット',
+        confirmStyle: 'danger'
+      }).then(function (ok) {
+        if (!ok) return;
         globalHiddenAuthors = [];
         saveGlobalSettings();
         renderGlobalHiddenAuthors();
         renderTable();
-      }
+      });
     });
   }
 
   var globalResetAllBtn = document.getElementById('reset-global-all-button');
   if (globalResetAllBtn) {
     globalResetAllBtn.addEventListener('click', () => {
-      if (confirm('共通フィルター設定をすべてリセットしますか？（全サイトに影響します）')) {
+      showModal({
+        title: '共通フィルター全リセット',
+        message: '共通フィルター設定をすべてリセットしますか？（全サイトに影響します）',
+        confirmText: '全リセット',
+        confirmStyle: 'danger'
+      }).then(function (ok) {
+        if (!ok) return;
         localStorage.removeItem('globalFilterSettings');
         location.reload();
-      }
+      });
     });
   }
 

@@ -22,33 +22,6 @@ function debounce(func, delay) {
   };
 }
 
-// ページ上部に色付きメッセージを表示
-function showMessage(color, message) {
-  // 既存のメッセージを削除
-  var existingMessages = document.querySelectorAll(".response-message");
-  for (var i = 0; i < existingMessages.length; i++) {
-    var msg = existingMessages[i];
-    if (msg.parentNode) {
-      msg.parentNode.removeChild(msg);
-    }
-  }
-
-  // メッセージ要素を作成
-  var div = document.createElement("div");
-  div.style.color = color;
-  div.className = "response-message";
-  div.textContent = message;
-  document.body.appendChild(div);
-
-  // 3秒後に削除
-  setTimeout(function () {
-    if (div.parentNode) {
-      div.parentNode.removeChild(div);
-    }
-  }, 3000);
-}
-
-
 // submit() を 1秒デバウンス
 var debouncedSubmit = debounce(submit, 1000);
 
@@ -68,8 +41,8 @@ function submit() {
   xhr.onreadystatechange = function () {
     if (xhr.readyState === 4) {
       var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showMessage("green", res.message || "送信成功");
-      else showMessage("red", res.message || "送信失敗");
+      if (xhr.status === 200) showToast(res.message || "送信成功", { type: 'success' });
+      else showToast(res.message || "送信失敗", { type: 'error' });
     }
   };
   xhr.send("add=" + encodeURIComponent(input1) + "&request_id=" + requestId);
@@ -103,8 +76,8 @@ function submitUpdate(key) {
   xhr.onreadystatechange = function () {
     if (xhr.readyState === 4) {
       var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showMessage("green", res.message || "更新成功");
-      else showMessage("red", res.message || "更新失敗");
+      if (xhr.status === 200) showToast(res.message || "更新成功", { type: 'success' });
+      else showToast(res.message || "更新失敗", { type: 'error' });
     }
   };
   xhr.send("update=" + encodeURIComponent(key) + "&request_id=" + requestId);
@@ -121,8 +94,8 @@ function submitConvert(key) {
   xhr.onreadystatechange = function () {
     if (xhr.readyState === 4) {
       var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showMessage("green", res.message || "変換成功");
-      else showMessage("red", res.message || "変換失敗");
+      if (xhr.status === 200) showToast(res.message || "変換成功", { type: 'success' });
+      else showToast(res.message || "変換失敗", { type: 'error' });
     }
   };
   xhr.send("convert=" + encodeURIComponent(key) + "&request_id=" + requestId);
@@ -139,8 +112,8 @@ function submitReDownload(key) {
   xhr.onreadystatechange = function () {
     if (xhr.readyState === 4) {
       var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showMessage("green", res.message || "再ダウンロード成功");
-      else showMessage("red", res.message || "再ダウンロード失敗");
+      if (xhr.status === 200) showToast(res.message || "再ダウンロード成功", { type: 'success' });
+      else showToast(res.message || "再ダウンロード失敗", { type: 'error' });
     }
   };
   xhr.send("re_download=" + encodeURIComponent(key) + "&request_id=" + requestId);
@@ -148,24 +121,29 @@ function submitReDownload(key) {
 
 // データ修復用
 function submitRepair(key) {
-  if (!confirm("データ修復を実行しますか？\n一次ファイルを削除し、全てのraw.jsonからデータを再構築します。")) {
-    return;
-  }
+  showModal({
+    title: 'データ修復',
+    message: 'データ修復を実行しますか？\n一次ファイルを削除し、全てのraw.jsonからデータを再構築します。',
+    confirmText: '修復を実行',
+    confirmStyle: 'warning'
+  }).then(function (ok) {
+    if (!ok) return;
 
-  var requestId = generateRequestId();
-  var url = POST_URL + "?repair=" + encodeURIComponent(key);
+    var requestId = generateRequestId();
+    var url = POST_URL + "?repair=" + encodeURIComponent(key);
 
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", url, true);
-  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState === 4) {
-      var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showMessage("green", res.message || "データ修復を開始しました");
-      else showMessage("red", res.message || "データ修復の開始に失敗しました");
-    }
-  };
-  xhr.send("repair=" + encodeURIComponent(key) + "&request_id=" + requestId);
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", url, true);
+    xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState === 4) {
+        var res = JSON.parse(xhr.responseText);
+        if (xhr.status === 200) showToast(res.message || "データ修復を開始しました", { type: 'success' });
+        else showToast(res.message || "データ修復の開始に失敗しました", { type: 'error' });
+      }
+    };
+    xhr.send("repair=" + encodeURIComponent(key) + "&request_id=" + requestId);
+  });
 }
 
 // PDF 送信用
@@ -177,11 +155,11 @@ function submitPdfData() {
   var chapter = document.getElementById("chapter").value;
 
   if (!pdfFile) {
-    alert("PDFファイルを選択してください。");
+    showToast("PDFファイルを選択してください。", { type: 'warning' });
     return;
   }
   if (!authorId || !authorUrl) {
-    alert("author_id と author_url を入力してください。");
+    showToast("author_id と author_url を入力してください。", { type: 'warning' });
     return;
   }
 
@@ -198,8 +176,8 @@ function submitPdfData() {
   xhr.onreadystatechange = function () {
     if (xhr.readyState === 4) {
       var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showMessage("green", res.message || "PDF送信成功");
-      else showMessage("red", res.message || "PDF送信失敗");
+      if (xhr.status === 200) showToast(res.message || "PDF送信成功", { type: 'success' });
+      else showToast(res.message || "PDF送信失敗", { type: 'error' });
     }
   };
   xhr.send(formData);
@@ -220,7 +198,7 @@ function submitZipData() {
   var zipFile = document.getElementById("zipFile").files[0];
 
   if (!zipFile) {
-    alert("ZIPファイルを選択してください。");
+    showToast("ZIPファイルを選択してください。", { type: 'warning' });
     return;
   }
 
@@ -233,8 +211,8 @@ function submitZipData() {
   xhr.onreadystatechange = function () {
     if (xhr.readyState === 4) {
       var res = JSON.parse(xhr.responseText);
-      if (xhr.status === 200) showMessage("green", res.message || "ZIP送信成功");
-      else showMessage("red", res.message || "ZIP送信失敗");
+      if (xhr.status === 200) showToast(res.message || "ZIP送信成功", { type: 'success' });
+      else showToast(res.message || "ZIP送信失敗", { type: 'error' });
     }
   };
   xhr.send(formData);
