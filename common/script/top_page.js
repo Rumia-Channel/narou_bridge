@@ -176,13 +176,62 @@ function submitRepair(key) {
   });
 }
 
+// === 章構成の動的行管理 ===
+
+// 章構成の行を追加
+function addChapterRow() {
+  var container = document.getElementById("chapterRows");
+  var row = document.createElement("div");
+  row.className = "chapter-row";
+
+  row.innerHTML =
+    '<input type="number" class="form-input chapter-start" placeholder="開始" min="1">' +
+    '<span class="chapter-separator">〜</span>' +
+    '<input type="number" class="form-input chapter-end" placeholder="終了" min="1">' +
+    '<input type="text" class="form-input chapter-title" placeholder="章タイトル">' +
+    '<button type="button" class="btn btn-sm btn-danger chapter-remove" onclick="removeChapterRow(this)">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>' +
+      '</svg>' +
+    '</button>';
+
+  container.appendChild(row);
+}
+
+// 章構成の行を削除
+function removeChapterRow(btn) {
+  var row = btn.closest(".chapter-row");
+  if (row) row.remove();
+}
+
+// 全行から "1-3:タイトルA,4-5:タイトルB" 形式の文字列を組み立て
+function assembleChapterString() {
+  var rows = document.querySelectorAll("#chapterRows .chapter-row");
+  var parts = [];
+  for (var i = 0; i < rows.length; i++) {
+    var s = rows[i].querySelector(".chapter-start").value.trim();
+    var e = rows[i].querySelector(".chapter-end").value.trim();
+    var t = rows[i].querySelector(".chapter-title").value.trim();
+    if (s && e && t) {
+      parts.push(s + "-" + e + ":" + t);
+    }
+  }
+  return parts.join(",");
+}
+
+// 章構成行をすべてクリア
+function resetChapterRows() {
+  var container = document.getElementById("chapterRows");
+  container.innerHTML = "";
+}
+
 // PDF 送信用
 function submitPdfData() {
   var pdfFile = document.getElementById("pdfFile").files[0];
   var authorId = document.getElementById("authorId").value;
   var authorUrl = document.getElementById("authorUrl").value;
   var novelType = document.getElementById("novelType").value;
-  var chapter = document.getElementById("chapter").value;
+  var chapter = assembleChapterString();
 
   if (!pdfFile) {
     showToast("PDFファイルを選択してください。", { type: 'warning' });
@@ -224,8 +273,11 @@ function submitPdfData() {
     document.getElementById("pdfFile").value = "";
     document.getElementById("authorId").value = "";
     document.getElementById("authorUrl").value = "";
-    document.getElementById("novelType").value = "novel";
-    document.getElementById("chapter").value = "";
+    document.getElementById("novelType").value = "1";
+    resetChapterRows();
+    // ファイルラベルをリセット
+    var pdfLabel = document.getElementById("pdf-label");
+    if (pdfLabel) pdfLabel.querySelector("span").textContent = "PDFファイルを選択";
     // フォーカスを戻す
     document.getElementById("pdfFile").focus();
   });
