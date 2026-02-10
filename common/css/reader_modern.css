@@ -1,0 +1,765 @@
+/* ========================================
+   Narou Bridge Reader - Modern UI
+   モバイルファースト・レスポンシブデザイン
+   ======================================== */
+
+/* --- CSS Variables --- */
+:root {
+  /* Colors - Light Mode */
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f1f5f9;
+  --bg-elevated: #e2e8f0;
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+  --border-color: #e2e8f0;
+  --accent-primary: #3b82f6;
+  --accent-primary-hover: #2563eb;
+  --accent-secondary: #8b5cf6;
+  --accent-success: #10b981;
+  --accent-warning: #f59e0b;
+  --accent-danger: #ef4444;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 350ms ease;
+}
+
+/* Dark Mode */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --bg-tertiary: #334155;
+    --bg-elevated: #475569;
+    --text-primary: #f1f5f9;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --border-color: #334155;
+    --accent-primary: #60a5fa;
+    --accent-primary-hover: #3b82f6;
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.5);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.6), 0 8px 10px -6px rgb(0 0 0 / 0.6);
+  }
+}
+
+/* --- Base Reset --- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* --- Header --- */
+header {
+  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+  color: white;
+  padding: 0.75rem 1rem;
+  box-shadow: var(--shadow-md);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+header h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.025em;
+}
+
+/* Header Controls */
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+header select,
+header button {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+header select:hover,
+header button:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+header select:focus,
+header button:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+}
+
+/* reader-width-select 専用スタイル */
+#reader-width-select {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-left: 0.5rem;
+}
+
+#reader-width-select:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+#reader-width-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+}
+
+#reader-width-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+/* --- Progress Bar --- */
+#progress-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--bg-tertiary);
+  z-index: 1000;
+  display: none;
+}
+
+#progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+  transition: width var(--transition-base);
+  box-shadow: 0 0 10px var(--accent-primary);
+}
+
+#progress-info {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  background: var(--bg-secondary);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-lg);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-lg);
+  z-index: 1001;
+}
+
+/* --- Main Container --- */
+#app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+  min-height: calc(100vh - 60px);
+}
+
+/* --- Library View (本棚) --- */
+.author-group {
+  margin-bottom: 1rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.author-group:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.author-group:hover {
+  box-shadow: var(--shadow-lg);
+}
+
+.author-header {
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 1rem;
+  transition: background var(--transition-fast);
+  user-select: none;
+}
+
+.author-header:hover {
+  background: var(--bg-elevated);
+}
+
+.author-header::after {
+  content: '▼';
+  font-size: 0.75rem;
+  transition: transform var(--transition-fast);
+}
+
+.author-header.collapsed::after {
+  transform: rotate(-90deg);
+}
+
+.new-tag {
+  display: inline-block;
+  background: var(--accent-danger);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-sm);
+  margin-left: 0.5rem;
+  text-transform: uppercase;
+}
+
+.author-content {
+  padding: 0.625rem;
+  display: block;
+}
+
+/* --- Novel Cards --- */
+.novel {
+  width: 10.625em;
+  display: inline-block;
+  vertical-align: top;
+  margin: 0.5em;
+  box-sizing: border-box;
+  position: relative;
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+
+.novel:hover {
+  transform: translateY(-4px);
+}
+
+.cover-container {
+  position: relative;
+  width: 100%;
+  height: 15em;
+  overflow: hidden;
+  border-radius: 0.3125em;
+  background-color: rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cover-container img {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+}
+
+.cover-badges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1.5em;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 0.25em;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.cover-badge {
+  flex: 1;
+  margin: 0 0.125em;
+  font-size: 0.5em;
+  padding: 0.125em 0.25em;
+  border-radius: 0.1875em;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 1;
+  transition: opacity 0.2s;
+}
+
+.cover-badge[data-type="NEW"] {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
+}
+
+.cover-badge[data-type="未読"] {
+  background: linear-gradient(135deg, #ffa502, #ff9500);
+}
+
+.cover-badge[data-type="既読"] {
+  background: linear-gradient(135deg, #3742fa, #2f3542);
+}
+
+.cover-badge[data-type="完読"] {
+  background: linear-gradient(135deg, #2ed573, #26d063);
+}
+
+.cover-badge[data-type="連載中"] {
+  background: linear-gradient(135deg, #1e90ff, #3742fa);
+}
+
+.cover-badge[data-type="完結済"] {
+  background: linear-gradient(135deg, #a29bfe, #6c5ce7);
+}
+
+.cover-badge[data-type="短編"] {
+  background: linear-gradient(135deg, #74b9ff, #0984e3);
+}
+
+.cover-badge[data-type="小説"] {
+  background: linear-gradient(135deg, #fd79a8, #e84393);
+}
+
+.cover-badge[data-type="漫画"] {
+  background: linear-gradient(135deg, #fdcb6e, #e17055);
+}
+
+.cover-badge.disabled-badge {
+  opacity: 0;
+}
+
+.novel-title {
+  font-size: 0.875em;
+  text-align: center;
+  line-height: 1.4;
+  min-height: calc(1.4em * 3);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+}
+
+/* --- Reader View --- */
+body.reader {
+  background: var(--bg-secondary);
+}
+
+body.reader #app {
+  max-width: 800px;
+  padding: 2rem 1rem;
+}
+
+/* Episode Title */
+#app h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+  color: var(--text-primary);
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* Introduction & Postscript */
+.introduction,
+.postscript {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+  margin: 1.5rem 0;
+  border-left: 4px solid var(--accent-primary);
+}
+
+.postscript {
+  border-left-color: var(--accent-secondary);
+}
+
+.introduction::before,
+.postscript::before {
+  display: block;
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.introduction::before {
+  content: '前書き';
+}
+
+.postscript::before {
+  content: 'あとがき';
+}
+
+/* Main Text */
+.main-text {
+  font-size: 1.125rem;
+  line-height: 1.9;
+  color: var(--text-primary);
+  margin: 2rem 0;
+}
+
+.main-text p {
+  margin-bottom: 1.5rem;
+  text-indent: 1em;
+}
+
+/* Ruby */
+ruby {
+  ruby-align: center;
+}
+
+rt {
+  font-size: 0.5em;
+  color: var(--text-secondary);
+}
+
+/* Images in text */
+.inline-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  margin: 1rem 0;
+  box-shadow: var(--shadow-md);
+}
+
+/* Page Jump Links */
+.page-jump {
+  display: inline-block;
+  color: var(--accent-primary);
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.page-jump:hover {
+  background: rgba(59, 130, 246, 0.1);
+  text-decoration: underline;
+}
+
+/* --- Navigation --- */
+.page-nav,
+.episode-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin: 2rem 0;
+  flex-wrap: wrap;
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  transition: all var(--transition-fast);
+  border: 1px solid var(--border-color);
+}
+
+.nav-link:hover {
+  background: var(--bg-elevated);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.nav-link--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.page-select {
+  padding: 0.5rem 1rem;
+  background: var(--bg-secondary);
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.page-select:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+/* --- Table of Contents --- */
+.toc-container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.toc-container h2 {
+  font-size: 1.75rem;
+  margin-bottom: 2rem;
+}
+
+.toc-chapter-header {
+  background: var(--bg-tertiary);
+  padding: 1rem 1.25rem;
+  margin: 1rem 0 0.5rem;
+  border-radius: var(--radius-lg);
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background var(--transition-fast);
+}
+
+.toc-chapter-header:hover {
+  background: var(--bg-elevated);
+}
+
+.toc-container ul {
+  list-style: none !important;
+  padding: 0;
+  margin: 0;
+}
+
+.toc-container li {
+  list-style: none !important;
+  margin: 0.5rem 0;
+}
+
+/* ::marker を非表示 */
+.toc-container li::marker {
+  display: none;
+  content: '';
+}
+
+.toc-container ul::-webkit-list-marker,
+.toc-container li::-webkit-list-marker {
+  display: none;
+}
+
+.toc-container a {
+  display: block;
+  padding: 0.875rem 1rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: all var(--transition-fast);
+}
+
+.toc-container a:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-primary);
+  transform: translateX(4px);
+}
+
+/* 本棚に戻るリンクを目立たせる */
+.toc-container > p:last-of-type {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 2px solid var(--border-color);
+  text-align: center;
+}
+
+.toc-container > p:last-of-type a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-fast);
+}
+
+.toc-container > p:last-of-type a:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  background: linear-gradient(135deg, var(--accent-primary-hover), var(--accent-secondary));
+}
+
+.toc-container > p:last-of-type a::before {
+  content: '←';
+  font-size: 1.2em;
+}
+
+/* --- Loading --- */
+.loading {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: var(--text-secondary);
+}
+
+.loading::after {
+  content: '';
+  display: inline-block;
+  width: 2rem;
+  height: 2rem;
+  margin-left: 0.5rem;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Responsive Breakpoints --- */
+@media screen and (max-width: 600px) {
+  :root {
+    --reader-width: 95%;
+    --reader-horizontal-padding: 0.5em;
+    --header-padding-vertical: 0.5em;
+    --header-padding-horizontal: 0.75em;
+    --button-padding-vertical: 0.25em;
+    --button-padding-horizontal: 0.5em;
+    --section-padding-vertical: 0.75em;
+    --page-padding: 1em;
+  }
+
+  header h1 {
+    font-size: 1em;
+  }
+
+  #btn-clear-cache {
+    font-size: 0.75em;
+    padding: var(--button-padding-vertical) var(--button-padding-horizontal);
+  }
+
+  .novel {
+    width: 45%;
+    margin: 0.25em;
+  }
+
+  .cover-container {
+    height: 10em;
+  }
+
+  .novel-title {
+    font-size: 0.75em;
+    min-height: calc(1.4em * 2);
+  }
+
+  .author-header {
+    font-size: 0.9em;
+    padding: 0.25em 0.5em;
+  }
+
+  .author-content {
+    padding: 0.5em;
+  }
+
+  .main-text {
+    font-size: 0.9em;
+    line-height: 1.6;
+  }
+
+  .page {
+    width: 100%;
+    padding: var(--page-padding);
+  }
+
+  .cover-badges {
+    height: 1.2em;
+  }
+
+  .cover-badge {
+    font-size: 0.4em;
+    padding: 0.1em 0.2em;
+  }
+
+  .nav-links, .episode-nav {
+    flex-direction: column;
+    gap: 0.5em;
+  }
+
+  .nav-link {
+    font-size: 0.9em;
+  }
+}
+
+/* --- Print Styles --- */
+@media print {
+  header,
+  .page-nav,
+.episode-nav {
+  text-align: center;
+  margin-top: 2em;
+  margin-bottom: 2em;
+  padding: 1.5em;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+}
+  
+  body {
+    background: white;
+    color: black;
+  }
+  
+  .main-text {
+    font-size: 12pt;
+    line-height: 1.8;
+  }
+}
+
+/* --- Utility Classes --- */
+.text-center { text-align: center; }
+.text-muted { color: var(--text-muted); }
+.hidden { display: none !important; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
