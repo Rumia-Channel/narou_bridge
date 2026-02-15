@@ -49,7 +49,7 @@ async function loadAccounts() {
   }
   
   try {
-    const response = await fetch(`/api/account/${site}`);
+    const response = await fetch(`/api/account?site=${encodeURIComponent(site)}`);
     const data = await response.json();
     
     if (data.accounts && data.accounts.length > 0) {
@@ -117,7 +117,7 @@ async function uploadAccount() {
   }
   
   try {
-    const response = await fetch(`/api/account/${site}`, {
+    const response = await fetch(`/api/account?site=${encodeURIComponent(site)}`, {
       method: 'POST',
       body: formData
     });
@@ -148,7 +148,7 @@ async function switchAccount(site, accountName) {
   }
   
   try {
-    const response = await fetch(`/api/account/${site}/switch`, {
+    const response = await fetch(`/api/account/switch?site=${encodeURIComponent(site)}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -177,9 +177,12 @@ async function deleteAccount(site, accountName) {
   }
   
   try {
-    const response = await fetch(`/api/account/${site}/${accountName}`, {
+    const response = await fetch(
+      `/api/account?site=${encodeURIComponent(site)}&account=${encodeURIComponent(accountName)}`,
+      {
       method: 'DELETE'
-    });
+      }
+    );
     
     const data = await response.json();
     
