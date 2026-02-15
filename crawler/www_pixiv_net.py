@@ -300,27 +300,34 @@ class PixivCrawler:
             context.close()
             browser.close()
 
+    def _request(self, url: str) -> Optional[requests.Response]:
+        """GETリクエスト（Cookieなし優先、失敗時はCookieありで再試行）"""
+        res = cm.get_with_cookie(url, {}, self.headers)
+        if res and res.status_code == 200:
+            return res
+        return cm.get_with_cookie(url, self.cookies, self.headers)
+
     def get_json(self, url: str) -> Optional[Dict]:
         """APIからJSONを取得（Cookieなし優先、失敗時はCookieありで再試行）"""
-
-        def parse_response(res):
-            if not res or res.status_code != 200:
-                return None
-            try:
-                return res.json()
-            except:
-                try:
-                    return json.loads(unescape(res.text))
-                except:
-                    return None
-
-        res = cm.get_with_cookie(url, {}, self.headers)
-        data = parse_response(res)
-        if data and not data.get("error", True):
-            return data
-
+        res = self._request(url)
+        if not res or res.status_code != 200:
+            return None
+        try:
+            data = res.json()
+            if not data.get("error", False):
+                return data
+        except:
+            pass
         res = cm.get_with_cookie(url, self.cookies, self.headers)
-        return parse_response(res)
+        if not res or res.status_code != 200:
+            return None
+        try:
+            return res.json()
+        except:
+            try:
+                return json.loads(unescape(res.text))
+            except:
+                return None
 
     # -------------------------------------------------------------------------
     # ヘルパー: 保存、更新チェック、スナップショット
@@ -423,7 +430,7 @@ class PixivCrawler:
         ] + [url]
 
         for cand in candidates:
-            res = cm.get_with_cookie(cand, self.cookies, self.headers)
+            res = self._request(cand)
             if res and res.status_code == 200:
                 f_ext = os.path.splitext(cand)[1]
                 # グローバル images フォルダへ保存
@@ -484,7 +491,7 @@ class PixivCrawler:
                     # 画像ダウンロード
                     saved_file = cm.check_image_file(self.img_path, img_name)
                     if not saved_file:
-                        res = cm.get_with_cookie(url, self.cookies, self.headers)
+                        res = self._request(url)
                         if res and res.status_code == 200:
                             img_hash = cm.check_image_hash(
                                 self.img_path, res.content, img_name
@@ -518,7 +525,7 @@ class PixivCrawler:
                 self._sleep()
                 saved_file = cm.check_image_file(self.img_path, img_name)
                 if not saved_file:
-                    res = cm.get_with_cookie(url, self.cookies, self.headers)
+                    res = self._request(url)
                     if res and res.status_code == 200:
                         img_hash = cm.check_image_hash(
                             self.img_path, res.content, img_name
@@ -948,7 +955,7 @@ class PixivCrawler:
                     m_body = meta["body"]
                     src_url = m_body["originalSrc"]
 
-                    zip_res = cm.get_with_cookie(src_url, self.cookies, self.headers)
+                    zip_res = self._request(src_url)
                     zip_path = os.path.join(art_path, f"{art_id}.zip")
                     with open(zip_path, "wb") as f:
                         f.write(zip_res.content)
