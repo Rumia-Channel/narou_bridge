@@ -304,7 +304,9 @@ class PixivCrawler:
         """GETリクエスト（Cookieなし優先、失敗時はCookieありで再試行）"""
         res = cm.get_with_cookie(url, {}, self.headers)
         if res and res.status_code == 200:
+            logging.debug(f"[no login] {url}")
             return res
+        logging.debug(f"[with login] {url}")
         return cm.get_with_cookie(url, self.cookies, self.headers)
 
     def get_json(self, url: str) -> Optional[Dict]:
