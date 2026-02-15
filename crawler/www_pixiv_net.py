@@ -306,6 +306,9 @@ class PixivCrawler:
         if res and res.status_code == 200:
             logging.debug(f"[no login] {url}")
             return res
+        elif res and res.status_code == 404:
+            logging.debug(f"[no login][404] {url}")
+            return res
         logging.debug(f"[with login] {url}")
         return cm.get_with_cookie(url, self.cookies, self.headers)
 
