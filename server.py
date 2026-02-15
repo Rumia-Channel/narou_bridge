@@ -450,6 +450,7 @@ def create_app(config: Dict[str, Any]):
                                 {
                                     "name": account_name,
                                     "file": filename,
+                                    "display_name": data.get("display_name"),
                                     "updated": datetime.fromtimestamp(
                                         mtime
                                     ).isoformat(),
