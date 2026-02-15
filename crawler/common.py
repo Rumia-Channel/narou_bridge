@@ -12,6 +12,7 @@ import re
 import logging
 from jsondiff import diff
 from typing import Optional, Dict, Any, Union, List
+from fake_useragent import UserAgent
 
 # グローバル設定
 _global_img_url = ""
@@ -465,6 +466,13 @@ def get_with_cookie(
     """
     response = None
     request_headers = header.copy() if header else {}
+
+    # Cookieなしのときは fake-useragent で UA を補う
+    if not cookie and not request_headers.get("User-Agent"):
+        try:
+            request_headers["User-Agent"] = UserAgent().random
+        except Exception as e:
+            logging.debug(f"fake-useragent unavailable: {e}")
 
     for i in range(retries):
         try:
