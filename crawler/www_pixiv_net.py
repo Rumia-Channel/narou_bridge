@@ -320,7 +320,24 @@ class PixivCrawler:
 
     def _request(self, url: str) -> Optional[requests.Response]:
         """GETリクエスト（Cookieなし優先、失敗時はCookieありで再試行）"""
-        res = cm.get_with_cookie(url, {}, self.headers)
+        # Pixiv固有のヘッダー
+        pixiv_headers = {
+            "Accept": "application/json",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": "https://www.pixiv.net/",
+            "Connection": "keep-alive",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        
+        # self.headersとマージ
+        request_headers = self.headers.copy() if self.headers else {}
+        request_headers.update(pixiv_headers)
+        
+        res = cm.get_with_cookie(url, {}, request_headers)
         if res and res.status_code == 200:
             logging.debug(f"[no login] {url}")
             return res
@@ -328,7 +345,7 @@ class PixivCrawler:
             logging.debug(f"[no login][404] {url}")
             return res
         logging.debug(f"[with login] {url}")
-        return cm.get_with_cookie(url, self.cookies, self.headers)
+        return cm.get_with_cookie(url, self.cookies, request_headers)
 
     def get_json(self, url: str) -> Optional[Dict]:
         """APIからJSONを取得（Cookieなし優先、失敗時はCookieありで再試行）"""
