@@ -169,9 +169,10 @@ class PixivCrawler:
 
         need_login = force_login or not self.cookies
 
-        # 既存クッキーでのセッションチェック
+        # 既存クッキーでのセッションチェック（より厳密に）
         if not need_login:
             try:
+                # 1. ダッシュボードチェック
                 resp = requests.get(
                     "https://www.pixiv.net/dashboard",
                     cookies=self.cookies,
@@ -179,12 +180,29 @@ class PixivCrawler:
                     timeout=10,
                     allow_redirects=False,
                 )
-                if resp.status_code == 200:
-                    need_login = False
-                elif 300 <= resp.status_code < 400:
+                if resp.status_code != 200:
                     need_login = True
+                    logging.info("Session check failed: dashboard returned non-200")
                 else:
-                    need_login = True
+                    # 2. AJAX APIエンドポイントチェック（より厳密）
+                    ajax_resp = requests.get(
+                        "https://www.pixiv.net/ajax/user/extra",
+                        cookies=self.cookies,
+                        headers={"User-Agent": self.ua, "Referer": "https://www.pixiv.net/"},
+                        timeout=10,
+                    )
+                    if ajax_resp.status_code != 200:
+                        need_login = True
+                        logging.info(f"Session check failed: ajax returned {ajax_resp.status_code}")
+                    else:
+                        try:
+                            ajax_data = ajax_resp.json()
+                            if ajax_data.get("error"):
+                                need_login = True
+                                logging.info("Session check failed: ajax returned error")
+                        except:
+                            need_login = True
+                            logging.info("Session check failed: ajax response parse error")
             except Exception as e:
                 logging.warning(f"Login check failed: {e}")
                 need_login = True

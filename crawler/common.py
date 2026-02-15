@@ -439,10 +439,19 @@ def get_with_cookie(
     url: str, cookie: dict, header: dict, retries: int = 5, delay: int = 5
 ) -> Optional[requests.Response]:
     """クッキーを使ってGETリクエストを送信 (リトライ機能付き)"""
+    from fake_useragent import UserAgent
+    
     response = None
     for i in range(retries):
         try:
-            response = requests.get(url, cookies=cookie, headers=header, timeout=10)
+            # Cookieが空の場合はfake_useragentを使用
+            request_headers = header.copy() if header else {}
+            if not cookie and (not header or "User-Agent" not in header):
+                ua = UserAgent()
+                request_headers["User-Agent"] = ua.random
+                logging.debug(f"[fake_useragent] {ua.random[:50]}...")
+            
+            response = requests.get(url, cookies=cookie, headers=request_headers, timeout=10)
             response.raise_for_status()
             return response
         except (ConnectionError, Timeout) as e:
