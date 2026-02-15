@@ -293,7 +293,7 @@ def create_manifest(data_path):
 # アクション実行の優先順位 (先頭が最優先)
 # 新しいアクションを追加する場合はここに名前を追加し、
 # 各クローラーモジュールに同名の関数を実装するだけでよい。
-ACTION_PRIORITY = ["repair", "update", "re_download", "convert", "download"]
+ACTION_PRIORITY = ["repair", "login", "update", "re_download", "convert", "download"]
 
 # POSTパラメータ名 → 内部アクション名のマッピング
 # (パラメータ名とアクション名が異なる場合のみ記載)
@@ -380,6 +380,12 @@ def dispatch_action(
         # アクション実行 (downloadだけ引数が異なる: URLが先頭に来る)
         if action_name == "download":
             func(param, folder_path[site], key_data, data_path, host_name)
+        elif action_name == "login":
+            # param が "site:account_name" 形式の場合、アカウント名を抽出
+            account_name = None
+            if ":" in param:
+                _, account_name = param.split(":", 1)
+            func(cookie_path[site], data_path, interval, account_name)
         else:
             func(folder_path[site], key_data, data_path, host_name)
 
