@@ -243,7 +243,7 @@ class PixivCrawler:
         """
         save_path = cookie_path if cookie_path else self.cookie_path
         
-        browser = playwright.firefox.launch(headless=False)
+        browser = playwright.chromium.launch(headless=False)
         context = browser.new_context(
             locale="en-US", viewport={"width": 1920, "height": 1080}, user_agent=self.ua
         )
@@ -338,9 +338,8 @@ class PixivCrawler:
             context.close()
             browser.close()
 
-    def _request(self, url: str) -> Optional[requests.Response]:
-        """GETリクエスト（Cookieなし優先、失敗時はCookieありで再試行）"""
-        # Pixiv固有のヘッダー
+    def _build_request_headers(self) -> Dict[str, str]:
+        """Pixiv向けのリクエストヘッダーを組み立てる"""
         pixiv_headers = {
             "Accept": "application/json",
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
@@ -353,10 +352,14 @@ class PixivCrawler:
             "X-Requested-With": "XMLHttpRequest",
         }
 
-        # self.headersとマージ
         request_headers = self.headers.copy() if self.headers else {}
         request_headers.update(pixiv_headers)
+        return request_headers
 
+    def _request_no_login(
+        self, url: str, request_headers: Dict[str, str]
+    ) -> Optional[requests.Response]:
+        """CookieなしでGET（ステータスログ込み）"""
         res = cm.get_with_cookie(url, {}, request_headers, log_404_as_error=False)
         if res and res.status_code == 200:
             logging.debug(f"[no login] {url}")
@@ -367,6 +370,12 @@ class PixivCrawler:
         elif res is not None:
             logging.debug(f"[no login][{res.status_code}] {url}")
 
+        return res
+
+    def _request_with_login(
+        self, url: str, request_headers: Dict[str, str]
+    ) -> Optional[requests.Response]:
+        """CookieありでGET（ステータスログ込み）"""
         logging.debug(f"[with login] {url}")
         res_login = cm.get_with_cookie(url, self.cookies, request_headers)
         if res_login and res_login.status_code == 200:
@@ -375,6 +384,19 @@ class PixivCrawler:
 
         if res_login is not None:
             logging.debug(f"[with login][{res_login.status_code}] {url}")
+
+        return res_login
+
+    def _request(self, url: str) -> Optional[requests.Response]:
+        """GETリクエスト（Cookieなし優先、失敗時はCookieありで再試行）"""
+        request_headers = self._build_request_headers()
+
+        res = self._request_no_login(url, request_headers)
+        if res and res.status_code == 200:
+            return res
+
+        res_login = self._request_with_login(url, request_headers)
+        if res_login is not None:
             return res_login
 
         # ログイン側も取得失敗のときは、元のレスポンスを返しておく
@@ -502,21 +524,32 @@ class PixivCrawler:
             for e in [".png", ".jpg", ".jpeg", ".gif"]
         ] + [url]
 
+        def _save_cover(res: requests.Response, cand: str) -> None:
+            f_ext = os.path.splitext(cand)[1]
+            # グローバル images フォルダへ保存
+            hash_name = cm.check_image_hash(
+                self.img_path,
+                res.content,
+                f"pixiv_{ncode}_cover{f_ext}",
+                is_cover=True,
+            )
+            with open(os.path.join(self.img_path, f"{hash_name}{f_ext}"), "wb") as f:
+                f.write(res.content)
+
+        request_headers = self._build_request_headers()
+
+        # まずはCookieなしで拡張子違いを試す
         for cand in candidates:
-            res = self._request(cand)
+            res = self._request_no_login(cand, request_headers)
             if res and res.status_code == 200:
-                f_ext = os.path.splitext(cand)[1]
-                # グローバル images フォルダへ保存
-                hash_name = cm.check_image_hash(
-                    self.img_path,
-                    res.content,
-                    f"pixiv_{ncode}_cover{f_ext}",
-                    is_cover=True,
-                )
-                with open(
-                    os.path.join(self.img_path, f"{hash_name}{f_ext}"), "wb"
-                ) as f:
-                    f.write(res.content)
+                _save_cover(res, cand)
+                return
+
+        # すべて失敗した場合のみCookieありで再試行
+        for cand in candidates:
+            res = self._request_with_login(cand, request_headers)
+            if res and res.status_code == 200:
+                _save_cover(res, cand)
                 return
 
     def _format_image_links(
