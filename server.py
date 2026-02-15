@@ -471,6 +471,14 @@ def create_app(config: Dict[str, Any]):
 
         return jsonify({"site": site, "accounts": accounts})
 
+    @app.route("/api/account", methods=["GET"])
+    def list_accounts_query():
+        """サイトのアカウント一覧を取得（クエリ版）"""
+        site = request.args.get("site")
+        if not site:
+            return create_response(400, "error", "Site is required")
+        return list_accounts(site)
+
     @app.route("/api/account/<site>", methods=["POST"])
     def upload_account(site):
         """アカウントJSONファイルをアップロード"""
@@ -547,6 +555,14 @@ def create_app(config: Dict[str, Any]):
             logging.exception("Account upload error")
             return create_response(500, "error", str(e))
 
+    @app.route("/api/account", methods=["POST"])
+    def upload_account_query():
+        """アカウントJSONファイルをアップロード（クエリ版）"""
+        site = request.args.get("site")
+        if not site:
+            return create_response(400, "error", "Site is required")
+        return upload_account(site)
+
     @app.route("/api/account/<site>/<account_name>", methods=["DELETE"])
     def delete_account(site, account_name):
         """アカウントを削除"""
@@ -575,6 +591,15 @@ def create_app(config: Dict[str, Any]):
         except Exception as e:
             logging.exception("Account deletion error")
             return create_response(500, "error", str(e))
+
+    @app.route("/api/account", methods=["DELETE"])
+    def delete_account_query():
+        """アカウントを削除（クエリ版）"""
+        site = request.args.get("site")
+        account_name = request.args.get("account")
+        if not site or not account_name:
+            return create_response(400, "error", "Site and account are required")
+        return delete_account(site, account_name)
 
     @app.route("/api/account/<site>/switch", methods=["POST"])
     def switch_account(site):
@@ -650,6 +675,14 @@ def create_app(config: Dict[str, Any]):
             logging.exception("Account switch error")
             return create_response(500, "error", str(e))
 
+    @app.route("/api/account/switch", methods=["POST"])
+    def switch_account_query():
+        """アカウントを切り替え（クエリ版）"""
+        site = request.args.get("site")
+        if not site:
+            return create_response(400, "error", "Site is required")
+        return switch_account(site)
+
     @app.route("/api/account/<site>/<account_name>/rename", methods=["POST"])
     def rename_account(site, account_name):
         """アカウント名を変更"""
@@ -707,6 +740,15 @@ def create_app(config: Dict[str, Any]):
         except Exception as e:
             logging.exception("Account rename error")
             return create_response(500, "error", str(e))
+
+    @app.route("/api/account/rename", methods=["POST"])
+    def rename_account_query():
+        """アカウント名を変更（クエリ版）"""
+        site = request.args.get("site")
+        account_name = request.args.get("account")
+        if not site or not account_name:
+            return create_response(400, "error", "Site and account are required")
+        return rename_account(site, account_name)
 
     @app.route("/", methods=["GET"])
     def serve_root():
