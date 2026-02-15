@@ -446,20 +446,26 @@ def find_key_recursively(data: Union[Dict, List], target_key: str) -> Any:
 
 
 def get_with_cookie(
-    url: str, cookie: dict, header: dict, retries: int = 5, delay: int = 5
+    url: str,
+    cookie: dict,
+    header: dict,
+    retries: int = 5,
+    delay: int = 5,
+    log_404_as_error: bool = True,
 ) -> Optional[requests.Response]:
     """クッキーを使ってGETリクエストを送信 (リトライ機能付き)
-    
+
     Args:
         url: リクエストURL
         cookie: Cookie辞書
         header: リクエストヘッダー辞書（Noneの場合は空辞書として扱う）
         retries: リトライ回数
         delay: リトライ間隔（秒）
+        log_404_as_error: 404 をエラーログにするか
     """
     response = None
     request_headers = header.copy() if header else {}
-    
+
     for i in range(retries):
         try:
             response = requests.get(url, cookies=cookie, headers=request_headers, timeout=10)
@@ -470,7 +476,10 @@ def get_with_cookie(
         except RequestException as e:
             # 404エラーの場合は即時終了
             if response is not None and response.status_code == 404:
-                logging.error("\n404 Error: Resource not found.")
+                if log_404_as_error:
+                    logging.error("\n404 Error: Resource not found.")
+                else:
+                    logging.debug("[404] Resource not found (suppressed error log)")
                 return response
             else:
                 logging.error(f"\nError: {e}. Retrying in {delay * (2**i)} seconds...")

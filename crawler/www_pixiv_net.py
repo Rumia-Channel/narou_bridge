@@ -352,20 +352,33 @@ class PixivCrawler:
             "Sec-Fetch-Site": "same-origin",
             "X-Requested-With": "XMLHttpRequest",
         }
-        
+
         # self.headersとマージ
         request_headers = self.headers.copy() if self.headers else {}
         request_headers.update(pixiv_headers)
-        
-        res = cm.get_with_cookie(url, {}, request_headers)
+
+        res = cm.get_with_cookie(url, {}, request_headers, log_404_as_error=False)
         if res and res.status_code == 200:
             logging.debug(f"[no login] {url}")
             return res
-        elif res and res.status_code == 404:
+
+        if res and res.status_code == 404:
             logging.debug(f"[no login][404] {url}")
-            return res
+        elif res is not None:
+            logging.debug(f"[no login][{res.status_code}] {url}")
+
         logging.debug(f"[with login] {url}")
-        return cm.get_with_cookie(url, self.cookies, request_headers)
+        res_login = cm.get_with_cookie(url, self.cookies, request_headers)
+        if res_login and res_login.status_code == 200:
+            logging.debug(f"[with login][200] {url}")
+            return res_login
+
+        if res_login is not None:
+            logging.debug(f"[with login][{res_login.status_code}] {url}")
+            return res_login
+
+        # ログイン側も取得失敗のときは、元のレスポンスを返しておく
+        return res
 
     def get_json(self, url: str) -> Optional[Dict]:
         """APIからJSONを取得（Cookieなし優先、失敗時はCookieありで再試行）"""
