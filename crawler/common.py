@@ -438,19 +438,20 @@ def find_key_recursively(data: Union[Dict, List], target_key: str) -> Any:
 def get_with_cookie(
     url: str, cookie: dict, header: dict, retries: int = 5, delay: int = 5
 ) -> Optional[requests.Response]:
-    """クッキーを使ってGETリクエストを送信 (リトライ機能付き)"""
-    from fake_useragent import UserAgent
+    """クッキーを使ってGETリクエストを送信 (リトライ機能付き)
     
+    Args:
+        url: リクエストURL
+        cookie: Cookie辞書
+        header: リクエストヘッダー辞書（Noneの場合は空辞書として扱う）
+        retries: リトライ回数
+        delay: リトライ間隔（秒）
+    """
     response = None
+    request_headers = header.copy() if header else {}
+    
     for i in range(retries):
         try:
-            # Cookieが空の場合はfake_useragentを使用
-            request_headers = header.copy() if header else {}
-            if not cookie and (not header or "User-Agent" not in header):
-                ua = UserAgent()
-                request_headers["User-Agent"] = ua.random
-                logging.debug(f"[fake_useragent] {ua.random[:50]}...")
-            
             response = requests.get(url, cookies=cookie, headers=request_headers, timeout=10)
             response.raise_for_status()
             return response
