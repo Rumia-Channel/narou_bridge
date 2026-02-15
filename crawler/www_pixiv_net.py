@@ -301,14 +301,26 @@ class PixivCrawler:
             browser.close()
 
     def get_json(self, url: str) -> Optional[Dict]:
-        """APIからJSONを取得"""
+        """APIからJSONを取得（Cookieなし優先、失敗時はCookieありで再試行）"""
+
+        def parse_response(res):
+            if not res or res.status_code != 200:
+                return None
+            try:
+                return res.json()
+            except:
+                try:
+                    return json.loads(unescape(res.text))
+                except:
+                    return None
+
+        res = cm.get_with_cookie(url, {}, self.headers)
+        data = parse_response(res)
+        if data and not data.get("error", True):
+            return data
+
         res = cm.get_with_cookie(url, self.cookies, self.headers)
-        if not res or res.status_code != 200:
-            return None
-        try:
-            return res.json()
-        except:
-            return json.loads(unescape(res.text))
+        return parse_response(res)
 
     # -------------------------------------------------------------------------
     # ヘルパー: 保存、更新チェック、スナップショット
