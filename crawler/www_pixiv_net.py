@@ -1010,34 +1010,55 @@ class PixivCrawler:
                     # APNG作成
                     frames = []
                     delays = []
-                    for f_info in m_body["frames"]:
-                        frames.append(
-                            Image.open(os.path.join(temp_dir, f_info["file"]))
-                        )
-                        delays.append(f_info["delay"])
+                    opened_images = []  # 開いた画像を追跡
+                    try:
+                        for f_info in m_body["frames"]:
+                            img = Image.open(os.path.join(temp_dir, f_info["file"]))
+                            frames.append(img)
+                            opened_images.append(img)  # 追跡リストに追加
+                            delays.append(f_info["delay"])
 
-                    # apng保存 (apngライブラリ使用)
-                    temp_apng = os.path.join(temp_dir, "temp.apng")
-                    if frames:
-                        apng_obj = apng.APNG()
-                        for i, frame_file in enumerate(m_body["frames"]):
-                            apng_obj.append_file(
-                                os.path.join(temp_dir, frame_file["file"]),
-                                delay=frame_file["delay"],
-                            )
-                        apng_obj.save(temp_apng)
+                        # apng保存 (apngライブラリ使用)
+                        temp_apng = os.path.join(temp_dir, "temp.apng")
+                        if frames:
+                            apng_obj = apng.APNG()
+                            for i, frame_file in enumerate(m_body["frames"]):
+                                apng_obj.append_file(
+                                    os.path.join(temp_dir, frame_file["file"]),
+                                    delay=frame_file["delay"],
+                                )
+                            apng_obj.save(temp_apng)
 
-                    with open(temp_apng, "rb") as f:
-                        img_data = f.read()
+                        with open(temp_apng, "rb") as f:
+                            img_data = f.read()
 
-                    final_name = cm.check_image_hash(self.img_path, img_data, anim_name)
-                    with open(
-                        os.path.join(self.img_path, f"{final_name}.apng"), "wb"
-                    ) as f:
-                        f.write(img_data)
+                        final_name = cm.check_image_hash(self.img_path, img_data, anim_name)
+                        with open(
+                            os.path.join(self.img_path, f"{final_name}.apng"), "wb"
+                        ) as f:
+                            f.write(img_data)
 
-                    art_text += f"[image]({final_name}.apng)\n"
-                    shutil.rmtree(temp_dir)
+                        art_text += f"[image]({final_name}.apng)\n"
+                    finally:
+                        # すべての画像を明示的にクローズ
+                        for img in opened_images:
+                            try:
+                                img.close()
+                            except:
+                                pass
+                        
+                        # ガベージコレクションを強制実行してファイルハンドルを解放
+                        import gc
+                        gc.collect()
+                    
+                    # temp_dirを削除
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except PermissionError:
+                        # ファイルがロックされている場合は少し待ってから再試行
+                        import time
+                        time.sleep(0.5)
+                        shutil.rmtree(temp_dir)
             else:
                 # 通常画像
                 match = re.search(r"_p(\d+)\.", url)
