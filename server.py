@@ -422,6 +422,291 @@ def create_app(config: Dict[str, Any]):
     def log_request():
         logging.info(f"Request: {request.method} {request.url}")
 
+    # アカウント管理エンドポイント（/<path:path>より前に定義する必要がある）
+    @app.route("/api/account/<site>", methods=["GET"])
+    def list_accounts(site):
+        """サイトのアカウント一覧を取得"""
+        # cookie_pathは辞書形式なので、サイト名で取得
+        cookie_paths = config.get("cookie_path", {})
+        if isinstance(cookie_paths, dict) and site in cookie_paths:
+            cookie_dir = cookie_paths[site]
+        else:
+            # フォールバック: デフォルトパスを使用
+            cookie_dir = os.path.join("cookie", site)
+
+        accounts = []
+
+        if os.path.exists(cookie_dir):
+            for filename in os.listdir(cookie_dir):
+                if filename.endswith(".json") and not filename.endswith(".backup.1"):
+                    account_name = filename[:-5]  # .jsonを除去
+                    file_path = os.path.join(cookie_dir, filename)
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            # 最終更新日時を取得
+                            mtime = os.path.getmtime(file_path)
+                            accounts.append(
+                                {
+                                    "name": account_name,
+                                    "file": filename,
+                                    "updated": datetime.fromtimestamp(
+                                        mtime
+                                    ).isoformat(),
+                                    "has_cookies": bool(data.get("cookies")),
+                                    "has_ua": bool(
+                                        data.get("user_agent") or data.get("ua")
+                                    ),
+                                }
+                            )
+                    except:
+                        accounts.append(
+                            {
+                                "name": account_name,
+                                "file": filename,
+                                "error": "Failed to read",
+                            }
+                        )
+
+        return jsonify({"site": site, "accounts": accounts})
+
+    @app.route("/api/account/<site>", methods=["POST"])
+    def upload_account(site):
+        """アカウントJSONファイルをアップロード"""
+        if "file" not in request.files:
+            return create_response(400, "error", "No file provided")
+
+        file = request.files["file"]
+        if file.filename == "":
+            return create_response(400, "error", "No file selected")
+
+        if not file.filename.endswith(".json"):
+            return create_response(400, "error", "File must be a JSON file")
+
+        # アカウント名を取得（空の場合はランダム生成）
+        account_name = request.form.get("name", "").strip()
+        if not account_name:
+            # ランダムな5文字の英数字を生成
+            import random
+            import string
+
+            account_name = "".join(
+                random.choices(string.ascii_lowercase + string.digits, k=5)
+            )
+
+        if not account_name.endswith(".json"):
+            account_name += ".json"
+
+        # 保存先ディレクトリを作成
+        cookie_paths = config.get("cookie_path", {})
+        if isinstance(cookie_paths, dict) and site in cookie_paths:
+            cookie_dir = cookie_paths[site]
+        else:
+            cookie_dir = os.path.join("cookie", site)
+        os.makedirs(cookie_dir, exist_ok=True)
+
+        # ファイル名の重複チェック
+        file_path = os.path.join(cookie_dir, account_name)
+        base_name = account_name[:-5]  # .jsonを除去
+        counter = 1
+        while os.path.exists(file_path):
+            # 重複する場合は連番を付加
+            new_name = f"{base_name}_{counter}.json"
+            file_path = os.path.join(cookie_dir, new_name)
+            counter += 1
+
+        try:
+            # JSONとして検証
+            content = file.read()
+            data = json.loads(content)
+
+            # 必須フィールドをチェック
+            if "cookies" not in data:
+                return create_response(
+                    400, "error", "Invalid JSON: missing 'cookies' field"
+                )
+
+            # ファイルを保存
+            with open(file_path, "wb") as f:
+                f.write(content)
+
+            saved_name = os.path.basename(file_path)
+            logging.info(f"Account uploaded: {site}/{saved_name}")
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": f"Account {saved_name} uploaded successfully",
+                    "site": site,
+                    "account": saved_name,
+                }
+            )
+        except json.JSONDecodeError as e:
+            return create_response(400, "error", f"Invalid JSON: {str(e)}")
+        except Exception as e:
+            logging.exception("Account upload error")
+            return create_response(500, "error", str(e))
+
+    @app.route("/api/account/<site>/<account_name>", methods=["DELETE"])
+    def delete_account(site, account_name):
+        """アカウントを削除"""
+        if not account_name.endswith(".json"):
+            account_name += ".json"
+
+        cookie_paths = config.get("cookie_path", {})
+        if isinstance(cookie_paths, dict) and site in cookie_paths:
+            cookie_dir = cookie_paths[site]
+        else:
+            cookie_dir = os.path.join("cookie", site)
+        file_path = os.path.join(cookie_dir, account_name)
+
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logging.info(f"Account deleted: {site}/{account_name}")
+                return jsonify(
+                    {
+                        "status": "success",
+                        "message": f"Account {account_name} deleted successfully",
+                    }
+                )
+            else:
+                return create_response(404, "error", "Account not found")
+        except Exception as e:
+            logging.exception("Account deletion error")
+            return create_response(500, "error", str(e))
+
+    @app.route("/api/account/<site>/switch", methods=["POST"])
+    def switch_account(site):
+        """アカウントを切り替え（login.jsonを置き換え）"""
+        account_name = (
+            request.json.get("account")
+            if request.is_json
+            else request.form.get("account")
+        )
+
+        if not account_name:
+            return create_response(400, "error", "Account name is required")
+
+        if not account_name.endswith(".json"):
+            account_name += ".json"
+
+        cookie_paths = config.get("cookie_path", {})
+        if isinstance(cookie_paths, dict) and site in cookie_paths:
+            cookie_dir = cookie_paths[site]
+        else:
+            cookie_dir = os.path.join("cookie", site)
+        source_path = os.path.join(cookie_dir, account_name)
+        target_path = os.path.join(cookie_dir, "login.json")
+
+        try:
+            if not os.path.exists(source_path):
+                return create_response(
+                    404, "error", f"Account {account_name} not found"
+                )
+
+            # 現在のlogin.jsonがある場合は、元のアカウント名に戻す（リネーム）
+            if os.path.exists(target_path):
+                # 現在のlogin.jsonの内容を読み込んで、元のアカウント名を特定
+                try:
+                    with open(target_path, "r", encoding="utf-8") as f:
+                        current_data = json.load(f)
+                    # 元のアカウント名を推定（ファイル名から）
+                    # バックアップとしてランダム名を生成
+                    import random
+                    import string
+
+                    backup_name = (
+                        "".join(
+                            random.choices(string.ascii_lowercase + string.digits, k=5)
+                        )
+                        + ".json"
+                    )
+                    backup_path = os.path.join(cookie_dir, backup_name)
+                    # 現在のlogin.jsonをバックアップ名で保存
+                    shutil.move(target_path, backup_path)
+                except:
+                    # 読み込み失敗時はタイムスタンプ付きでバックアップ
+                    backup_path = (
+                        target_path
+                        + ".backup."
+                        + datetime.now().strftime("%Y%m%d%H%M%S")
+                    )
+                    shutil.move(target_path, backup_path)
+
+            # 選択したアカウントをlogin.jsonにリネーム
+            shutil.move(source_path, target_path)
+
+            logging.info(f"Account switched: {site} -> {account_name}")
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": f"Switched to account {account_name}",
+                    "site": site,
+                    "account": account_name,
+                }
+            )
+        except Exception as e:
+            logging.exception("Account switch error")
+            return create_response(500, "error", str(e))
+
+    @app.route("/api/account/<site>/<account_name>/rename", methods=["POST"])
+    def rename_account(site, account_name):
+        """アカウント名を変更"""
+        new_name = (
+            request.json.get("new_name")
+            if request.is_json
+            else request.form.get("new_name")
+        )
+
+        if not new_name:
+            return create_response(400, "error", "New account name is required")
+
+        if not account_name.endswith(".json"):
+            account_name += ".json"
+
+        if not new_name.endswith(".json"):
+            new_name += ".json"
+
+        # 同じ名前の場合は何もしない
+        if account_name == new_name:
+            return jsonify({"status": "success", "message": "Account name unchanged"})
+
+        cookie_paths = config.get("cookie_path", {})
+        if isinstance(cookie_paths, dict) and site in cookie_paths:
+            cookie_dir = cookie_paths[site]
+        else:
+            cookie_dir = os.path.join("cookie", site)
+
+        old_path = os.path.join(cookie_dir, account_name)
+        new_path = os.path.join(cookie_dir, new_name)
+
+        # 重複チェック
+        if os.path.exists(new_path):
+            return create_response(
+                409, "error", f"Account name '{new_name}' already exists"
+            )
+
+        try:
+            if not os.path.exists(old_path):
+                return create_response(404, "error", "Account not found")
+
+            # ファイルをリネーム
+            shutil.move(old_path, new_path)
+
+            logging.info(f"Account renamed: {site}/{account_name} -> {new_name}")
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": f"Account renamed from {account_name} to {new_name}",
+                    "site": site,
+                    "old_name": account_name,
+                    "new_name": new_name,
+                }
+            )
+        except Exception as e:
+            logging.exception("Account rename error")
+            return create_response(500, "error", str(e))
+
     @app.route("/", methods=["GET"])
     def serve_root():
         return handle_request("index.html")
@@ -538,9 +823,6 @@ def create_app(config: Dict[str, Any]):
     util.create_index(config["data_path"], config, "api")
 
     return app
-
-
-# --- エントリーポイント ---
 
 
 def http_run(**kwargs):

@@ -186,6 +186,61 @@
       </div>
     </div>
 
+    <!-- Account Management Section -->
+    <div class="collapsible-section">
+      <button class="collapsible-header" onclick="toggleCollapsible(this)">
+        <span style="display: flex; align-items: center; gap: 0.5rem;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+          アカウント管理
+        </span>
+      </button>
+      <div class="collapsible-content">
+        <div style="margin-bottom: 1.5rem;">
+          <label class="form-label">サイト</label>
+          <select id="accountSite" class="form-select" onchange="loadAccounts()">
+            <option value="">サイトを選択</option>
+            <option value="pixiv">Pixiv</option>
+          </select>
+        </div>
+        
+        <div id="accountList" style="margin-bottom: 1.5rem;">
+          <p style="color: var(--text-secondary);">サイトを選択してください</p>
+        </div>
+        
+        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
+        
+        <div>
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--text-secondary);">アカウントをアップロード</h3>
+          <div class="form-group">
+            <div class="form-file-wrapper">
+              <input type="file" id="accountFile" accept="application/json" onchange="updateFileLabel(this, 'account-label')">
+              <label for="accountFile" class="form-file-label" id="account-label">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span>login.jsonを選択</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="accountName">アカウント名（任意）</label>
+            <input type="text" id="accountName" class="form-input" placeholder="login">
+          </div>
+          <button onclick="uploadAccount()" class="btn btn-primary btn-block">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span>アップロード</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Site Links Card -->
     <div class="card">
       <div class="card-header">
