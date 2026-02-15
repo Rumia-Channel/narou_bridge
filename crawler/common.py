@@ -109,9 +109,19 @@ def load_cookies_and_ua(input_file: str):
     return cookies_dict, ua
 
 
-def save_cookies_and_ua(output_file: str, cookies: dict, ua: str):
-    """Cookie とユーザーエージェントを保存する"""
-    _save_json(output_file, {"cookies": cookies, "user_agent": ua})
+def save_cookies_and_ua(output_file: str, cookies: dict, ua: str, display_name: str = None):
+    """Cookie とユーザーエージェントを保存する
+    
+    Args:
+        output_file: 出力ファイルパス
+        cookies: クッキー辞書
+        ua: ユーザーエージェント文字列
+        display_name: 表示名（省略可）
+    """
+    data = {"cookies": cookies, "user_agent": ua}
+    if display_name:
+        data["display_name"] = display_name
+    _save_json(output_file, data)
 
 
 # --- ファイル操作・画像処理関連 ---

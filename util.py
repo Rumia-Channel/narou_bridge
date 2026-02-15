@@ -381,11 +381,16 @@ def dispatch_action(
         if action_name == "download":
             func(param, folder_path[site], key_data, data_path, host_name)
         elif action_name == "login":
-            # param が "site:account_name" 形式の場合、アカウント名を抽出
+            # param を解析: "site" または "site:account_name" または "site:account_name:display_name"
             account_name = None
+            display_name = None
             if ":" in param:
-                _, account_name = param.split(":", 1)
-            func(cookie_path[site], data_path, interval, account_name)
+                parts = param.split(":", 2)
+                if len(parts) >= 2:
+                    account_name = parts[1]
+                if len(parts) >= 3:
+                    display_name = parts[2]
+            func(cookie_path[site], data_path, interval, account_name, display_name)
         else:
             func(folder_path[site], key_data, data_path, host_name)
 
