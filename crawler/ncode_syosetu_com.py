@@ -646,6 +646,11 @@ def init(cookie_path, data_path, is_login, interval):
     pass
 
 
+def login(folder_path: str, key_data: str, data_path: str, host_name: str):
+    """ログイン処理（なろうはログイン不要なのでpass）"""
+    pass
+
+
 def repair(folder_path: str, key_data: str, data_path: str, host_name: str):
     """データ修復: 一次ファイルを削除し、全てのraw.jsonからデータを強制的に再構築する"""
     if not os.path.exists(folder_path):

@@ -221,8 +221,26 @@ class PixivCrawler:
         }
         logging.info(f"Login initialized.")
 
-    def _perform_playwright_login(self, playwright: Playwright):
-        """Playwrightを使用したログイン・2FA・ReCAPTCHA対応"""
+    def login_new_account(self, account_name: str):
+        """新規アカウントとしてログイン（強制ログイン、指定ファイル名で保存）
+        
+        Args:
+            account_name: アカウント名（{account_name}.json として保存）
+        """
+        cookie_path = os.path.join(os.path.dirname(self.cookie_path), f"{account_name}.json")
+        with sync_playwright() as playwright:
+            self._perform_playwright_login(playwright, cookie_path)
+        logging.info(f"New account '{account_name}' login completed.")
+
+    def _perform_playwright_login(self, playwright: Playwright, cookie_path: str = None):
+        """Playwrightを使用したログイン・2FA・ReCAPTCHA対応
+        
+        Args:
+            playwright: Playwright インスタンス
+            cookie_path: クッキー保存先パス（None の場合は self.cookie_path を使用）
+        """
+        save_path = cookie_path if cookie_path else self.cookie_path
+        
         browser = playwright.firefox.launch(headless=True)
         context = browser.new_context(
             locale="en-US", viewport={"width": 1920, "height": 1080}, user_agent=self.ua
@@ -308,7 +326,7 @@ class PixivCrawler:
                     if c.get("name") and c.get("value")
                 }
                 ua = page.evaluate("() => navigator.userAgent")
-                cm.save_cookies_and_ua(self.cookie_path, cookies_dict, ua)
+                cm.save_cookies_and_ua(save_path, cookies_dict, ua)
             else:
                 logging.error(f"Login failed status={status}")
 
@@ -1559,6 +1577,28 @@ def init(cookie_path, data_path, is_login, interval):
     _crawler = PixivCrawler(cookie_path, data_path, interval)
     if is_login:
         _crawler.login()
+
+
+def login(cookie_path: str, data_path: str, interval: int, account_name: str = None):
+    """外部からログイン処理を実行するための公開関数
+    
+    Args:
+        cookie_path: クッキー保存ディレクトリパス
+        data_path: データ保存ディレクトリパス
+        interval: リクエスト間隔
+        account_name: アカウント名（None の場合は login.json、指定時は {account_name}.json）
+    """
+    global _crawler
+    _crawler = PixivCrawler(cookie_path, data_path, interval)
+    
+    if account_name:
+        # 新規アカウントとしてログイン（強制ログイン、指定ファイル名で保存）
+        _crawler.login_new_account(account_name)
+    else:
+        # 既存の login.json でログイン（既存クッキーが有効ならスキップ）
+        _crawler.login(force_login=True)
+    
+    logging.info("Login completed successfully.")
 
 
 def download(url, folder_path, key_data, data_path, host_name):
