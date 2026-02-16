@@ -107,6 +107,13 @@ def format_for_url(text: str) -> str:
     return re.sub(r"\[\[jumpuri:(.*?) > (.*?)\]\]", repl, text, flags=re.DOTALL)
 
 
+def format_jump_url(text: str) -> str:
+    return re.sub(
+        r'"/jump\.php\?([^"]+)"',
+        lambda m: '"' + unquote(m.group(1)) + '"',
+        text
+    )
+
 def format_ruby(text: str) -> str:
     """[[rb:...]]タグを独自形式に変換"""
     return re.sub(r"\[\[rb:(.*?)\s*>\s*(.*?)\]\]", r"[ruby:<\1>(\2)]", text)
@@ -668,6 +675,7 @@ class PixivCrawler:
         text = format_ruby(text)
         text = remove_chapter_tag(text)
         text = format_for_url(text)
+        text = format_jump_url(text)
         return text
 
     # -------------------------------------------------------------------------
@@ -2103,6 +2111,17 @@ def convert(folder_path, key_data, data_path, host_name):
                     data["tags"] = format_tags(data["tags"])
                 if "all_tags" in data:
                     data["all_tags"] = format_tags(data["all_tags"])
+                    
+                if "text" in data:
+                    data["text"] = format_jump_url(data["text"])
+                    
+                if "caption" in data:
+                    data["caption"] = format_jump_url(data["caption"])
+                
+                if "episodes" in data:
+                    for episode in data["episodes"]:
+                        if "text" in episode:
+                            episode["text"] = format_jump_url(episode["text"])
 
                 cm._save_json(raw_path, data)
 
