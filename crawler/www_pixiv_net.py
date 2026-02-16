@@ -2122,6 +2122,10 @@ def convert(folder_path, key_data, data_path, host_name):
                     for episode in data["episodes"]:
                         if "text" in episode:
                             episode["text"] = format_jump_url(episode["text"])
+                        if "introduction" in episode:
+                            episode["introduction"] = format_jump_url(episode["introduction"])
+                        if "postscript" in episode:
+                            episode["postscript"] = format_jump_url(episode["postscript"])
 
                 cm._save_json(raw_path, data)
 
