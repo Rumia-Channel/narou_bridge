@@ -430,6 +430,23 @@ class PixivCrawler:
                 return json.loads(unescape(res.text))
             except:
                 return None
+    
+    def get_json_login_only(self, url: str) -> Optional[Dict]:
+        """APIからJSONを取得（Cookieありのみ）"""
+        request_headers = self._build_request_headers()
+        res = self._request_with_login(url, request_headers)
+        if not res or res.status_code != 200:
+            return None
+        try:
+            data = res.json()
+            if not data.get("error", False):
+                return data
+            return None
+        except:
+            try:
+                return json.loads(unescape(res.text))
+            except:
+                return None
 
     # -------------------------------------------------------------------------
     # ヘルパー: 保存、更新チェック、スナップショット
@@ -851,12 +868,25 @@ class PixivCrawler:
                         # returnしないことで、この後の通常ダウンロード処理が実行される
 
         # --- 以下、通常ダウンロード処理 ---
-        s_toc = self.get_json(
-            f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles"
-        )
+        toc_url = f"https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles"
+        s_toc = self.get_json(toc_url)
         if not s_toc:
             return
         toc = s_toc["body"]
+
+        # 非ログイン取得だと、R18等が混在するシリーズで available=false が返ることがあるため
+        # 1件でも unavailable があればログイン状態で目次を再取得する
+        if isinstance(toc, list):
+            has_unavailable = any(
+                isinstance(item, dict) and item.get("available") is False for item in toc
+            )
+            if has_unavailable:
+                logging.info(
+                    f"Series {series_id}: found unavailable episodes without login, retrying content_titles with login."
+                )
+                s_toc_login = self.get_json_login_only(toc_url)
+                if s_toc_login and isinstance(s_toc_login.get("body"), list):
+                    toc = s_toc_login["body"]
 
         cm.make_dir(f"s{series_id}", folder_path)
         self.get_cover(
