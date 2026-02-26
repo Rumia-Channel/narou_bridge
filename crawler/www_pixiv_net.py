@@ -447,6 +447,54 @@ class PixivCrawler:
                 return json.loads(unescape(res.text))
             except:
                 return None
+    
+    def _has_unavailable_entries(self, entries: Any) -> bool:
+        """一覧レスポンス内に、ログインで再取得すべき unavailable 要素があるか判定"""
+        if not isinstance(entries, list):
+            return False
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            if item.get("available") is False:
+                return True
+            if item.get("isAvailable") is False:
+                return True
+            if item.get("readable") is False:
+                return True
+            if item.get("isReadable") is False:
+                return True
+            if item.get("isMasked") is True:
+                return True
+        return False
+    
+    def _extract_comic_series_entries(self, body: Any) -> List[Dict[str, Any]]:
+        """漫画シリーズの各話一覧をレスポンス形式差分を吸収して取り出す"""
+        if not isinstance(body, dict):
+            return []
+
+        direct_series = body.get("series")
+        if isinstance(direct_series, list):
+            return [item for item in direct_series if isinstance(item, dict)]
+
+        page_data = body.get("page")
+        if isinstance(page_data, dict):
+            page_series = page_data.get("series")
+            if isinstance(page_series, list):
+                return [item for item in page_series if isinstance(item, dict)]
+
+        return []
+    
+    def _get_comic_series_total_hint(self, body: Any, comic_id: str) -> int:
+        """illustSeries からシリーズの想定話数を取得"""
+        if not isinstance(body, dict):
+            return 0
+        for series in body.get("illustSeries", []):
+            if isinstance(series, dict) and str(series.get("id")) == str(comic_id):
+                try:
+                    return int(series.get("total") or 0)
+                except Exception:
+                    return 0
+        return 0
 
     # -------------------------------------------------------------------------
     # ヘルパー: 保存、更新チェック、スナップショット
@@ -876,11 +924,7 @@ class PixivCrawler:
 
         # 非ログイン取得だと、R18等が混在するシリーズで available=false が返ることがあるため
         # 1件でも unavailable があればログイン状態で目次を再取得する
-        if isinstance(toc, list):
-            has_unavailable = any(
-                isinstance(item, dict) and item.get("available") is False for item in toc
-            )
-            if has_unavailable:
+        if self._has_unavailable_entries(toc):
                 logging.info(
                     f"Series {series_id}: found unavailable episodes without login, retrying content_titles with login."
                 )
@@ -1235,12 +1279,36 @@ class PixivCrawler:
         logging.info(f"Comic ID: {comic_id}")
 
         # シリーズ情報取得 (page 1)
-        resp = self.get_json(
-            f"https://www.pixiv.net/ajax/series/{comic_id}?p=1&lang=ja"
-        )
+        comic_page_url = f"https://www.pixiv.net/ajax/series/{comic_id}?p=1&lang=ja"
+        resp = self.get_json(comic_page_url)
         if not resp:
             return
-        c_detail = cm.find_key_recursively(resp, "body")
+        first_body = cm.find_key_recursively(resp, "body")
+        if not isinstance(first_body, dict):
+            return
+
+        first_series = self._extract_comic_series_entries(first_body)
+        series_total_hint = self._get_comic_series_total_hint(first_body, comic_id)
+        need_login_retry = self._has_unavailable_entries(first_series) or (
+            not first_series and series_total_hint > 0
+        )
+        if need_login_retry:
+            if self._has_unavailable_entries(first_series):
+                logging.info(
+                    f"Comic {comic_id}: found unavailable episodes without login, retrying page 1 with login."
+                )
+            else:
+                logging.info(
+                    f"Comic {comic_id}: page 1 is empty without login (series total hint: {series_total_hint}), retrying with login."
+                )
+            resp_login = self.get_json_login_only(comic_page_url)
+            if resp_login:
+                resp = resp_login
+                first_body = cm.find_key_recursively(resp, "body")
+
+        c_detail = first_body if isinstance(first_body, dict) else cm.find_key_recursively(resp, "body")
+        if not isinstance(c_detail, dict):
+            return
 
         # --- タグ情報の生成 ---
         new_tags = format_tags(list(c_detail.get("tagTranslation", {}).keys()))
@@ -1302,17 +1370,41 @@ class PixivCrawler:
         page = 1
         while True:
             self._sleep()
-            p_json = self.get_json(
-                f"https://www.pixiv.net/ajax/series/{comic_id}?p={page}&lang=ja"
-            )
+            page_url = f"https://www.pixiv.net/ajax/series/{comic_id}?p={page}&lang=ja"
+            p_json = self.get_json(page_url)
             if not p_json:
                 break
-            series_data = cm.find_key_recursively(p_json, "body").get("series", [])
+            p_body = cm.find_key_recursively(p_json, "body")
+            if not isinstance(p_body, dict):
+                break
+            series_data = self._extract_comic_series_entries(p_body)
+
+            need_login_retry = self._has_unavailable_entries(series_data) or (
+                page == 1 and not series_data and series_total_hint > 0
+            )
+            if need_login_retry:
+                if self._has_unavailable_entries(series_data):
+                    logging.info(
+                        f"Comic {comic_id}: found unavailable episodes on page {page} without login, retrying with login."
+                    )
+                else:
+                    logging.info(
+                        f"Comic {comic_id}: page {page} is empty without login (series total hint: {series_total_hint}), retrying with login."
+                    )
+                p_json_login = self.get_json_login_only(page_url)
+                if p_json_login:
+                    p_body = cm.find_key_recursively(p_json_login, "body")
+                    if isinstance(p_body, dict):
+                        series_data = self._extract_comic_series_entries(p_body)
             if not series_data:
                 break
 
             for item in series_data:
-                arts[item["order"]] = item["workId"]
+                order = item.get("order")
+                work_id = item.get("workId", item.get("id"))
+                if order is None or work_id is None:
+                    continue
+                arts[order] = work_id
 
             if len(series_data) == 0:
                 break
@@ -1548,11 +1640,26 @@ class PixivCrawler:
         in_m_series = []
         for sid in m_series:
             self._sleep()
-            s_p1 = self.get_json(f"https://www.pixiv.net/ajax/series/{sid}?p=1&lang=ja")
+            page1_url = f"https://www.pixiv.net/ajax/series/{sid}?p=1&lang=ja"
+            s_p1 = self.get_json(page1_url)
             if s_p1:
                 det = cm.find_key_recursively(s_p1, "body")
-                for item in det.get("series", []):
-                    in_m_series.append(str(item["workId"]))
+                if not isinstance(det, dict):
+                    continue
+                series_data = self._extract_comic_series_entries(det)
+                need_login_retry = self._has_unavailable_entries(series_data) or (
+                    not series_data and self._get_comic_series_total_hint(det, sid) > 0
+                )
+                if need_login_retry:
+                    s_p1_login = self.get_json_login_only(page1_url)
+                    if s_p1_login:
+                        det_login = cm.find_key_recursively(s_p1_login, "body")
+                        if isinstance(det_login, dict):
+                            series_data = self._extract_comic_series_entries(det_login)
+                for item in series_data:
+                    work_id = item.get("workId", item.get("id"))
+                    if work_id is not None:
+                        in_m_series.append(str(work_id))
         mangas = [m for m in mangas if m not in in_m_series]
 
         # --- 小説処理 ---
