@@ -495,6 +495,18 @@ class PixivCrawler:
                 except Exception:
                     return 0
         return 0
+    
+    def _get_comic_page_total(self, body: Any) -> int:
+        """漫画シリーズAPIの page.total を取得"""
+        if not isinstance(body, dict):
+            return 0
+        page_data = body.get("page")
+        if isinstance(page_data, dict):
+            try:
+                return int(page_data.get("total") or 0)
+            except Exception:
+                return 0
+        return 0
 
     # -------------------------------------------------------------------------
     # ヘルパー: 保存、更新チェック、スナップショット
@@ -1289,13 +1301,23 @@ class PixivCrawler:
 
         first_series = self._extract_comic_series_entries(first_body)
         series_total_hint = self._get_comic_series_total_hint(first_body, comic_id)
+        first_page_total = self._get_comic_page_total(first_body)
         need_login_retry = self._has_unavailable_entries(first_series) or (
             not first_series and series_total_hint > 0
+        ) or (
+            series_total_hint > 0
+            and first_page_total > 0
+            and first_page_total < series_total_hint
         )
+        force_login_for_series_pages = False
         if need_login_retry:
             if self._has_unavailable_entries(first_series):
                 logging.info(
                     f"Comic {comic_id}: found unavailable episodes without login, retrying page 1 with login."
+                )
+            elif series_total_hint > 0 and first_page_total > 0 and first_page_total < series_total_hint:
+                logging.info(
+                    f"Comic {comic_id}: page total mismatch without login ({first_page_total}/{series_total_hint}), retrying with login."
                 )
             else:
                 logging.info(
@@ -1305,6 +1327,7 @@ class PixivCrawler:
             if resp_login:
                 resp = resp_login
                 first_body = cm.find_key_recursively(resp, "body")
+                force_login_for_series_pages = True
 
         c_detail = first_body if isinstance(first_body, dict) else cm.find_key_recursively(resp, "body")
         if not isinstance(c_detail, dict):
@@ -1371,21 +1394,34 @@ class PixivCrawler:
         while True:
             self._sleep()
             page_url = f"https://www.pixiv.net/ajax/series/{comic_id}?p={page}&lang=ja"
-            p_json = self.get_json(page_url)
+            p_json = (
+                self.get_json_login_only(page_url)
+                if force_login_for_series_pages
+                else self.get_json(page_url)
+            )
             if not p_json:
                 break
             p_body = cm.find_key_recursively(p_json, "body")
             if not isinstance(p_body, dict):
                 break
             series_data = self._extract_comic_series_entries(p_body)
+            page_total = self._get_comic_page_total(p_body)
 
             need_login_retry = self._has_unavailable_entries(series_data) or (
                 page == 1 and not series_data and series_total_hint > 0
+            ) or (
+                series_total_hint > 0
+                and page_total > 0
+                and page_total < series_total_hint
             )
-            if need_login_retry:
+            if need_login_retry and not force_login_for_series_pages:
                 if self._has_unavailable_entries(series_data):
                     logging.info(
                         f"Comic {comic_id}: found unavailable episodes on page {page} without login, retrying with login."
+                    )
+                elif series_total_hint > 0 and page_total > 0 and page_total < series_total_hint:
+                    logging.info(
+                        f"Comic {comic_id}: page total mismatch on page {page} without login ({page_total}/{series_total_hint}), retrying with login."
                     )
                 else:
                     logging.info(
@@ -1396,6 +1432,7 @@ class PixivCrawler:
                     p_body = cm.find_key_recursively(p_json_login, "body")
                     if isinstance(p_body, dict):
                         series_data = self._extract_comic_series_entries(p_body)
+                        force_login_for_series_pages = True
             if not series_data:
                 break
 
@@ -1647,8 +1684,14 @@ class PixivCrawler:
                 if not isinstance(det, dict):
                     continue
                 series_data = self._extract_comic_series_entries(det)
+                page_total = self._get_comic_page_total(det)
+                series_total_hint = self._get_comic_series_total_hint(det, sid)
                 need_login_retry = self._has_unavailable_entries(series_data) or (
-                    not series_data and self._get_comic_series_total_hint(det, sid) > 0
+                    not series_data and series_total_hint > 0
+                ) or (
+                    series_total_hint > 0
+                    and page_total > 0
+                    and page_total < series_total_hint
                 )
                 if need_login_retry:
                     s_p1_login = self.get_json_login_only(page1_url)
