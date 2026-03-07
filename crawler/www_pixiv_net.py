@@ -81,6 +81,52 @@ def format_tags(tags: List[Union[str, Dict]]) -> List[str]:
     return result
 
 
+def extract_tag_names(tag_data: Any) -> List[str]:
+    """Pixiv API の型揺れを吸収してタグ名配列へ正規化する"""
+    if isinstance(tag_data, dict):
+        return format_tags(list(tag_data.keys()))
+    if isinstance(tag_data, list):
+        return format_tags(tag_data)
+    if isinstance(tag_data, str):
+        return format_tags([tag_data])
+    return []
+
+
+def find_comic_series_detail(body: Any, comic_id: str) -> Dict[str, Any]:
+    """illustSeries から対象の漫画シリーズ情報を取得する"""
+    if not isinstance(body, dict):
+        return {}
+    for series in body.get("illustSeries", []):
+        if isinstance(series, dict) and str(series.get("id")) == str(comic_id):
+            return series
+    return {}
+
+
+def extract_pixiv_meta(body: Any) -> Dict[str, Any]:
+    """extraData.meta を安全に取り出す"""
+    if not isinstance(body, dict):
+        return {}
+    extra_data = body.get("extraData")
+    if not isinstance(extra_data, dict):
+        return {}
+    meta = extra_data.get("meta")
+    return meta if isinstance(meta, dict) else {}
+
+
+def extract_pixiv_title(meta: Any, fallback: str = "") -> str:
+    """Pixiv メタデータからタイトルを安全に取り出す"""
+    if isinstance(meta, dict):
+        twitter = meta.get("twitter")
+        if isinstance(twitter, dict):
+            title = twitter.get("title")
+            if isinstance(title, str) and title:
+                return title
+        title = meta.get("title")
+        if isinstance(title, str) and title:
+            return title
+    return fallback
+
+
 def remove_chapter_tag(text: str) -> str:
     """[chapter:...]タグを整形する"""
 
@@ -1334,20 +1380,22 @@ class PixivCrawler:
             return
 
         # --- タグ情報の生成 ---
-        new_tags = format_tags(list(c_detail.get("tagTranslation", {}).keys()))
+        new_tags = extract_tag_names(c_detail.get("tagTranslation"))
         # 漫画シリーズ自体には aiType が直接取れないことが多いが、取れる場合はここで処理
         # ここではとりあえずタグリストのみ取得
+
+        series_info = find_comic_series_detail(c_detail, comic_id)
+        meta = extract_pixiv_meta(c_detail)
+        title = extract_pixiv_title(
+            meta, series_info.get("title") or f"Comic {comic_id}"
+        )
 
         comic_dir = os.path.join(folder_path, f"c{comic_id}")
         raw_path = os.path.join(comic_dir, "raw", "raw.json")
         cm.make_dir(f"c{comic_id}", folder_path)
 
         # シリーズ更新チェック
-        series_update_date = None
-        for j in c_detail.get("illustSeries", []):
-            if str(j["id"]) == str(comic_id):
-                series_update_date = safe_fromiso(j["updateDate"])
-                break
+        series_update_date = safe_fromiso(series_info.get("updateDate"))
 
         # --- 更新チェックとタグのみ更新処理 ---
         if update and os.path.isfile(raw_path):
@@ -1360,9 +1408,6 @@ class PixivCrawler:
                     if not self._is_assets_missing(old_data, f"c{comic_id}"):
                         # 資産が完全な場合のみ、タグチェックや更新なしチェックを行う
                         if old_data.get("tags", []) != new_tags:
-                            # メタデータ
-                            meta = c_detail["extraData"]["meta"]
-                            title = meta["twitter"]["title"]
                             logging.info(
                                 f"{title} : シリーズ更新なし、タグのみ更新します。"
                             )
@@ -1383,7 +1428,7 @@ class PixivCrawler:
                     else:
                         # 資産が欠損している場合は再ダウンロード処理へ進む
                         logging.info(
-                            f"{c_detail['extraData']['meta']['twitter']['title']} : ローカルリソース欠損を検出、再取得を実行します。"
+                            f"{title} : ローカルリソース欠損を検出、再取得を実行します。"
                         )
                         # returnしないことで、この後の通常ダウンロード処理が実行される
 
@@ -1451,16 +1496,16 @@ class PixivCrawler:
             return
 
         # メタデータ
-        meta = c_detail["extraData"]["meta"]
-        title = meta["twitter"]["title"]
+        meta_title = meta.get("title", "")
         try:
-            author = re.search(r"「[^」]*」/「(.*?)」のシリーズ", meta["title"]).group(
+            author = re.search(r"「[^」]*」/「(.*?)」のシリーズ", meta_title).group(
                 1
             )
         except:
             author = "Unknown"
         try:
-            author_id = re.search(r"user/(\d+)/series", meta["canonical"]).group(1)
+            canonical = meta.get("canonical", "")
+            author_id = re.search(r"user/(\d+)/series", canonical).group(1)
         except:
             author_id = "0"
 
@@ -1571,12 +1616,8 @@ class PixivCrawler:
             "serialization": "連載中",
             "tags": new_tags,
             "all_tags": format_tags(list(set(all_tags))),
-            "createDate": safe_date_str(
-                c_detail.get("illustSeries", [{}])[0].get("createDate")
-            ),
-            "updateDate": safe_date_str(
-                c_detail.get("illustSeries", [{}])[0].get("updateDate")
-            ),
+            "createDate": safe_date_str(series_info.get("createDate")),
+            "updateDate": safe_date_str(series_info.get("updateDate")),
             "episodes": episodes_data,
         }
 
@@ -1597,7 +1638,7 @@ class PixivCrawler:
         # ユーザー設定読み込み
         user_json_path = os.path.join(folder_path, "user.json")
 
-        full_conf = cm._load_json_safe(user_json_path)
+        full_conf = cm._load_json_safe(user_json_path) or {"version": 3}
         user_conf = full_conf.get(user_id, {})
 
         # 初期化
@@ -1629,14 +1670,16 @@ class PixivCrawler:
         )
         if not all_data:
             return
-        body = all_data["body"]
+        body = all_data.get("body")
+        if not isinstance(body, dict):
+            return
 
         # エラー修正: 辞書型・リスト型両対応でIDリスト抽出
         # novelSeries
         ns_data = body.get("novelSeries")
         n_series = []
         if isinstance(ns_data, list):
-            n_series = [str(x["id"]) for x in ns_data]
+            n_series = [str(x.get("id")) for x in ns_data if isinstance(x, dict) and x.get("id") is not None]
         elif isinstance(ns_data, dict):
             n_series = list(ns_data.keys())
 
@@ -1644,7 +1687,7 @@ class PixivCrawler:
         ms_data = body.get("mangaSeries")
         m_series = []
         if isinstance(ms_data, list):
-            m_series = [str(x["id"]) for x in ms_data]
+            m_series = [str(x.get("id")) for x in ms_data if isinstance(x, dict) and x.get("id") is not None]
         elif isinstance(ms_data, dict):
             m_series = list(ms_data.keys())
 
@@ -1658,9 +1701,9 @@ class PixivCrawler:
         mangas_data = body.get("manga", {})
         mangas = list(mangas_data.keys()) if isinstance(mangas_data, dict) else []
 
-        user_name = self.get_json(f"https://www.pixiv.net/ajax/user/{user_id}")["body"][
-            "name"
-        ]
+        user_data = self.get_json(f"https://www.pixiv.net/ajax/user/{user_id}") or {}
+        user_body = user_data.get("body", {}) if isinstance(user_data, dict) else {}
+        user_name = user_body.get("name", user_id) if isinstance(user_body, dict) else user_id
         logging.info(f"User Name: {user_name}")
 
         # シリーズ重複除外（事前チェック）
@@ -1671,7 +1714,15 @@ class PixivCrawler:
                 f"https://www.pixiv.net/ajax/novel/series/{sid}/content_titles"
             )
             if toc:
-                in_n_series.extend([str(t["id"]) for t in toc["body"]])
+                toc_body = toc.get("body")
+                if isinstance(toc_body, list):
+                    in_n_series.extend(
+                        [
+                            str(t.get("id"))
+                            for t in toc_body
+                            if isinstance(t, dict) and t.get("id") is not None
+                        ]
+                    )
         novels = [n for n in novels if n not in in_n_series]
 
         in_m_series = []
@@ -1766,7 +1817,7 @@ class PixivCrawler:
                         f"Migrated illust_ids_snapshot array to {snapshot_file}"
                     )
                     # user.jsonから旧規格配列を削除
-                    full_conf = cm._load_json_safe(user_json_path)
+                    full_conf = cm._load_json_safe(user_json_path) or {"version": 3}
                     if user_id in full_conf:
                         full_conf[user_id].pop("illust_ids_snapshot", None)
                         cm._save_json(user_json_path, full_conf)
@@ -1795,7 +1846,7 @@ class PixivCrawler:
             self._save_illust_snapshot(folder_path, user_id, target_ids)
 
             # user.json 更新 (ハッシュのみ)
-            full_conf = cm._load_json_safe(user_json_path)
+            full_conf = cm._load_json_safe(user_json_path) or {"version": 3}
             if user_id in full_conf:
                 full_conf[user_id]["illust_ids_snapshot_hash"] = _hash_ids(target_ids)
                 # 旧規格配列が残っていれば削除（念のため）
