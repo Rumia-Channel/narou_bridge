@@ -11,9 +11,11 @@ from typing import Dict, Any, List, Optional, Tuple
 # 必要に応じてインポート (環境に合わせてパス解決してください)
 import crawler.convert_narou as cn
 import crawler.common as cm
+from crawler.site_runtime import DispatchReport, SiteRegistry
 
 # グローバル設定
 _global_img_url = ""
+_site_registry: Optional[SiteRegistry] = None
 
 # --- テンプレート読み込み ---
 
@@ -50,9 +52,35 @@ def get_img_url() -> str:
     return _global_img_url
 
 
-def init_import(site_dic):
+def init_import(
+    site_dic,
+    login_dic=None,
+    folder_path=None,
+    data_path=None,
+    cookie_path=None,
+    interval=None,
+):
     """各サイト用のクローラーモジュールを動的にインポート"""
+    global _site_registry
+
     globals().update(import_modules(site_dic))
+
+    if all(
+        value is not None
+        for value in [login_dic, folder_path, data_path, cookie_path, interval]
+    ):
+        _site_registry = SiteRegistry.from_config(
+            site_dic=site_dic,
+            login_dic=login_dic,
+            folder_path=folder_path,
+            data_path=data_path,
+            cookie_path=cookie_path,
+            interval=interval,
+        )
+
+
+def get_site_registry() -> Optional[SiteRegistry]:
+    return _site_registry
 
 
 def import_modules(site_dic):
@@ -324,77 +352,18 @@ def dispatch_action(
     key_data,
     interval,
     host_name,
-):
-    """各サイトのアクションを共通ディスパッチで実行する。
+) -> DispatchReport:
+    """各サイトのアクションを共通ディスパッチで実行する。"""
 
-    クローラーモジュールに action_name と同名の関数があれば呼び出す。
-    モジュールに ALLOWED_ACTIONS 属性があれば、そのリストに含まれる
-    アクションのみ許可する（未定義なら全アクション許可）。
-    """
+    global _site_registry
 
-    target_sites = []
+    if _site_registry is None:
+        init_import(site_dic, login_dic, folder_path, data_path, cookie_path, interval)
 
-    # パラメータ解析: 'all' / サイトキー / URLの一部
-    if param == "all":
-        target_sites = list(site_dic.keys())
-    elif param in site_dic:
-        target_sites = [param]
-    else:
-        # URLの一部からサイト判定 (download用)
-        for site_key, value in site_dic.items():
-            module_sig = value.replace("_", ".").replace(".py", "")
-            if module_sig in param:
-                target_sites = [site_key]
-                break
-        else:
-            return 400  # 該当サイトなし
+    if _site_registry is None:
+        return DispatchReport(action_name=action_name, param=param)
 
-    # 実行ループ
-    for site in target_sites:
-        module = globals()[site]
-
-        # モジュールの ALLOWED_ACTIONS でフィルタリング
-        allowed = getattr(module, "ALLOWED_ACTIONS", None)
-        if allowed is not None and action_name not in allowed:
-            logging.debug(
-                f"Skipping site: {site} for {action_name} (not in ALLOWED_ACTIONS)"
-            )
-            continue
-
-        # モジュールに該当関数が存在するかチェック
-        func = getattr(module, action_name, None)
-        if func is None:
-            logging.debug(f"Skipping site: {site} — no '{action_name}' function")
-            continue
-
-        # ログイン設定チェック
-        login_val = int(login_dic[site])
-        if login_val not in [0, 1]:
-            return 400
-
-        logging.info(f"{action_name.capitalize()}: {site}")
-
-        # 共通初期化
-        module.init(cookie_path[site], data_path, login_val, interval)
-
-        # アクション実行 (downloadだけ引数が異なる: URLが先頭に来る)
-        if action_name == "download":
-            func(param, folder_path[site], key_data, data_path, host_name)
-        elif action_name == "login":
-            # param を解析: "site" または "site:account_name" または "site:account_name:display_name"
-            account_name = None
-            display_name = None
-            if ":" in param:
-                parts = param.split(":", 2)
-                if len(parts) >= 2:
-                    account_name = parts[1]
-                if len(parts) >= 3:
-                    display_name = parts[2]
-            func(cookie_path[site], data_path, interval, account_name, display_name)
-        else:
-            func(folder_path[site], key_data, data_path, host_name)
-
-    return 200
+    return _site_registry.dispatch(action_name, param, key_data, host_name)
 
 
 # --- ファイル変換処理 (PDF/ZIP) ---
