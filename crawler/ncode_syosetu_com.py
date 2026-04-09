@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Tuple, Optional, Set
 import crawler.common as cm
 import crawler.convert_narou as cn
 from crawler.common import safe_fromiso
+from crawler.site_runtime import BaseSite, ActionContext
 import util
 
 # --- 定数定義 ---
@@ -758,3 +759,32 @@ def repair(folder_path: str, key_data: str, data_path: str, host_name: str):
     logging.info(f"  - Intermediate files deleted: {deleted_count}")
     logging.info(f"  - Works rebuilt: {rebuild_count}")
     logging.info("=" * 60)
+
+
+class NarouSite(BaseSite):
+    allowed_actions = frozenset({"convert", "repair"})
+
+    def on_convert(self, _param: str, context: ActionContext):
+        convert(
+            context.folder_path,
+            context.key_data,
+            context.data_path,
+            context.host_name,
+        )
+        return "convert"
+
+    def on_repair(self, _param: str, context: ActionContext):
+        repair(
+            context.folder_path,
+            context.key_data,
+            context.data_path,
+            context.host_name,
+        )
+        return "repair"
+
+
+def create_site() -> NarouSite:
+    return NarouSite()
+
+
+SITE = NarouSite()

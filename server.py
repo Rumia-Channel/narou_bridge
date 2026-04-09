@@ -315,10 +315,10 @@ class TaskManager:
                     c["interval"],
                     host_name,
                 )
-                if ret == 400:
-                    logging.error(f"Task {param_key} failed with 400")
+                if ret.status_code == 400:
+                    logging.error("Task %s failed: %s", param_key, ret.summary())
                 else:
-                    logging.info(f"Task {param_key} completed")
+                    logging.info("Task %s completed: %s", param_key, ret.summary())
                 return
 
         # PDF/ZIP処理
@@ -399,7 +399,14 @@ def create_app(config: Dict[str, Any]):
     # util モジュール初期化
     if "site_dic" in config:
         try:
-            util.init_import(config["site_dic"])
+            util.init_import(
+                config["site_dic"],
+                config.get("login_dic"),
+                config.get("folder_path"),
+                config.get("data_path"),
+                config.get("cookie_path"),
+                config.get("interval"),
+            )
             logging.info("Crawler modules loaded successfully.")
         except Exception as e:
             logging.error(f"Failed to load crawler modules: {e}")

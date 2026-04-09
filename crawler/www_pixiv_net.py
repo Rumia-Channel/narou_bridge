@@ -26,6 +26,7 @@ import apng  # 必要に応じて有効化
 import crawler.common as cm
 import crawler.convert_narou as cn
 from crawler.common import safe_fromiso, safe_date_str
+from crawler.site_runtime import BaseSite, ActionContext
 import util
 
 # --- 定数定義 ---
@@ -34,6 +35,76 @@ JST = timezone(timedelta(hours=9))
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
 # --- ユーティリティ関数 ---
+
+
+def _default_user_entry() -> Dict[str, Any]:
+    return {
+        "novel": "enable",
+        "comic": "enable",
+        "illust_ids_snapshot": [],
+    }
+
+
+def _load_user_config_document(user_json_path: str) -> Dict[str, Any]:
+    data = cm._load_json_safe(user_json_path)
+    if not isinstance(data, dict):
+        data = {}
+    data["version"] = VERSION
+    return data
+
+
+def ensure_tracked_user(folder_path: str, user_id: str) -> Dict[str, Any]:
+    """user.json にユーザーエントリを先行登録する。"""
+    user_json_path = os.path.join(folder_path, "user.json")
+    full_conf = _load_user_config_document(user_json_path)
+    user_conf = full_conf.get(user_id)
+
+    if not isinstance(user_conf, dict):
+        user_conf = _default_user_entry()
+        full_conf[user_id] = user_conf
+        cm._save_json(user_json_path, full_conf)
+        return user_conf
+
+    updated = False
+    for key, value in _default_user_entry().items():
+        if key not in user_conf:
+            user_conf[key] = list(value) if isinstance(value, list) else value
+            updated = True
+
+    if updated:
+        full_conf[user_id] = user_conf
+        cm._save_json(user_json_path, full_conf)
+
+    return user_conf
+
+
+def parse_pixiv_url(url: str) -> Optional[Dict[str, str]]:
+    if "novel/show" in url:
+        match = re.search(r"id=(\d+)", url)
+        if match:
+            return {"kind": "novel", "id": match.group(1)}
+
+    if "novel/series" in url:
+        match = re.search(r"series/(\d+)", url)
+        if match:
+            return {"kind": "series", "id": match.group(1)}
+
+    if "users/" in url:
+        match = re.search(r"users/(\d+)", url)
+        if match:
+            return {"kind": "user", "id": match.group(1)}
+
+    if "artworks/" in url:
+        match = re.search(r"artworks/(\d+)", url)
+        if match:
+            return {"kind": "art", "id": match.group(1)}
+
+    if "series/" in url:
+        match = re.search(r"series/(\d+)", url)
+        if match:
+            return {"kind": "comic", "id": match.group(1)}
+
+    return None
 
 
 def add_ai_tag_if_needed(ai_type: Optional[int], tags: List[str]) -> List[str]:
@@ -1637,32 +1708,7 @@ class PixivCrawler:
 
         # ユーザー設定読み込み
         user_json_path = os.path.join(folder_path, "user.json")
-
-        full_conf = cm._load_json_safe(user_json_path) or {"version": 3}
-        user_conf = full_conf.get(user_id, {})
-
-        # 初期化
-        if not user_conf:
-            user_conf = {
-                "novel": "enable",
-                "comic": "enable",
-                "illust_ids_snapshot": [],
-            }
-            # 再読み込み (atomic writeにより競合は減るが、最新状態を取得)
-            full_conf = cm._load_json_safe(user_json_path) or {"version": 3}
-            user_conf = full_conf.get(user_id, {})
-
-            if not user_conf:
-                user_conf = {
-                    "novel": "enable",
-                    "comic": "enable",
-                    "illust_ids_snapshot": [],
-                }
-                full_conf[user_id] = user_conf
-                cm._save_json(user_json_path, full_conf)
-
-            full_conf[user_id] = user_conf
-            cm._save_json(user_json_path, full_conf)
+        user_conf = ensure_tracked_user(folder_path, user_id)
 
         # プロフィール全取得
         all_data = self.get_json(
@@ -1817,7 +1863,7 @@ class PixivCrawler:
                         f"Migrated illust_ids_snapshot array to {snapshot_file}"
                     )
                     # user.jsonから旧規格配列を削除
-                    full_conf = cm._load_json_safe(user_json_path) or {"version": 3}
+                    full_conf = _load_user_config_document(user_json_path)
                     if user_id in full_conf:
                         full_conf[user_id].pop("illust_ids_snapshot", None)
                         cm._save_json(user_json_path, full_conf)
@@ -1846,7 +1892,7 @@ class PixivCrawler:
             self._save_illust_snapshot(folder_path, user_id, target_ids)
 
             # user.json 更新 (ハッシュのみ)
-            full_conf = cm._load_json_safe(user_json_path) or {"version": 3}
+            full_conf = _load_user_config_document(user_json_path)
             if user_id in full_conf:
                 full_conf[user_id]["illust_ids_snapshot_hash"] = _hash_ids(target_ids)
                 # 旧規格配列が残っていれば削除（念のため）
@@ -1895,24 +1941,21 @@ def download(url, folder_path, key_data, data_path, host_name):
         return
 
     try:
-        if "novel/show" in url:
-            nid = re.search(r"id=(\d+)", url).group(1)
-            _crawler.download_novel(nid, folder_path, key_data)
-        elif "novel/series" in url:
-            sid = re.search(r"series/(\d+)", url).group(1)
-            _crawler.download_series(sid, folder_path, key_data)
-        elif "users/" in url:
-            uid = re.search(r"users/(\d+)", url).group(1)
-            _crawler.download_user(uid, folder_path, key_data)
-        elif "artworks/" in url:
-            aid = re.search(r"artworks/(\d+)", url).group(1)
-            _crawler.download_art(aid, folder_path, key_data)
-        elif "series/" in url:
-            match = re.search(r"series/(\d+)", url)
-            if match:
-                _crawler.download_comic(match.group(1), folder_path, key_data)
-        else:
+        target = parse_pixiv_url(url)
+        if not target:
             logging.error(f"Unknown URL format: {url}")
+            return
+
+        if target["kind"] == "novel":
+            _crawler.download_novel(target["id"], folder_path, key_data)
+        elif target["kind"] == "series":
+            _crawler.download_series(target["id"], folder_path, key_data)
+        elif target["kind"] == "user":
+            _crawler.download_user(target["id"], folder_path, key_data)
+        elif target["kind"] == "art":
+            _crawler.download_art(target["id"], folder_path, key_data)
+        elif target["kind"] == "comic":
+            _crawler.download_comic(target["id"], folder_path, key_data)
     except Exception as e:
         logging.error(f"Download failed: {e}", exc_info=True)
 
@@ -2510,3 +2553,92 @@ def repair(folder_path, key_data, data_path, host_name):
     logging.info(f"  - Works rebuilt: {rebuild_count}")
     logging.info(f"  - Errors: {error_count}")
     logging.info("=" * 60)
+
+
+class PixivSite(BaseSite):
+    allowed_actions = frozenset({"download", "login", "update", "convert", "repair"})
+
+    def matches_url(self, url: str) -> bool:
+        return parse_pixiv_url(url) is not None
+
+    def _initialize(self, context: ActionContext):
+        init(
+            context.cookie_path,
+            context.data_path,
+            int(context.login_enabled),
+            context.interval,
+        )
+
+    def on_download(self, param: str, context: ActionContext):
+        target = parse_pixiv_url(param)
+        if not target:
+            return "unsupported url"
+
+        if target["kind"] == "user":
+            ensure_tracked_user(context.folder_path, target["id"])
+
+        self._initialize(context)
+        download(
+            param,
+            context.folder_path,
+            context.key_data,
+            context.data_path,
+            context.host_name,
+        )
+        return f"{target['kind']}:{target['id']}"
+
+    def on_login(self, param: str, context: ActionContext):
+        account_name = None
+        display_name = None
+        if ":" in param:
+            parts = param.split(":", 2)
+            if len(parts) >= 2:
+                account_name = parts[1]
+            if len(parts) >= 3:
+                display_name = parts[2]
+
+        login(
+            context.cookie_path,
+            context.data_path,
+            context.interval,
+            account_name,
+            display_name,
+        )
+        return "login"
+
+    def on_update(self, _param: str, context: ActionContext):
+        self._initialize(context)
+        update(
+            context.folder_path,
+            context.key_data,
+            context.data_path,
+            context.host_name,
+        )
+        return "update"
+
+    def on_convert(self, _param: str, context: ActionContext):
+        self._initialize(context)
+        convert(
+            context.folder_path,
+            context.key_data,
+            context.data_path,
+            context.host_name,
+        )
+        return "convert"
+
+    def on_repair(self, _param: str, context: ActionContext):
+        self._initialize(context)
+        repair(
+            context.folder_path,
+            context.key_data,
+            context.data_path,
+            context.host_name,
+        )
+        return "repair"
+
+
+def create_site() -> PixivSite:
+    return PixivSite()
+
+
+SITE = PixivSite()
