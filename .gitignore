@@ -36,3 +36,5 @@ nul
 # Added by cargo
 
 /target
+# CocoIndex Code (ccc)
+/.cocoindex_code/

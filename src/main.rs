@@ -4,10 +4,17 @@ use narou_bridge::core::model::AppConfig;
 use narou_bridge::core::registry::build_registry;
 use narou_bridge::core::runtime::run;
 use narou_bridge::core::storage::Store;
+use tracing::info;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::util::SubscriberInitExt;
 use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _guard = init_logging();
     let args: Vec<String> = std::env::args().collect();
     let root = std::env::current_dir()?;
     let config = AppConfig {
@@ -32,10 +39,45 @@ async fn main() -> Result<()> {
             archive_root: root.join("archive"),
         };
         let summary = migrate_legacy_tree(&store, plan)?;
-        println!("migrated: accounts={}, tasks={}, works={}, images={}, archived={}", summary.accounts, summary.tasks, summary.works, summary.images, summary.archived_files);
+        info!(
+            accounts = summary.accounts,
+            tasks = summary.tasks,
+            works = summary.works,
+            images = summary.images,
+            archived = summary.archived_files,
+            "migration completed"
+        );
         return Ok(());
     }
 
     let registry = build_registry();
+    info!(bind_addr = %config.bind_addr, host_name = %config.host_name, "starting server");
     run(config, store, registry).await
+}
+
+fn init_logging() -> WorkerGuard {
+    let log_dir = std::env::current_dir()
+        .map(|root| root.join("log"))
+        .unwrap_or_else(|_| PathBuf::from("log"));
+    let _ = std::fs::create_dir_all(&log_dir);
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "narou_bridge.log");
+    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_span_events(FmtSpan::NONE)
+        .compact();
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_writer)
+        .with_ansi(false)
+        .with_target(false)
+        .compact();
+
+    let _ = tracing_subscriber::registry()
+        .with(LevelFilter::INFO)
+        .with(console_layer)
+        .with(file_layer)
+        .try_init();
+
+    guard
 }

@@ -51,26 +51,50 @@ fn render_work(site_dir: &Path, work: &WorkRecord, host_name: &str) -> Result<()
 }
 
 fn write_site_index(site_dir: &Path, works: &[WorkRecord]) -> Result<()> {
-    let mut entries = Vec::new();
+    let mut entries = serde_json::Map::new();
     for work in works {
-        entries.push(serde_json::json!({
-            "title": work.title,
-            "author": work.author,
-            "author_id": work.author_id,
-            "author_url": work.author_url,
-            "type": work.r#type,
-            "serialization": work.serialization,
-            "tags": [],
-            "all_tags": [],
-            "caption": work.caption,
-            "create_date": work.create_date,
-            "update_date": work.update_date,
-            "episodes_data": {},
-        }));
+        let raw = &work.raw_json;
+        let episodes_data = raw
+            .get("episodes")
+            .and_then(|v| v.as_object())
+            .map(|episodes| {
+                let mut map = serde_json::Map::new();
+                for (key, episode) in episodes {
+                    map.insert(
+                        key.clone(),
+                        serde_json::json!({
+                            "title": episode.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                            "id": episode.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            "caption": episode.get("introduction").and_then(|v| v.as_str()).unwrap_or(""),
+                            "tags": episode.get("tags").cloned().unwrap_or_else(|| serde_json::json!([])),
+                        }),
+                    );
+                }
+                serde_json::Value::Object(map)
+            })
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        entries.insert(
+            work.work_key.clone(),
+            serde_json::json!({
+                "title": work.title,
+                "author": work.author,
+                "author_id": work.author_id,
+                "author_url": work.author_url,
+                "type": work.r#type,
+                "serialization": work.serialization,
+                "tags": raw.get("tags").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "all_tags": raw.get("all_tags").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "caption": work.caption,
+                "create_date": work.create_date,
+                "update_date": work.update_date,
+                "episodes_data": episodes_data,
+            }),
+        );
     }
     fs::write(
         site_dir.join("index.json"),
-        serde_json::to_string_pretty(&entries)?,
+        serde_json::to_string_pretty(&serde_json::Value::Object(entries))?,
     )?;
     fs::write(
         site_dir.join("index.html"),

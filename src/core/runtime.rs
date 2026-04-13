@@ -1,15 +1,17 @@
 use crate::core::migration::{migrate_legacy_tree, MigrationPlan};
-use crate::core::model::{AccountFile, AccountRecord, AppConfig, RequestData, TaskRecord, TaskStatus};
+use crate::core::model::{AccountFile, AccountRecord, AppConfig, RequestData, TaskRecord, TaskStatus, WorkRecord};
 use crate::core::storage::Store;
 use crate::sites::SiteRegistry;
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{header::CONTENT_TYPE, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::info;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -45,6 +47,17 @@ struct MigrationQuery {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct WorksQuery {
+    site: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ReaderQuery {
+    site: Option<String>,
+    nid: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct TaskInput {
     request_id: Option<String>,
     pdf_path: Option<String>,
@@ -75,16 +88,20 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/tasks", get(list_tasks))
+        .route("/api/works", get(list_works_query))
         .route("/api/account", get(list_accounts_query).post(upload_account_query).delete(delete_account_query))
         .route("/api/account/switch", post(switch_account_query))
         .route("/api/account/rename", post(rename_account_query))
         .route("/api/", post(handle_post))
         .route("/api/migrate", get(migrate))
         .route("/", get(root))
+        .route("/reader", get(reader))
+        .route("/reader/", get(reader))
         .with_state(state.clone());
 
     let addr: SocketAddr = state.config.bind_addr.parse().context("invalid bind address")?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    info!(bind_addr = %state.config.bind_addr, host_name = %state.config.host_name, "http server listening");
     axum::serve(listener, app).await.context("server failed")?;
     Ok(())
 }
@@ -93,14 +110,42 @@ async fn health() -> Json<Value> {
     Json(json!({"status": "ok"}))
 }
 
-async fn root() -> Html<&'static str> {
-    Html(r#"<html><body><h1>Narou Bridge API</h1><p>frontend removed</p></body></html>"#)
+async fn root(State(state): State<RuntimeState>) -> Html<String> {
+    Html(render_root_page(&state.registry.site_names()))
+}
+
+async fn reader(State(state): State<RuntimeState>, Query(query): Query<ReaderQuery>) -> Html<String> {
+    let Some(site) = query.site else {
+        return Html(render_reader_error("site is required"));
+    };
+    let Some(nid) = query.nid else {
+        return Html(render_reader_error("nid is required"));
+    };
+
+    let store = state.store.lock().await;
+    let works = match store.list_works(Some(&site)) {
+        Ok(works) => works,
+        Err(err) => return Html(render_reader_error(&err.to_string())),
+    };
+    let Some(work) = works.into_iter().find(|work| work.work_key == nid) else {
+        return Html(render_reader_error("work not found"));
+    };
+
+    Html(render_reader_page(&state.config.host_name, &work))
 }
 
 async fn list_tasks(State(state): State<RuntimeState>) -> impl IntoResponse {
     let store = state.store.lock().await;
     match store.list_tasks() {
         Ok(tasks) => Json(json!({"tasks": tasks})).into_response(),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn list_works_query(State(state): State<RuntimeState>, Query(query): Query<WorksQuery>) -> impl IntoResponse {
+    let store = state.store.lock().await;
+    match store.list_works(query.site.as_deref()) {
+        Ok(works) => Json(json!({"site": query.site, "works": works})).into_response(),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
@@ -219,7 +264,12 @@ async fn rename_account_query(State(state): State<RuntimeState>, Query(query): Q
     Json(json!({"status": "success", "message": format!("Account renamed from {old_name} to {new_name}"), "site": site, "old_name": old_name, "new_name": new_name})).into_response()
 }
 
-async fn handle_post(State(state): State<RuntimeState>, Json(payload): Json<TaskInput>) -> impl IntoResponse {
+async fn handle_post(State(state): State<RuntimeState>, headers: HeaderMap, body: Bytes) -> impl IntoResponse {
+    let payload = match parse_task_input(&headers, &body) {
+        Ok(payload) => payload,
+        Err(message) => return create_error(StatusCode::BAD_REQUEST, message),
+    };
+
     let request_id = payload.request_id.unwrap_or_else(random_request_id);
     let req_data = RequestData {
         request_id: request_id.clone(),
@@ -328,6 +378,141 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
 
 fn create_error(status: StatusCode, message: String) -> Response {
     (status, Json(json!({"status": "error", "message": message}))).into_response()
+}
+
+fn parse_task_input(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput, String> {
+    let content_type = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if content_type.contains("application/json") || content_type.ends_with("+json") {
+        return serde_json::from_slice(body).map_err(|err| err.to_string());
+    }
+
+    if content_type.contains("application/x-www-form-urlencoded") {
+        return serde_urlencoded::from_bytes(body).map_err(|err| err.to_string());
+    }
+
+    serde_json::from_slice(body)
+        .or_else(|_| serde_urlencoded::from_bytes(body))
+        .map_err(|err| err.to_string())
+}
+
+fn render_root_page(sites: &[String]) -> String {
+    let mut site_links = String::new();
+    for site in sites {
+        site_links.push_str(&format!(
+            "<li><a href=\"/api/works?site={site}\">{site}</a></li>"
+        ));
+    }
+
+    format!(
+        r#"<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Narou Bridge</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 24px; line-height: 1.5; }}
+    .grid {{ display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }}
+    .card {{ border: 1px solid #ddd; border-radius: 12px; padding: 16px; background: #fff; }}
+    input, button {{ font: inherit; padding: 8px 10px; }}
+    input {{ width: 100%; box-sizing: border-box; margin: 4px 0 8px; }}
+    button {{ cursor: pointer; }}
+    ul {{ padding-left: 20px; }}
+    code {{ background: #f4f4f4; padding: 1px 4px; border-radius: 4px; }}
+  </style>
+</head>
+<body>
+  <h1>Narou Bridge</h1>
+  <p>Pixiv を動作確認するための最小 UI。</p>
+  <div class="grid">
+    <section class="card">
+      <h2>Pixiv download</h2>
+      <form method="post" action="/api/">
+        <label>Pixiv URL</label>
+        <input name="add" placeholder="https://www.pixiv.net/..." required>
+        <button type="submit">送信</button>
+      </form>
+    </section>
+    <section class="card">
+      <h2>PDF import</h2>
+      <form method="post" action="/api/">
+        <label>PDF path</label>
+        <input name="pdf_path" placeholder="C:/path/to/file.pdf" required>
+        <label>Title</label>
+        <input name="pdf_name" placeholder="任意">
+        <label>Author ID</label>
+        <input name="author_id" placeholder="任意">
+        <label>Author URL</label>
+        <input name="author_url" placeholder="任意">
+        <label>Novel Type</label>
+        <input name="novel_type" placeholder="短編 / 連載中">
+        <label>Chapter</label>
+        <input name="chapter" placeholder="任意">
+        <button type="submit">送信</button>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Sites</h2>
+      <ul>{site_links}</ul>
+      <p><a href="/api/tasks">/api/tasks</a> | <a href="/api/works">/api/works</a></p>
+    </section>
+  </div>
+</body>
+</html>"#
+    )
+}
+
+fn render_reader_page(host_name: &str, work: &WorkRecord) -> String {
+    let raw = work.raw_json.to_string();
+    let url = format!("{}/reader/?site={}&nid={}", host_name.trim_end_matches('/'), work.site, work.work_key);
+    format!(
+        r#"<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 24px; line-height: 1.7; }}
+    pre {{ white-space: pre-wrap; background: #f7f7f7; padding: 16px; border-radius: 12px; }}
+    .meta {{ color: #666; font-size: 14px; }}
+  </style>
+</head>
+<body>
+  <p><a href="/">back</a></p>
+  <h1>{title}</h1>
+  <p class="meta">{author} | {site} | <code>{work_key}</code></p>
+  <p class="meta"><a href="{url}">current url</a></p>
+  <pre>{raw}</pre>
+</body>
+</html>"#,
+        title = escape_html(&work.title),
+        author = escape_html(&work.author),
+        site = escape_html(&work.site),
+        work_key = escape_html(&work.work_key),
+        url = escape_html(&url),
+        raw = escape_html(&raw),
+    )
+}
+
+fn render_reader_error(message: &str) -> String {
+    format!(
+        r#"<!doctype html>
+<html><body><h1>Error</h1><p>{}</p><p><a href="/">back</a></p></body></html>"#,
+        escape_html(message)
+    )
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 async fn ensure_runtime_dirs(config: &AppConfig) -> Result<()> {

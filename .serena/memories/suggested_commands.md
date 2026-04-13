@@ -4,7 +4,10 @@ Common commands:
 - Sync dependencies: `uv sync`
 - Install Playwright browsers: `uv run playwright install`
 - Install Linux Playwright deps: `uv run playwright install-deps`
-- Run server: `uv run python main.py`
+- Run Python server: `uv run python main.py`
+- Run Rust server: `cargo run --release`
+
+IMPORTANT: The agent must NEVER start the server process itself. Always use the question tool to ask "サーバーは起動していますか？" before any test that requires a running server. If the user says no, show the startup command and wait.
 Useful validation targets:
 - `POST /api/` with `add`, `update`, `convert`, `re_download`, `repair`
 - `POST /api/` with PDF fields: `pdf`, `author_id`, `author_url`, `novel_type`, `chapter`

@@ -363,8 +363,18 @@ Practical consequence:
 ## Testing And Validation
 There is no strong automated test suite today. For behavior changes, validate the current contracts directly.
 
+### Server startup policy
+The agent must NEVER start the server process itself (neither foreground nor background).
+Instead, always use the question tool to ask the user: "サーバーは起動していますか？" before running any test that requires the server.
+If the user confirms it is running, proceed. If not, show the startup command and wait.
+
+Startup command for the Rust server:
+```
+cargo run --release
+```
+
 Minimum smoke tests:
-- start server with `uv run python main.py`
+- confirm the server is running (ask the user)
 - POST `/api/` with each affected action type
 - confirm `queue/task.json` shape and worker progress
 - confirm `data/<site>/index.json` and `data/<site>/<work>/raw/raw.json` remain valid
