@@ -278,6 +278,7 @@ Rust target direction:
 - login should move out of crawler modules; provide a simple cookie import helper instead of browser automation in the main crawler path
 - `sample/` is archive-only reference code and must not define runtime behavior
 - the simple login helper lives under `tools/` and should only generate/import cookie JSON; do not reintroduce browser automation into the main runtime
+- `tools/` is a separate `uv` project with its own `pyproject.toml` and `uv.lock`
 
 Target stable boundaries:
 - config/bootstrap

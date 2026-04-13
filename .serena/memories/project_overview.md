@@ -26,4 +26,7 @@ Rust dependency note:
 Rust storage note:
 - final Rust direction may replace the legacy JSON tree with SQLite or another explicit store; the current JSON/HTML/Python files should be treated as migration inputs and compatibility artifacts, not the permanent runtime contract.
 - login is expected to move out of crawler modules and into a simpler cookie import flow.
+Rust tools note:
+- `tools/` is a separate `uv` project with its own `pyproject.toml` and `uv.lock`.
+- `tools/login_helper.py` is a cookie import helper, not a browser automation script.
 Important note for refactoring: preserve runtime behavior and on-disk contracts first; Python helper names are not migration boundaries.

@@ -30,4 +30,5 @@ Rust migration direction for dispatch:
 - do not preserve runtime plugin loading from config or site-owned queue re-entry semantics.
 - rust site modules should live under `src/sites/<site>/mod.rs` with private submodules as needed for large sites.
 Rust final architecture note:
-- API-first Rust runtime may drop the legacy HTML frontend and serve a minimal API plus migration utilities instead.
+- API-first Rust runtime may drop the legacy HTML frontend and serve a minimal API plus migration utilities.
+- tools/login_helper.py is a separate helper project artifact, not runtime behavior.
