@@ -25,3 +25,6 @@ Auto-update flow:
 Routing note:
 - external form parameter `add` maps to internal action `download`.
 - `download` resolves target site by URL matching; non-download actions resolve by site key or `all`.
+Rust migration direction for dispatch:
+- preserve action names conceptually (`download`, `login`, `update`, `convert`, `repair`) but use a closed built-in registry and fixed action enum.
+- do not preserve runtime plugin loading from config or site-owned queue re-entry semantics.

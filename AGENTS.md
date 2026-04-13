@@ -300,6 +300,45 @@ Refactor principles:
 - if compatibility with existing installations matters, support importing current `queue.pkl`/`task.json`/`raw.json` rather than rewriting everything at once
 - if compatibility does not matter, replace pickle persistence with versioned JSON or another explicit format early
 
+### Constraining Site Extensibility
+The current Python implementation became complex because site integration is too open-ended. Complexity drivers to avoid carrying into Rust:
+- `setting.ini` can map site keys to arbitrary crawler module names at runtime
+- there are two extension mechanisms at once: module-level action functions and `create_site()` / `BaseSite` objects
+- site modules hold hidden singleton state such as module-global `_crawler`
+- site modules receive many loosely typed context arguments (`folder_path`, `data_path`, `cookie_path`, `key_data`, `host_name`, `interval`)
+- site modules can re-enter the system indirectly by POSTing back to `/api/`
+- `convert` / `repair` are mostly common operations but are reimplemented per site
+
+For Rust, intentionally narrow the extension contract even if it reduces user extensibility.
+
+Keep this outer shape for familiarity:
+- each built-in site module/file may still expose `download`, `login`, `update`, `convert`, `repair`
+- `convert` and `repair` should usually be thin wrappers that delegate to shared core logic
+
+Do not preserve these Python-era freedoms:
+- runtime loading of arbitrary user-provided site modules from config
+- arbitrary new action names beyond the fixed action enum
+- site modules directly owning queue behavior, retry scheduling, or local HTTP callbacks
+- site modules generating final HTML outside the shared renderer
+- site modules choosing their own directory layout or primary on-disk contracts
+
+Preferred Rust shape:
+- built-in static registry keyed by `SiteId`, not dynamic import strings
+- fixed `Action` enum and typed `SiteActionContext`
+- core owns queueing, retries, indexing, rendering, JSON IO, and path policy
+- site modules own only URL parsing, optional login, remote fetch, source-specific normalization, and approved sidecar state
+- per-work refetch/update identity should be persisted as structured metadata, not reconstructed from folder names or ad hoc URL parsing
+- `key_data` and `host_name` should be absorbed by renderer/app core where possible, not passed through every site action
+
+Configuration direction for Rust:
+- stop using `[crawler]` as `site key -> python module path`
+- prefer fixed built-in site IDs with enable/disable or display-name settings only
+- adding a new site should require changing Rust code and rebuilding, not dropping in a new runtime script
+
+Practical consequence:
+- preserve the shared `raw.json` boundary and shared renderer
+- narrow site customization to normalization/fetch logic instead of letting each site redefine the whole runtime behavior
+
 ## Testing And Validation
 There is no strong automated test suite today. For behavior changes, validate the current contracts directly.
 

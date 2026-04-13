@@ -31,6 +31,33 @@ Rust refactor guidance for Narou Bridge:
   - if compatibility does not matter, replace pickle persistence early with versioned JSON or another explicit format.
   - avoid one-to-one helper porting; port state transitions and file contracts.
   - isolate side effects behind interfaces: filesystem, HTTP client, login/browser automation, queue store, clock.
+- Current Python complexity is driven by over-open site extensibility:
+  - runtime mapping from `[crawler]` config to arbitrary module import paths
+  - dual extension model: module-level action functions plus `create_site()`/`BaseSite`
+  - module-global singleton state like `_crawler`
+  - broad untyped action context (`folder_path`, `data_path`, `cookie_path`, `key_data`, `host_name`, `interval`)
+  - site modules can indirectly re-enter the queue by POSTing back to `/api/`
+  - shared operations like `convert` and `repair` are reimplemented in site modules
+- Rust should intentionally narrow extensibility even if user-provided site additions become harder.
+- Keep only this outer shape for familiarity:
+  - built-in site modules/files may still expose `download`, `login`, `update`, `convert`, `repair`
+  - `convert` and `repair` should usually be thin wrappers delegating to shared core logic
+- Do not preserve these Python-era freedoms:
+  - runtime loading of arbitrary user crawler modules from config
+  - arbitrary action names beyond a fixed action enum
+  - site-owned queue callbacks, retry scheduling, or local HTTP self-calls
+  - site-owned final HTML rendering or custom directory layouts
+- Preferred Rust architecture:
+  - built-in static registry keyed by `SiteId`
+  - fixed `Action` enum and typed `SiteActionContext`
+  - core owns queueing, retries, indexing, rendering, JSON IO, and path policy
+  - site modules own only URL parsing, optional login, remote fetch, source normalization, and approved sidecar state
+  - per-work refetch/update identity should be explicit structured metadata, not reconstructed from folder names or ad hoc URL parsing
+  - `key_data` and `host_name` should move into renderer/app core where possible
+- Configuration direction:
+  - stop using `[crawler]` as `site key -> module path`
+  - prefer fixed built-in site IDs with enable/disable or display-name settings only
+  - adding a new site in Rust should require code changes and rebuild, not dropping in a runtime script
 - Special-case state to account for:
   - Pixiv user tracking in `data/pixiv/user.json`
   - Pixiv snapshots in `data/pixiv/snapshots/illust_ids/<user_id>.json`
