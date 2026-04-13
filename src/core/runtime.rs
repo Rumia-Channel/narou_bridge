@@ -293,6 +293,9 @@ struct AccountInput {
 }
 
 fn resolve_request_action(req: &RequestData) -> Option<(String, String)> {
+    if req.pdf_path.is_some() {
+        return Some(("convert".to_string(), "narou".to_string()));
+    }
     if let Some(v) = req.repair.clone() { return Some(("repair".to_string(), v)); }
     if let Some(v) = req.login.clone() { return Some(("login".to_string(), v)); }
     if let Some(v) = req.update.clone() { return Some(("update".to_string(), v)); }
@@ -311,6 +314,7 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
         queue_dir: state.config.queue_dir.clone(),
         pdf_dir: state.config.pdf_dir.clone(),
         archive_dir: state.config.archive_dir.clone(),
+        request: task.request.clone(),
     };
 
     let results = state.registry.dispatch(&task.action, &task.param, &context, &mut store);

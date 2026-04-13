@@ -1,6 +1,7 @@
 pub mod narou;
 pub mod pixiv;
 
+use crate::core::model::RequestData;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -20,6 +21,7 @@ pub struct SiteActionContext {
     pub queue_dir: String,
     pub pdf_dir: String,
     pub archive_dir: String,
+    pub request: RequestData,
 }
 
 #[derive(Debug, Clone)]
