@@ -31,3 +31,4 @@ requirements-dev.lock
 nul
 /.cocoindex_code
 /tests
+/sample
