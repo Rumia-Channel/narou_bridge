@@ -21,4 +21,6 @@ Important runtime directories:
 Rust migration note:
 - planned Rust site layout is library-style modules like `src/sites/pixiv/mod.rs` and `src/sites/narou/mod.rs`, with private submodules for large sites.
 - `sample/` is the archive location for old Python implementations and reference code; archive files must not define runtime behavior.
+Rust dependency note:
+- when adding Rust crates during migration, use `cargo add`; do not edit `Cargo.toml` directly just to add dependencies.
 Important note for refactoring: preserve runtime behavior and on-disk contracts first; Python helper names are not migration boundaries.

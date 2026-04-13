@@ -58,8 +58,12 @@ Rust refactor guidance for Narou Bridge:
   - stop using `[crawler]` as `site key -> module path`
   - prefer fixed built-in site IDs with enable/disable or display-name settings only
   - adding a new site in Rust should require code changes and rebuild, not dropping in a runtime script
+- Dependency management rule:
+  - when a new Rust crate is needed, add it with `cargo add`
+  - do not edit `Cargo.toml` directly just to add dependencies
 - Special-case state to account for:
   - Pixiv user tracking in `data/pixiv/user.json`
   - Pixiv snapshots in `data/pixiv/snapshots/illust_ids/<user_id>.json`
   - JSON backup and corruption handling (`.backup.N`, `.corrupt`) used widely in Python implementation.
 - `webnovel/*.yaml` are not consumed by the current Python runtime. They are compatibility/output assets, not active server config.
+- `sample/` is the archive location for old Python implementations and examples; archive code must not define runtime behavior.

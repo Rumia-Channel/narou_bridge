@@ -299,6 +299,7 @@ Refactor principles:
 - preserve current directory layout and JSON keys until a deliberate migration plan exists
 - if compatibility with existing installations matters, support importing current `queue.pkl`/`task.json`/`raw.json` rather than rewriting everything at once
 - if compatibility does not matter, replace pickle persistence with versioned JSON or another explicit format early
+- when adding Rust crates, use `cargo add`; do not edit `Cargo.toml` directly to add dependencies
 
 ### Constraining Site Extensibility
 The current Python implementation became complex because site integration is too open-ended. Complexity drivers to avoid carrying into Rust:
