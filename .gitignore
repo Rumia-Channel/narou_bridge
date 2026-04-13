@@ -32,3 +32,7 @@ nul
 /.cocoindex_code
 /tests
 /sample
+
+# Added by cargo
+
+/target
