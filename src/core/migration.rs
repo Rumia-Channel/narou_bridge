@@ -1,5 +1,6 @@
 use crate::core::model::{
-    AccountRecord, ImageRecord, MigrationSummary, RequestData, TaskRecord, TaskStatus, WorkRecord,
+    AccountFile, AccountRecord, ImageRecord, MigrationSummary, RequestData, TaskRecord, TaskStatus,
+    WorkRecord,
 };
 use crate::core::storage::Store;
 use anyhow::{Context, Result};
@@ -34,7 +35,7 @@ pub fn migrate_legacy_tree(store: &Store, plan: MigrationPlan) -> Result<Migrati
 
 fn migrate_accounts(store: &Store, root: &Path) -> Result<usize> {
     let mut count = 0;
-    for site_dir in ["cookie", "cookie/"].iter() {
+    for site_dir in ["cookie"].iter() {
         let dir = root.join(site_dir);
         if !dir.exists() {
             continue;
@@ -59,7 +60,7 @@ fn migrate_accounts(store: &Store, root: &Path) -> Result<usize> {
                     .and_then(|s| s.to_str())
                     .unwrap_or("login")
                     .to_string();
-                let account_json: crate::core::model::AccountFile = load_json_or_default(&path)?;
+                let account_json: AccountFile = load_json_or_default(&path)?;
                 let updated_at = file_modified_string(&path).unwrap_or_else(now_string);
                 let active = name == "login";
                 let record = AccountRecord {
@@ -89,7 +90,7 @@ fn migrate_tasks(store: &Store, root: &Path) -> Result<usize> {
     if task_json.exists() {
         let state: Value = load_json_or_default(&task_json)?;
         if let Some(queue) = state.get("queue").and_then(|v| v.as_array()) {
-            for (idx, item) in queue.iter().enumerate() {
+            for item in queue.iter() {
                 let req = parse_request_data(item);
                 let task = TaskRecord {
                     id: 0,
@@ -103,7 +104,7 @@ fn migrate_tasks(store: &Store, root: &Path) -> Result<usize> {
                     updated_at: now_string(),
                 };
                 store.enqueue_task(&task)?;
-                count += 1 + idx.saturating_sub(idx);
+                count += 1;
             }
         }
     }
@@ -148,6 +149,7 @@ fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
             || site_name == "log"
             || site_name == "setting"
             || site_name == "target"
+            || site_name == "archive"
         {
             continue;
         }
@@ -158,6 +160,60 @@ fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
             }
             let raw_path = work_dir.path().join("raw").join("raw.json");
             if !raw_path.exists() {
+                let alt_json = work_dir.path().join("data.json");
+                if alt_json.exists() {
+                    let alt: Value = load_json_or_default(&alt_json)?;
+                    let record = WorkRecord {
+                        site: site_name.clone(),
+                        work_key: work_dir.file_name().to_string_lossy().to_string(),
+                        title: alt
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        author: alt
+                            .get("author")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        author_id: alt
+                            .get("author_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        author_url: alt
+                            .get("author_url")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        r#type: alt
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        serialization: alt
+                            .get("serialization")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        caption: alt
+                            .get("caption")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        create_date: alt
+                            .get("createDate")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        update_date: alt
+                            .get("updateDate")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        raw_json: alt,
+                    };
+                    store.upsert_work(&record)?;
+                    count += 1;
+                }
                 continue;
             }
             let raw_json: Value = load_json_or_default(&raw_path)?;
@@ -260,9 +316,34 @@ fn archive_legacy_files(root: &Path, archive_root: &Path) -> Result<usize> {
         if src.is_file() {
             fs::copy(&src, &dst).context("failed to archive file")?;
             count += 1;
+        } else if src.is_dir() {
+            let dir_name = src.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+            if dir_name == "sample"
+                || dir_name == "webnovel"
+                || dir_name == "common"
+                || dir_name == "templates"
+            {
+                copy_dir_recursive(&src, &dst)?;
+                count += 1;
+            }
         }
     }
     Ok(count)
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &target)?;
+        } else {
+            fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
 }
 
 fn parse_request_data(value: &Value) -> RequestData {

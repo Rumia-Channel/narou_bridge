@@ -39,21 +39,6 @@ struct AccountRenamePayload {
     new_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct RequestQuery {
-    request_id: Option<String>,
-    add: Option<String>,
-    update: Option<String>,
-    convert: Option<String>,
-    re_download: Option<String>,
-    repair: Option<String>,
-    login: Option<String>,
-    author_id: Option<String>,
-    author_url: Option<String>,
-    novel_type: Option<String>,
-    chapter: Option<String>,
-}
-
 #[derive(Debug, Deserialize, Default)]
 struct MigrationQuery {
     source_root: Option<String>,
@@ -271,7 +256,17 @@ async fn handle_post(State(state): State<RuntimeState>, Json(payload): Json<Task
     };
 
     let store = state.store.lock().await;
-    if let Err(err) = store.enqueue_task(&task) {
+    let task_id = match store.enqueue_task(&task) {
+        Ok(id) => id,
+        Err(err) => {
+            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+        }
+    };
+
+    drop(store);
+    if let Err(err) = execute_queued_task(&state, task_id, &task).await {
+        let store = state.store.lock().await;
+        let _ = store.mark_task_status(task_id, TaskStatus::Failed, Some(err.to_string()), &now_string());
         return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
     }
 
@@ -305,6 +300,26 @@ fn resolve_request_action(req: &RequestData) -> Option<(String, String)> {
     if let Some(v) = req.convert.clone() { return Some(("convert".to_string(), v)); }
     if let Some(v) = req.add.clone() { return Some(("download".to_string(), v)); }
     None
+}
+
+async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskRecord) -> Result<()> {
+    let mut store = state.store.lock().await;
+    let context = crate::sites::SiteActionContext {
+        host_name: state.config.host_name.clone(),
+        data_dir: state.config.data_dir.clone(),
+        cookie_dir: state.config.cookie_dir.clone(),
+        queue_dir: state.config.queue_dir.clone(),
+        pdf_dir: state.config.pdf_dir.clone(),
+        archive_dir: state.config.archive_dir.clone(),
+    };
+
+    let results = state.registry.dispatch(&task.action, &task.param, &context, &mut store);
+    let has_success = results.iter().any(|r| r.status == "success");
+    let has_failed = results.iter().any(|r| r.status == "failed");
+    let status = if has_success { TaskStatus::Succeeded } else if has_failed { TaskStatus::Failed } else { TaskStatus::Skipped };
+    let error = if has_failed { Some(results.iter().find(|r| r.status == "failed").map(|r| r.message.clone()).unwrap_or_default()) } else { None };
+    let _ = store.mark_task_status(task_id, status, error, &now_string());
+    Ok(())
 }
 
 fn create_error(status: StatusCode, message: String) -> Response {

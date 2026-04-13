@@ -79,7 +79,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn enqueue_task(&self, task: &TaskRecord) -> Result<()> {
+    pub fn enqueue_task(&self, task: &TaskRecord) -> Result<i64> {
         self.conn.execute(
             r#"INSERT INTO tasks (request_id, action, param, request_json, status, error, created_at, updated_at)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
@@ -94,7 +94,7 @@ impl Store {
                 task.updated_at,
             ],
         )?;
-        Ok(())
+        Ok(self.conn.last_insert_rowid())
     }
 
     pub fn list_tasks(&self) -> Result<Vec<TaskRecord>> {

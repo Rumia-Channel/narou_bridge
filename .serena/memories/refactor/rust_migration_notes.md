@@ -75,3 +75,4 @@ Rust refactor guidance for Narou Bridge:
   - preserve current directory layout only where it matters for migration/import
   - if compatibility matters, build a one-shot migration tool before replacing formats
   - if compatibility does not matter, move fully to SQLite/explicit storage early and keep JSON only as import/export surface
+  - the simple login helper lives under `tools/` and should only generate/import cookie JSON; do not reintroduce browser automation into the main runtime

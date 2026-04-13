@@ -39,6 +39,7 @@ pub fn dispatch_download(
     registry: &SiteRegistry,
     context: &SiteActionContext,
     url: &str,
+    store: &mut crate::core::storage::Store,
 ) -> Vec<SiteActionResult> {
-    registry.dispatch("download", url, context)
+    registry.dispatch("download", url, context, store)
 }
