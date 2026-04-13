@@ -1,10 +1,21 @@
 Project: Narou Bridge
-Purpose: Convert novels from various websites (notably Pixiv) into Narou.rb-compatible HTML. Includes a Flask web server, task queue, crawlers, and conversion utilities. Also supports PDF/ZIP conversion.
-Tech stack: Python on Windows; Flask server; requests; Playwright + playwright-recaptcha; Pillow; apng; tqdm; BeautifulSoup4.
-High-level structure:
-- main.py: entry point; loads config; generates indexes; launches server
-- server.py: Flask app; TaskManager queue; AutoUpdater; /api endpoints
-- util.py: config loading, index generation, dynamic crawler loading, task dispatch
-- crawler/: site-specific crawlers (www_pixiv_net.py, ncode_syosetu_com.py, convert_narou.py, common.py)
-- setting/setting.ini: main config (copied from setting.ini on first run)
-- data/: outputs, images, indexes; queue/: queue.pkl and task.json
+Purpose: queue-based webnovel ingestion and conversion service that normalizes external sources into a shared work schema, then renders Narou.rb-compatible HTML. Current runtime focus is Pixiv crawling plus PDF/ZIP ingestion for Narou-style output.
+Tech stack: Python 3.12, Flask, requests, Playwright, PyMuPDF, Pillow, apng, jsondiff.
+Runtime architecture:
+- `main.py` is startup-only: load config, create indexes/assets, then call `server.http_run()`.
+- `server.create_app()` loads crawler bindings, starts `TaskManager` single-worker queue, optionally starts `AutoUpdater`, and serves generated files from `data/`.
+- `POST /api/` only enqueues work; it does not crawl synchronously.
+- Worker execution order is priority-based: `repair -> login -> update -> re_download -> convert -> download`.
+- `util.dispatch_action()` delegates to `crawler/site_runtime.py` which resolves site targets and calls site handlers.
+- `crawler/convert_narou.py:narou_gen()` is the final HTML renderer and assumes input is already normalized into canonical `raw.json` work data.
+Current site bindings:
+- `pixiv` -> `crawler/www_pixiv_net.py`
+- `narou` -> `crawler/ncode_syosetu_com.py` for PDF conversion and HTML regeneration/repair
+Important runtime directories:
+- `data/`: generated HTML/JSON/images/manifests
+- `cookie/`: per-site account files including active `login.json`
+- `queue/`: `queue.pkl` and `task.json`
+- `pdf/`: temporary PDF/ZIP uploads
+- `log/`: server logs
+- `setting/`: runtime copy of `setting.ini`
+Important note for refactoring: preserve runtime behavior and on-disk contracts first; Python helper names are not migration boundaries.

@@ -1,44 +1,320 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-`main.py` is the entry point: it loads config and starts the Flask server.  
-`server.py` contains API routes, task queue handling, and auto-update logic.  
-`util.py` handles config parsing, index generation, and task dispatch helpers.  
-`crawler/` contains site-specific crawlers (`www_pixiv_net.py`, `ncode_syosetu_com.py`) plus shared crawler utilities in `crawler/common.py`.  
-`webnovel/*.yaml` stores per-site parsing rules.  
-`templates/` and `common/` hold HTML templates and static assets (CSS/JS/icons).  
-Runtime folders (`data/`, `cookie/`, `log/`, `queue/`, `pdf/`, `setting/`) are generated locally and should stay untracked.
+## Runtime Architecture
+`main.py` is the only startup entrypoint. It calls `util.load_config()`, creates runtime directories, regenerates static assets and index files under `data/`, then starts the Flask server through `server.http_run()`.
 
-## Build, Test, and Development Commands
-- `main.cmd` (Windows) / `./main.sh` (Linux/macOS): sync deps, install Playwright, start app.
-- `uv sync`: install/update Python dependencies from `pyproject.toml` and `uv.lock`.
-- `uv run playwright install`: install browser binaries.
-- `uv run playwright install-deps`: Linux system deps for Playwright.
-- `uv run python main.py`: run the server directly for development.
-- `uv run python -m unittest discover -s tests`: run unit tests when `tests/` exists.
+`server.create_app()` is the runtime orchestrator. It:
+- loads crawler modules via `util.init_import()`
+- starts `TaskManager`, a persistent single-worker queue
+- optionally starts `AutoUpdater`, which posts `update=all` back into `/api/`
+- serves everything under `data/` as generated/static output
 
-## Coding Style & Naming Conventions
-Use Python 3.12, 4-space indentation, and `snake_case` for functions/variables/modules.  
-Use `PascalCase` for classes.  
-Follow existing crawler naming: domain-based module names like `www_pixiv_net.py`.  
-Keep config keys consistent across `[crawler]`, `[login]`, and `webnovel/*.yaml`.  
-No formatter/linter is enforced in-repo, so match existing style and keep comments concise.
+`/api/` is queueing-only. It never crawls synchronously. The request handler normalizes form fields and uploaded files into a `req_data` object, stores PDF/ZIP payloads in `pdf/`, enqueues the task, persists queue state, and returns `{"status": "queued", "request_id": ...}`.
 
-## Testing Guidelines
-Automated tests are currently limited; prioritize targeted unit tests for new logic (parsers, queue handling, URL formatting).  
-Name tests `test_<module>.py` under `tests/`.  
-For crawler/server changes, add a manual smoke test note in PRs (API call used, expected output path, and observed result).
+The worker thread executes at most one queued task at a time. Action resolution is priority-based and stops at the first populated action:
+`repair -> login -> update -> re_download -> convert -> download`
 
-## Commit & Pull Request Guidelines
-Git history uses descriptive Japanese commit messages focused on behavior changes (example: `format_jump_url関数を追加し...`) rather than strict prefixes.  
-Keep commits scoped to one logical change.  
-PRs should include:
-- What changed and why
-- Affected files/modules
-- Config impact (`setting.ini`, crawler mappings, YAML rules)
-- Test evidence (command output or manual verification steps)
-- Screenshots when changing `templates/` or `common/css` UI behavior
+External POST parameter names are not identical to internal action names. `add` maps to internal `download`.
 
-## Security & Configuration Tips
-Never commit real cookies, secrets, or personal host settings from `setting.ini`.  
-Use placeholder values in examples and verify generated runtime data stays ignored by `.gitignore`.
+`util.dispatch_action()` and `crawler/site_runtime.py` are the action router. The current site bindings are:
+- `pixiv` -> `crawler/www_pixiv_net.py`
+- `narou` -> `crawler/ncode_syosetu_com.py` (used for PDF conversion and HTML regeneration)
+
+`crawler/convert_narou.py` is the final renderer. Site modules should normalize source data into the shared `raw.json` work schema first, then call `narou_gen()` to emit HTML pages.
+
+## Project Structure
+`main.py`
+- startup only; no business logic
+
+`server.py`
+- Flask app, `/api/` contract, account APIs, queue persistence, background worker, auto-update loop
+
+`util.py`
+- config loading, directory bootstrap, static asset copy, root/reader index generation, action dispatch, PDF/ZIP entrypoints
+
+`crawler/site_runtime.py`
+- site registry, bound action context, adapter layer between generic actions and site-specific implementations
+
+`crawler/common.py`
+- shared filesystem helpers, safe JSON IO, image database handling, site index generation, date/text helpers
+
+`crawler/www_pixiv_net.py`
+- Pixiv crawler, login flow, update/repair logic, canonical `raw.json` generation, user tracking snapshots
+
+`crawler/ncode_syosetu_com.py`
+- PDF-to-structured-data pipeline and HTML regeneration/repair for the Narou-compatible output format
+
+`crawler/convert_narou.py`
+- pure-ish HTML generator from normalized work data
+
+`templates/` and `common/`
+- HTML templates and browser-side assets used by generated pages and the lightweight reader
+
+`webnovel/*.yaml`
+- external compatibility assets for Narou.rb-style parsing rules
+- current Python runtime does not read these YAML files directly
+- treat them as part of the output contract, not as active server-side configuration
+
+Runtime directories:
+- `data/`: generated site output, root HTML, reader HTML, images, manifests
+- `cookie/`: per-site account JSON files, including active `login.json`
+- `queue/`: persistent queue state (`queue.pkl`, `task.json`)
+- `pdf/`: temporary PDF/ZIP upload area
+- `log/`: server logs
+- `setting/`: runtime copy of `setting.ini`
+
+## Canonical Runtime Flow
+1. Startup
+- `util.load_config()` copies `setting.ini` into `setting/setting.ini` on first run.
+- It resolves absolute paths for `data`, `cookie`, `log`, `queue`, and `pdf`.
+- It creates per-site folders, `data/images`, `data/reader`, root manifest, reader index, and copied static assets.
+
+2. HTTP request ingestion
+- `POST /api/` accepts one logical job at a time.
+- Uploaded PDF/ZIP files are renamed to `<request_id>.pdf` or `<request_id>.zip` in `pdf/`.
+- Action parameters are stored into one `req_data` record.
+
+3. Queue persistence
+- `TaskManager` writes a pickle snapshot to `queue/queue.pkl` for restart recovery.
+- It also writes a human-readable mirror to `queue/task.json`.
+- Requests are deduplicated by signature excluding `request_id`.
+
+4. Action dispatch
+- The worker chooses the first populated action field by `ACTION_PRIORITY`.
+- `util.dispatch_action()` resolves the target site(s) and calls the bound site handler.
+- `download` resolves site by URL matching; `update`, `convert`, `repair`, `login`, `re_download` resolve by site key or `all`.
+
+5. Normalization
+- Site modules fetch remote data and normalize it into the shared work schema stored at `raw/raw.json`.
+- `pixiv` produces this schema from Pixiv API data.
+- `narou` produces the same schema from parsed PDF text blocks.
+
+6. Rendering and indexing
+- `crawler/convert_narou.py:narou_gen()` renders `index.html`, `info/index.html`, and episode pages.
+- `crawler/common.py:gen_site_index()` regenerates per-site `index.json` and `index.html`.
+- The lightweight reader uses only generated JSON/HTML files under `data/`.
+
+## On-Disk Data Contracts
+`setting/setting.ini`
+- sections: `[setting]`, `[crawler]`, `[login]`, `[display_name]`, `[server]`
+- `[crawler]` maps external site key to crawler module file name
+- `[login]` is per-site login enable flag
+
+`queue/task.json`
+```json
+{
+  "current_task": {"request_id": "...", "add": null, "update": null},
+  "queue": [
+    {"request_id": "...", "add": "https://...", "pdf_name": null}
+  ]
+}
+```
+
+Queued request shape:
+```json
+{
+  "request_id": "xxxx-xxxx-4xxx-yxxx-xxxx",
+  "pdf_path": "...",
+  "pdf_name": null,
+  "zip_name": null,
+  "author_id": null,
+  "author_url": null,
+  "novel_type": null,
+  "chapter": null,
+  "repair": null,
+  "login": null,
+  "update": null,
+  "re_download": null,
+  "convert": null,
+  "add": null
+}
+```
+
+`cookie/<site>/<account>.json`
+```json
+{
+  "cookies": {"name": "value"},
+  "user_agent": "...",
+  "display_name": "..."
+}
+```
+Notes:
+- `cookies` may also be a list of `{name, value, ...}` objects when imported
+- `login.json` is the active account for that site
+
+`data/images/database.json`
+```json
+{
+  "pixiv_n123_cover.jpg": "<content_hash>",
+  "pixiv_456-1.png": "<content_hash>"
+}
+```
+Notes:
+- values are extension-less content hashes
+- actual files are stored as `data/images/<hash>.<ext>`
+- `data/images/cover.json` is a cover-only companion map using the same hash values
+
+`data/<site>/index.json`
+```json
+{
+  "n123": {
+    "title": "...",
+    "author": "...",
+    "author_id": "...",
+    "author_url": "...",
+    "type": "novel",
+    "serialization": "短編",
+    "tags": ["..."],
+    "all_tags": ["..."],
+    "caption": "...",
+    "create_date": "...",
+    "update_date": "...",
+    "episodes_data": {
+      "1": {"title": "...", "id": "...", "caption": "...", "tags": ["..."]}
+    }
+  }
+}
+```
+Notes:
+- keys are work folder names such as `n123`, `s456`, `a789`, `c012`, or `ncode`
+- this is the main contract for site index pages and the reader library view
+
+Canonical work schema at `data/<site>/<work>/raw/raw.json`:
+```json
+{
+  "version": 0,
+  "get_date": "...",
+  "title": "...",
+  "id": "...",
+  "nid": "n123|s123|a123|c123|ncode",
+  "url": "...",
+  "author": "...",
+  "author_id": "...",
+  "author_url": "...",
+  "caption": "...",
+  "total_episodes": 1,
+  "all_episodes": 1,
+  "total_characters": 12345,
+  "all_characters": 12345,
+  "type": "novel|comic",
+  "serialization": "短編|連載中|完結済",
+  "tags": ["..."],
+  "all_tags": ["..."],
+  "createDate": "...",
+  "updateDate": "...",
+  "episodes": {
+    "1": {
+      "id": "episode id",
+      "chapter": null,
+      "title": "...",
+      "textCount": 1234,
+      "tags": ["..."],
+      "introduction": "...",
+      "text": "...",
+      "postscript": "...",
+      "createDate": "...",
+      "updateDate": "..."
+    }
+  }
+}
+```
+Notes:
+- `author_url` is effectively optional in some Pixiv comic paths
+- `episodes` keys are sequential display order, not always source-site IDs
+- this file is the most important migration boundary; preserve it unless intentionally versioning the format
+
+Episode text markup before HTML rendering:
+```text
+[image](filename.ext)
+[newpage]
+[ruby:<漢字>(かな)]
+[jump:3]
+```
+`narou_gen()` expands this markup into HTML, page-break markers, ruby tags, and internal jump links.
+
+Pixiv-specific state:
+- `data/pixiv/user.json`: tracked Pixiv user settings and snapshot hashes
+- `data/pixiv/snapshots/illust_ids/<user_id>.json`: sorted list of illustration IDs for change detection
+
+ZIP import contract expected by `util.zip_to_text()`:
+```json
+{
+  "site_name": "pixiv|narou|...",
+  "images": {
+    "logical_name.ext": "content_hash"
+  }
+}
+```
+Notes:
+- `data.json` must exist at ZIP root
+- `<site_name>/...` subtree is extracted into `data/`
+- image map is merged into `data/images/database.json`
+
+## Frontend Contracts
+The top page JavaScript submits form data using these API fields:
+- `add`: download by URL
+- `update`: update by site key or `all`
+- `convert`: regenerate HTML by site key or `all`
+- `re_download`: force redownload by site key or `all`
+- `repair`: rebuild from `raw.json`
+- `pdf`, `author_id`, `author_url`, `novel_type`, `chapter`: PDF conversion
+- `zip`: ZIP import
+
+The reader and site index pages depend on:
+- `/images/cover.json`
+- `/images/<hash>.<ext>`
+- `/<site>/index.json`
+- `/<site>/<work>/raw/raw.json`
+
+If these JSON shapes change, the browser-side reader will break even if the crawler still works.
+
+## Rust Refactor Guidance
+Refactor toward Rust by preserving behavior and contracts first, not Python method names.
+
+Target stable boundaries:
+- config/bootstrap
+- HTTP API and static file serving
+- persistent job queue
+- typed site action dispatch
+- canonical work model (`raw.json`)
+- HTML rendering pipeline
+- image dedupe database
+
+Recommended Rust-first data types:
+- `AppConfig`
+- `RequestData`
+- `TaskState`
+- `AccountFile`
+- `ImageDatabase`
+- `CoverDatabase`
+- `SiteIndexEntry`
+- `Work`
+- `Episode`
+- `ZipImportMetadata`
+
+Refactor principles:
+- do not port Python helpers one-for-one; port state transitions and file contracts
+- keep rendering as a deterministic transform from normalized work data to files
+- isolate side effects behind interfaces: HTTP client, browser login, filesystem, queue store, clock
+- preserve current directory layout and JSON keys until a deliberate migration plan exists
+- if compatibility with existing installations matters, support importing current `queue.pkl`/`task.json`/`raw.json` rather than rewriting everything at once
+- if compatibility does not matter, replace pickle persistence with versioned JSON or another explicit format early
+
+## Testing And Validation
+There is no strong automated test suite today. For behavior changes, validate the current contracts directly.
+
+Minimum smoke tests:
+- start server with `uv run python main.py`
+- POST `/api/` with each affected action type
+- confirm `queue/task.json` shape and worker progress
+- confirm `data/<site>/index.json` and `data/<site>/<work>/raw/raw.json` remain valid
+- open generated site pages and `/reader/?site=<site>&nid=<work>`
+- if image logic changed, inspect `data/images/database.json`, `cover.json`, and actual hashed image files
+
+## Commit And PR Notes
+Use descriptive Japanese commit messages focused on behavior changes, data contracts, or compatibility changes.
+
+When a change affects runtime schemas or generated files, document:
+- which on-disk contracts changed
+- whether existing `raw.json`, queue files, cookies, or image DBs remain compatible
+- whether Narou.rb compatibility assets under `webnovel/*.yaml` need coordinated updates
