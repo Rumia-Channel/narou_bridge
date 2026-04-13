@@ -271,6 +271,13 @@ If these JSON shapes change, the browser-side reader will break even if the craw
 ## Rust Refactor Guidance
 Refactor toward Rust by preserving behavior and contracts first, not Python method names.
 
+Rust target direction:
+- primary storage should be SQLite or another explicit database, not the legacy JSON tree
+- the current HTML frontend can be dropped; ship a minimal API-first runtime instead
+- legacy JSON / pickle / HTML files are migration inputs, not the long-term runtime contract
+- login should move out of crawler modules; provide a simple cookie import helper instead of browser automation in the main crawler path
+- `sample/` is archive-only reference code and must not define runtime behavior
+
 Target stable boundaries:
 - config/bootstrap
 - HTTP API and static file serving
@@ -296,9 +303,9 @@ Refactor principles:
 - do not port Python helpers one-for-one; port state transitions and file contracts
 - keep rendering as a deterministic transform from normalized work data to files
 - isolate side effects behind interfaces: HTTP client, browser login, filesystem, queue store, clock
-- preserve current directory layout and JSON keys until a deliberate migration plan exists
-- if compatibility with existing installations matters, support importing current `queue.pkl`/`task.json`/`raw.json` rather than rewriting everything at once
-- if compatibility does not matter, replace pickle persistence with versioned JSON or another explicit format early
+- preserve current directory layout only where it matters for migration/import
+- if compatibility with existing installations matters, build a one-shot migration tool for legacy data before replacing formats
+- if compatibility does not matter, move fully to SQLite/explicit storage early and keep JSON only as import/export surface
 - when adding Rust crates, use `cargo add`; do not edit `Cargo.toml` directly to add dependencies
 
 ### Constraining Site Extensibility

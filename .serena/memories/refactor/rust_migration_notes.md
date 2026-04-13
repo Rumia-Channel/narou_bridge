@@ -67,3 +67,11 @@ Rust refactor guidance for Narou Bridge:
   - JSON backup and corruption handling (`.backup.N`, `.corrupt`) used widely in Python implementation.
 - `webnovel/*.yaml` are not consumed by the current Python runtime. They are compatibility/output assets, not active server config.
 - `sample/` is the archive location for old Python implementations and examples; archive code must not define runtime behavior.
+- Rust target direction:
+  - primary storage should be SQLite or another explicit database, not the legacy JSON tree
+  - the current HTML frontend can be dropped; ship a minimal API-first runtime instead
+  - legacy JSON / pickle / HTML files are migration inputs, not the long-term runtime contract
+  - login should move out of crawler modules; provide a simple cookie import helper instead of browser automation in the main crawler path
+  - preserve current directory layout only where it matters for migration/import
+  - if compatibility matters, build a one-shot migration tool before replacing formats
+  - if compatibility does not matter, move fully to SQLite/explicit storage early and keep JSON only as import/export surface

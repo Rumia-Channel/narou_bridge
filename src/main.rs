@@ -1,33 +1,27 @@
-use narou_bridge::core::model::{AppConfig, RequestData};
-use narou_bridge::core::registry::{action_from_request, build_registry};
-use narou_bridge::sites::SiteActionContext;
+use anyhow::Result;
+use narou_bridge::core::model::AppConfig;
+use narou_bridge::core::registry::build_registry;
+use narou_bridge::core::storage::Store;
+use narou_bridge::core::runtime::run;
+use std::path::PathBuf;
 
-fn main() {
-    let _config = AppConfig {
-        data_dir: "data".to_string(),
-        cookie_dir: "cookie".to_string(),
-        queue_dir: "queue".to_string(),
-        pdf_dir: "pdf".to_string(),
-        log_dir: "log".to_string(),
+#[tokio::main]
+async fn main() -> Result<()> {
+    let root = std::env::current_dir()?;
+    let config = AppConfig {
+        data_dir: root.join("data").to_string_lossy().to_string(),
+        cookie_dir: root.join("cookie").to_string_lossy().to_string(),
+        queue_dir: root.join("queue").to_string_lossy().to_string(),
+        pdf_dir: root.join("pdf").to_string_lossy().to_string(),
+        log_dir: root.join("log").to_string_lossy().to_string(),
+        db_path: root.join("data").join("runtime.sqlite3").to_string_lossy().to_string(),
+        archive_dir: root.join("archive").to_string_lossy().to_string(),
+        bind_addr: "127.0.0.1:8080".to_string(),
         host_name: "http://127.0.0.1:8080".to_string(),
+        legacy_root: Some(root.join("sample").to_string_lossy().to_string()),
     };
 
+    let store = Store::open(PathBuf::from(&config.db_path))?;
     let registry = build_registry();
-    let request = RequestData {
-        add: Some("https://www.pixiv.net/novel/show.php?id=1".to_string()),
-        ..RequestData::default()
-    };
-
-    if let Some((action, value)) = action_from_request(&request) {
-        let context = SiteActionContext {
-            host_name: "http://127.0.0.1:8080".to_string(),
-            data_dir: "data".to_string(),
-            cookie_dir: "cookie".to_string(),
-            queue_dir: "queue".to_string(),
-            pdf_dir: "pdf".to_string(),
-        };
-        let _ = registry.dispatch(action, &value, &context);
-    }
-
-    println!("narou_bridge rust skeleton initialized");
+    run(config, store, registry).await
 }

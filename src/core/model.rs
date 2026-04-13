@@ -7,7 +7,33 @@ pub struct AppConfig {
     pub queue_dir: String,
     pub pdf_dir: String,
     pub log_dir: String,
+    pub db_path: String,
+    pub archive_dir: String,
+    pub bind_addr: String,
     pub host_name: String,
+    pub legacy_root: Option<String>,
+}
+
+impl AppConfig {
+    pub fn data_dir_path(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.data_dir)
+    }
+
+    pub fn data_images_dir(&self) -> std::path::PathBuf {
+        self.data_dir_path().join("images")
+    }
+
+    pub fn data_reader_dir(&self) -> std::path::PathBuf {
+        self.data_dir_path().join("reader")
+    }
+
+    pub fn cookie_dir_path(&self, site: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.cookie_dir).join(site)
+    }
+
+    pub fn pdf_dir_path(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.pdf_dir)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -121,4 +147,76 @@ pub struct ZipImportMetadata {
     pub site_name: String,
     #[serde(default)]
     pub images: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+impl Default for TaskStatus {
+    fn default() -> Self {
+        Self::Queued
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TaskRecord {
+    pub id: i64,
+    pub request_id: String,
+    pub action: String,
+    pub param: String,
+    pub request: RequestData,
+    pub status: TaskStatus,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AccountRecord {
+    pub site: String,
+    pub name: String,
+    pub display_name: Option<String>,
+    pub account: AccountFile,
+    pub active: bool,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkRecord {
+    pub site: String,
+    pub work_key: String,
+    pub title: String,
+    pub author: String,
+    pub author_id: Option<String>,
+    pub author_url: Option<String>,
+    pub r#type: String,
+    pub serialization: String,
+    pub caption: String,
+    pub create_date: String,
+    pub update_date: String,
+    pub raw_json: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ImageRecord {
+    pub logical_name: String,
+    pub hash: String,
+    pub ext: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MigrationSummary {
+    pub accounts: usize,
+    pub tasks: usize,
+    pub works: usize,
+    pub images: usize,
+    pub archived_files: usize,
 }

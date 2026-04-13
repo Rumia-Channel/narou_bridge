@@ -23,4 +23,7 @@ Rust migration note:
 - `sample/` is the archive location for old Python implementations and reference code; archive files must not define runtime behavior.
 Rust dependency note:
 - when adding Rust crates during migration, use `cargo add`; do not edit `Cargo.toml` directly just to add dependencies.
+Rust storage note:
+- final Rust direction may replace the legacy JSON tree with SQLite or another explicit store; the current JSON/HTML/Python files should be treated as migration inputs and compatibility artifacts, not the permanent runtime contract.
+- login is expected to move out of crawler modules and into a simpler cookie import flow.
 Important note for refactoring: preserve runtime behavior and on-disk contracts first; Python helper names are not migration boundaries.
