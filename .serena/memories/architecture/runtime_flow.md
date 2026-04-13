@@ -32,3 +32,4 @@ Rust migration direction for dispatch:
 Rust final architecture note:
 - API-first Rust runtime may drop the legacy HTML frontend and serve a minimal API plus migration utilities.
 - tools/login_helper.py is a separate helper project artifact, not runtime behavior.
+- `tools/` is a separate uv project with its own README.

@@ -76,4 +76,4 @@ Rust refactor guidance for Narou Bridge:
   - if compatibility matters, build a one-shot migration tool before replacing formats
   - if compatibility does not matter, move fully to SQLite/explicit storage early and keep JSON only as import/export surface
   - the simple login helper lives under `tools/` and should only generate/import cookie JSON; do not reintroduce browser automation into the main runtime
-  - `tools/` is a separate `uv` project with its own `pyproject.toml` and `uv.lock`
+  - `tools/` is a separate `uv` project with its own `pyproject.toml`, `uv.lock`, and `README.md`

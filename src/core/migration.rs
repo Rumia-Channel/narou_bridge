@@ -300,6 +300,51 @@ fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
             }
         }
     }
+
+    let cover_path = image_dir.join("cover.json");
+    if cover_path.exists() {
+        let cover_json: Value = load_json_or_default(&cover_path)?;
+        if let Some(map) = cover_json.as_object() {
+            for (logical_name, hash_value) in map {
+                let ext = Path::new(logical_name)
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let record = ImageRecord {
+                    logical_name: logical_name.clone(),
+                    hash: hash_value.as_str().unwrap_or_default().to_string(),
+                    ext,
+                    kind: "cover".to_string(),
+                };
+                store.upsert_image(&record)?;
+                count += 1;
+            }
+        }
+    }
+
+    for ext in ["jpg", "jpeg", "png", "gif", "apng", "webp"] {
+        let dir = image_dir.join(ext);
+        if !dir.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let logical_name = name.clone();
+            let record = ImageRecord {
+                logical_name,
+                hash: name.trim_end_matches(&format!(".{ext}")).to_string(),
+                ext: ext.to_string(),
+                kind: "image".to_string(),
+            };
+            store.upsert_image(&record)?;
+            count += 1;
+        }
+    }
     Ok(count)
 }
 
