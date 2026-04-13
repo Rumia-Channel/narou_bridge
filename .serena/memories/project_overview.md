@@ -18,4 +18,7 @@ Important runtime directories:
 - `pdf/`: temporary PDF/ZIP uploads
 - `log/`: server logs
 - `setting/`: runtime copy of `setting.ini`
+Rust migration note:
+- planned Rust site layout is library-style modules like `src/sites/pixiv/mod.rs` and `src/sites/narou/mod.rs`, with private submodules for large sites.
+- `sample/` is the archive location for old Python implementations and reference code; archive files must not define runtime behavior.
 Important note for refactoring: preserve runtime behavior and on-disk contracts first; Python helper names are not migration boundaries.

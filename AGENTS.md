@@ -330,6 +330,17 @@ Preferred Rust shape:
 - per-work refetch/update identity should be persisted as structured metadata, not reconstructed from folder names or ad hoc URL parsing
 - `key_data` and `host_name` should be absorbed by renderer/app core where possible, not passed through every site action
 
+Rust site layout suggestion:
+- organize each built-in site as a library-style module tree such as `src/sites/pixiv/mod.rs` and `src/sites/narou/mod.rs`
+- split large sites into submodules (`fetch.rs`, `download.rs`, `update.rs`, `convert.rs`, `repair.rs`) once that improves clarity
+- keep each site's public surface small and explicit; internal helpers should stay private to the site module tree
+- prefer shared core modules for common behavior instead of letting site modules grow into mini-frameworks
+
+Archive note:
+- treat `sample/` as the archive location for old Python implementations and examples
+- legacy Python files moved there are reference-only and must not define Rust runtime behavior
+- do not expand Rust behavior based on archived Python code unless it matches the current on-disk contracts
+
 Configuration direction for Rust:
 - stop using `[crawler]` as `site key -> python module path`
 - prefer fixed built-in site IDs with enable/disable or display-name settings only

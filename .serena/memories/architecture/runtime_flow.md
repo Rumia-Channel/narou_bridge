@@ -28,3 +28,4 @@ Routing note:
 Rust migration direction for dispatch:
 - preserve action names conceptually (`download`, `login`, `update`, `convert`, `repair`) but use a closed built-in registry and fixed action enum.
 - do not preserve runtime plugin loading from config or site-owned queue re-entry semantics.
+- rust site modules should live under `src/sites/<site>/mod.rs` with private submodules as needed for large sites.

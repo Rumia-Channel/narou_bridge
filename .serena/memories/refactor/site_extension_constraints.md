@@ -41,3 +41,6 @@ Target Rust constraint model:
 
 Design implication:
 - Rust migration should preserve the external behavior and familiar action names while intentionally removing most user-extensible runtime hooks.
+- Preferred site module layout is `src/sites/<site>/mod.rs` with optional private submodules (`fetch.rs`, `download.rs`, `update.rs`, `convert.rs`, `repair.rs`) for large sites.
+- Shared logic should move into core modules so site modules stay small, explicit, and easy to review.
+- Old Python implementations moved to `sample/` are archive-only references and must not define runtime behavior.
