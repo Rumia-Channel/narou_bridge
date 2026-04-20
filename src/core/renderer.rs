@@ -4,6 +4,34 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub fn refresh_image_manifests(store: &Store, data_dir: &str) -> Result<()> {
+    let image_dir = PathBuf::from(data_dir).join("images");
+    fs::create_dir_all(&image_dir).context("failed to create image dir")?;
+
+    let mut database = serde_json::Map::new();
+    let mut cover = serde_json::Map::new();
+
+    for image in store.list_images()? {
+        database.insert(
+            image.logical_name.clone(),
+            serde_json::Value::String(image.hash.clone()),
+        );
+        if image.kind == "cover" {
+            cover.insert(image.logical_name, serde_json::Value::String(image.hash));
+        }
+    }
+
+    fs::write(
+        image_dir.join("database.json"),
+        serde_json::to_string_pretty(&serde_json::Value::Object(database))?,
+    )?;
+    fs::write(
+        image_dir.join("cover.json"),
+        serde_json::to_string_pretty(&serde_json::Value::Object(cover))?,
+    )?;
+    Ok(())
+}
+
 pub fn render_site_from_store(
     store: &Store,
     site: &str,

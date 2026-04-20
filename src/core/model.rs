@@ -19,6 +19,22 @@ impl AppConfig {
         std::path::PathBuf::from(&self.data_dir)
     }
 
+    pub fn log_dir_path(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.log_dir)
+    }
+
+    pub fn db_path_buf(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.db_path)
+    }
+
+    pub fn archive_dir_path(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.archive_dir)
+    }
+
+    pub fn legacy_root_path(&self) -> Option<std::path::PathBuf> {
+        self.legacy_root.as_deref().map(std::path::PathBuf::from)
+    }
+
     pub fn data_images_dir(&self) -> std::path::PathBuf {
         self.data_dir_path().join("images")
     }

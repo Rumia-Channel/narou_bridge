@@ -29,7 +29,9 @@ link_e	</a>
 
 ## How to setting
 
-#### setting/setting.ini を変更
+#### repo 直下の setting.ini を変更
+
+初回起動時に `setting\setting.ini` が自動生成されます。
 
 設定例(Tailscaleの443ポートからサーバーに転送する前提)
 ```
