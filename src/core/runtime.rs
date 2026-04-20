@@ -18,6 +18,7 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::{BTreeMap, HashSet};
 use std::fs as stdfs;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -718,8 +719,10 @@ fn import_uploaded_zip(
         .with_context(|| format!("invalid zip {}", archive_path.display()))?;
     let metadata = read_zip_metadata(&mut archive)?;
 
-    extract_zip_payload(&mut archive, Path::new(data_dir), &metadata.site_name)?;
-    import_site_records_from_tree(
+    let payload_entries =
+        collect_zip_payload_entries(&mut archive, Path::new(data_dir), &metadata.site_name)?;
+    extract_zip_payload(&mut archive, &payload_entries)?;
+    let imported = import_site_records_from_tree(
         store,
         &PathBuf::from(data_dir).join(&metadata.site_name),
         &metadata.site_name,
@@ -729,7 +732,7 @@ fn import_uploaded_zip(
     renderer::render_site_from_store(store, &metadata.site_name, data_dir, host_name)?;
 
     Ok(format!(
-        "imported {}",
+        "imported {} ({imported} works)",
         request
             .zip_name
             .clone()
@@ -755,22 +758,23 @@ where
         .context("failed to read zip data.json")?;
     let metadata: ZipImportMetadata =
         serde_json::from_str(&metadata).context("failed to parse zip data.json")?;
-    if metadata.site_name.trim().is_empty() {
-        anyhow::bail!("zip data.json is missing site_name");
-    }
-    Ok(metadata)
+    normalize_zip_metadata(metadata)
 }
 
-fn extract_zip_payload<R>(
+fn collect_zip_payload_entries<R>(
     archive: &mut zip::ZipArchive<R>,
     data_dir: &Path,
     site_name: &str,
-) -> Result<()>
+) -> Result<Vec<ZipPayloadEntry>>
 where
     R: Read + std::io::Seek,
 {
+    let mut entries = Vec::new();
+    let mut seen_targets = HashSet::new();
+    let mut found_site_payload = false;
+
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index)?;
+        let entry = archive.by_index(index)?;
         if entry.is_dir() {
             continue;
         }
@@ -786,20 +790,48 @@ where
             .next()
             .and_then(|component| component.as_os_str().to_str())
         else {
-            continue;
+            anyhow::bail!("zip archive contains an empty entry path");
         };
         if root != site_name && root != "images" {
-            continue;
+            anyhow::bail!("zip archive contains unexpected top-level entry: {name}");
+        }
+        if root == site_name {
+            found_site_payload = true;
         }
 
         let target = data_dir.join(&relative);
-        if let Some(parent) = target.parent() {
+        let target_key = relative.to_string_lossy().to_string();
+        if !seen_targets.insert(target_key.clone()) {
+            anyhow::bail!("zip archive contains duplicate entry path: {target_key}");
+        }
+
+        entries.push(ZipPayloadEntry { index, target });
+    }
+
+    if !found_site_payload {
+        anyhow::bail!("zip archive is missing the {site_name}/ payload");
+    }
+
+    Ok(entries)
+}
+
+fn extract_zip_payload<R>(
+    archive: &mut zip::ZipArchive<R>,
+    entries: &[ZipPayloadEntry],
+) -> Result<()>
+where
+    R: Read + std::io::Seek,
+{
+    for entry in entries {
+        let mut zip_entry = archive.by_index(entry.index)?;
+        if let Some(parent) = entry.target.parent() {
             stdfs::create_dir_all(parent)?;
         }
-        let mut output = stdfs::File::create(&target)
-            .with_context(|| format!("failed to create extracted file {}", target.display()))?;
-        std::io::copy(&mut entry, &mut output)
-            .with_context(|| format!("failed to extract {}", target.display()))?;
+        let mut output = stdfs::File::create(&entry.target).with_context(|| {
+            format!("failed to create extracted file {}", entry.target.display())
+        })?;
+        std::io::copy(&mut zip_entry, &mut output)
+            .with_context(|| format!("failed to extract {}", entry.target.display()))?;
     }
     Ok(())
 }
@@ -814,15 +846,75 @@ fn sanitized_archive_path(name: &str) -> Result<PathBuf> {
             _ => anyhow::bail!("unsupported zip entry path: {name}"),
         }
     }
+    if clean.as_os_str().is_empty() {
+        anyhow::bail!("unsupported zip entry path: {name}");
+    }
     Ok(clean)
+}
+
+#[derive(Debug)]
+struct ZipPayloadEntry {
+    index: usize,
+    target: PathBuf,
+}
+
+fn normalize_zip_metadata(mut metadata: ZipImportMetadata) -> Result<ZipImportMetadata> {
+    metadata.site_name = metadata.site_name.trim().to_string();
+    if metadata.site_name.is_empty() {
+        anyhow::bail!("zip data.json is missing site_name");
+    }
+    if !is_simple_path_segment(&metadata.site_name) {
+        anyhow::bail!(
+            "zip data.json has an invalid site_name: {}",
+            metadata.site_name
+        );
+    }
+
+    let mut images = BTreeMap::new();
+    for (logical_name, hash) in metadata.images {
+        let logical_name = logical_name.trim();
+        let hash = hash.trim();
+        validate_zip_image_entry(logical_name, hash)?;
+        images.insert(logical_name.to_string(), hash.to_string());
+    }
+    metadata.images = images;
+    Ok(metadata)
+}
+
+fn validate_zip_image_entry(logical_name: &str, hash: &str) -> Result<()> {
+    if logical_name.is_empty() {
+        anyhow::bail!("zip data.json contains an empty image logical name");
+    }
+    if hash.is_empty() {
+        anyhow::bail!("zip data.json contains an empty image hash for {logical_name}");
+    }
+    if !is_simple_path_segment(logical_name) {
+        anyhow::bail!("zip data.json contains an invalid image logical name: {logical_name}");
+    }
+    if !hash
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!("zip data.json contains an invalid image hash for {logical_name}");
+    }
+    Ok(())
+}
+
+fn is_simple_path_segment(value: &str) -> bool {
+    if value.trim().is_empty() {
+        return false;
+    }
+
+    let mut components = Path::new(value).components();
+    matches!(components.next(), Some(std::path::Component::Normal(part)) if components.next().is_none() && part == value)
 }
 
 fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str) -> Result<usize> {
     if !site_dir.exists() {
-        return Ok(0);
+        anyhow::bail!("zip archive is missing the {site_name}/ payload");
     }
 
-    let mut count = 0;
+    let mut records = Vec::new();
     for entry in stdfs::read_dir(site_dir)? {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
@@ -845,66 +937,106 @@ fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str
                 .with_context(|| format!("failed to open {}", payload_path.display()))?,
         )
         .with_context(|| format!("failed to parse {}", payload_path.display()))?;
-        store.upsert_work(&work_record_from_json(site_name, &work_key, raw_json))?;
-        count += 1;
+        let record = work_record_from_json(site_name, &work_key, raw_json)?;
+        records.push(record);
+    }
+
+    if records.is_empty() {
+        anyhow::bail!("zip archive does not contain any work payloads in {site_name}/");
+    }
+
+    let count = records.len();
+    for record in records {
+        store.upsert_work(&record)?;
     }
     Ok(count)
 }
 
-fn work_record_from_json(site: &str, work_key: &str, raw_json: Value) -> WorkRecord {
-    WorkRecord {
+fn work_record_from_json(site: &str, work_key: &str, raw_json: Value) -> Result<WorkRecord> {
+    let payload: ZipWorkPayload =
+        serde_json::from_value(raw_json.clone()).context("invalid zip work payload")?;
+    if payload.episodes.is_empty() {
+        anyhow::bail!("zip work payload {work_key} is missing episodes");
+    }
+
+    Ok(WorkRecord {
         site: site.to_string(),
         work_key: work_key.to_string(),
-        title: raw_json
-            .get("title")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        author: raw_json
-            .get("author")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        author_id: raw_json
-            .get("author_id")
-            .and_then(|value| value.as_str())
-            .map(str::to_string),
-        author_url: raw_json
-            .get("author_url")
-            .and_then(|value| value.as_str())
-            .map(str::to_string),
-        r#type: raw_json
-            .get("type")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        serialization: raw_json
-            .get("serialization")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        caption: raw_json
-            .get("caption")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        create_date: raw_json
-            .get("createDate")
-            .and_then(|value| value.as_str())
-            .or_else(|| raw_json.get("create_date").and_then(|value| value.as_str()))
-            .unwrap_or_default()
-            .to_string(),
-        update_date: raw_json
-            .get("updateDate")
-            .and_then(|value| value.as_str())
-            .or_else(|| raw_json.get("update_date").and_then(|value| value.as_str()))
-            .unwrap_or_default()
-            .to_string(),
+        title: payload.title,
+        author: payload.author,
+        author_id: payload.author_id,
+        author_url: payload.author_url,
+        r#type: payload.work_type,
+        serialization: payload.serialization,
+        caption: payload.caption,
+        create_date: payload.create_date,
+        update_date: payload.update_date,
         raw_json,
-    }
+    })
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct ZipWorkPayload {
+    #[serde(default)]
+    version: i64,
+    #[serde(default, rename = "get_date")]
+    get_date: String,
+    title: String,
+    id: String,
+    nid: String,
+    url: String,
+    author: String,
+    #[serde(default)]
+    author_id: Option<String>,
+    #[serde(default)]
+    author_url: Option<String>,
+    caption: String,
+    #[serde(default, rename = "total_episodes")]
+    total_episodes: i64,
+    #[serde(default, rename = "all_episodes")]
+    all_episodes: i64,
+    #[serde(default, rename = "total_characters")]
+    total_characters: i64,
+    #[serde(default, rename = "all_characters")]
+    all_characters: i64,
+    #[serde(default, rename = "type")]
+    work_type: String,
+    serialization: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default, rename = "all_tags")]
+    all_tags: Vec<String>,
+    #[serde(default, rename = "createDate", alias = "create_date")]
+    create_date: String,
+    #[serde(default, rename = "updateDate", alias = "update_date")]
+    update_date: String,
+    #[serde(default)]
+    episodes: BTreeMap<String, ZipEpisodePayload>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct ZipEpisodePayload {
+    id: String,
+    #[serde(default)]
+    chapter: Option<String>,
+    title: String,
+    #[serde(rename = "textCount")]
+    text_count: i64,
+    #[serde(default)]
+    tags: Vec<String>,
+    introduction: String,
+    text: String,
+    postscript: String,
+    #[serde(default, rename = "createDate", alias = "create_date")]
+    create_date: String,
+    #[serde(default, rename = "updateDate", alias = "update_date")]
+    update_date: String,
 }
 
 fn merge_zip_images(store: &Store, metadata: &ZipImportMetadata) -> Result<()> {
+    let mut images = Vec::with_capacity(metadata.images.len());
     for (logical_name, hash) in &metadata.images {
         let ext = Path::new(logical_name)
             .extension()
@@ -916,12 +1048,15 @@ fn merge_zip_images(store: &Store, metadata: &ZipImportMetadata) -> Result<()> {
         } else {
             "image"
         };
-        store.upsert_image(&ImageRecord {
+        images.push(ImageRecord {
             logical_name: logical_name.clone(),
             hash: hash.clone(),
             ext,
             kind: kind.to_string(),
-        })?;
+        });
+    }
+    for image in images {
+        store.upsert_image(&image)?;
     }
     Ok(())
 }
@@ -1048,6 +1183,20 @@ async fn claim_next_task(state: &RuntimeState) -> Result<Option<TaskRecord>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::io::{Cursor, Write};
+
+    fn zip_archive(entries: &[(&str, &str)]) -> zip::ZipArchive<Cursor<Vec<u8>>> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        for (name, contents) in entries {
+            writer.start_file(name, options).expect("start file");
+            writer.write_all(contents.as_bytes()).expect("write file");
+        }
+        let cursor = writer.finish().expect("finish zip");
+        zip::ZipArchive::new(cursor).expect("open zip")
+    }
 
     fn request_with_actions() -> RequestData {
         RequestData {
@@ -1133,5 +1282,81 @@ mod tests {
                 .to_string_lossy(),
             "narou\\work\\raw\\raw.json"
         );
+    }
+
+    #[test]
+    fn normalize_zip_metadata_trims_and_validates() {
+        let mut images = BTreeMap::new();
+        images.insert(" cover.png ".to_string(), " abc123 ".to_string());
+        let metadata = ZipImportMetadata {
+            site_name: " narou ".to_string(),
+            images,
+        };
+        let normalized = normalize_zip_metadata(metadata).expect("metadata");
+        assert_eq!(normalized.site_name, "narou");
+        assert_eq!(
+            normalized.images.get("cover.png").map(String::as_str),
+            Some("abc123")
+        );
+    }
+
+    #[test]
+    fn normalize_zip_metadata_rejects_path_traversal() {
+        let metadata = ZipImportMetadata {
+            site_name: "../narou".to_string(),
+            images: BTreeMap::new(),
+        };
+        assert!(normalize_zip_metadata(metadata).is_err());
+    }
+
+    #[test]
+    fn collect_zip_payload_entries_rejects_unexpected_roots() {
+        let mut archive = zip_archive(&[
+            ("data.json", r#"{"site_name":"narou","images":{}}"#),
+            ("evil/readme.txt", "nope"),
+            ("narou/work/raw/raw.json", "{}"),
+        ]);
+        let err = collect_zip_payload_entries(&mut archive, Path::new("data"), "narou")
+            .expect_err("unexpected root should fail");
+        assert!(err.to_string().contains("unexpected top-level entry"));
+    }
+
+    #[test]
+    fn collect_zip_payload_entries_requires_site_payload() {
+        let mut archive = zip_archive(&[
+            ("data.json", r#"{"site_name":"narou","images":{}}"#),
+            ("images/cover.png", "img"),
+        ]);
+        let err = collect_zip_payload_entries(&mut archive, Path::new("data"), "narou")
+            .expect_err("missing site payload should fail");
+        assert!(err.to_string().contains("missing the narou/ payload"));
+    }
+
+    #[test]
+    fn work_record_from_json_requires_episodes() {
+        let raw_json = json!({
+            "version": 0,
+            "get_date": "2026-01-01",
+            "title": "Sample",
+            "id": "1",
+            "nid": "n1",
+            "url": "https://example.com",
+            "author": "Author",
+            "caption": "Caption",
+            "total_episodes": 1,
+            "all_episodes": 1,
+            "total_characters": 1,
+            "all_characters": 1,
+            "type": "novel",
+            "serialization": "短編",
+            "tags": [],
+            "all_tags": [],
+            "createDate": "2026-01-01",
+            "updateDate": "2026-01-01",
+            "episodes": {}
+        });
+        let err = work_record_from_json("narou", "work", raw_json)
+            .expect_err("missing episodes should fail");
+        assert!(err.to_string().contains("missing episodes"));
     }
 }
