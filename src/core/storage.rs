@@ -152,6 +152,19 @@ impl Store {
                 account.updated_at,
             ],
         )?;
+        if account.active {
+            self.conn.execute(
+                r#"UPDATE accounts
+                   SET active = CASE WHEN name = ?2 THEN 1 ELSE 0 END,
+                       updated_at = CASE
+                           WHEN name = ?2 THEN ?3
+                           WHEN active != 0 THEN ?3
+                           ELSE updated_at
+                       END
+                   WHERE site = ?1"#,
+                params![account.site, account.name, account.updated_at],
+            )?;
+        }
         Ok(())
     }
 
@@ -160,24 +173,92 @@ impl Store {
             r#"SELECT site, name, display_name, account_json, active, updated_at
                FROM accounts WHERE site = ?1 ORDER BY active DESC, name ASC"#,
         )?;
-        let rows = stmt.query_map([site], |row| {
-            let account_json: String = row.get(3)?;
-            let account: crate::core::model::AccountFile =
-                serde_json::from_str(&account_json).unwrap_or_default();
-            Ok(AccountRecord {
-                site: row.get(0)?,
-                name: row.get(1)?,
-                display_name: row.get(2)?,
-                account,
-                active: row.get::<_, i64>(4)? != 0,
-                updated_at: row.get(5)?,
-            })
-        })?;
+        let rows = stmt.query_map([site], account_record_from_row)?;
         let mut accounts = Vec::new();
         for row in rows {
             accounts.push(row?);
         }
         Ok(accounts)
+    }
+
+    pub fn get_account(&self, site: &str, name: &str) -> Result<Option<AccountRecord>> {
+        self.conn
+            .query_row(
+                r#"SELECT site, name, display_name, account_json, active, updated_at
+                   FROM accounts WHERE site = ?1 AND name = ?2"#,
+                params![site, name],
+                account_record_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn delete_account(&self, site: &str, name: &str) -> Result<bool> {
+        let changed = self.conn.execute(
+            r#"DELETE FROM accounts WHERE site = ?1 AND name = ?2"#,
+            params![site, name],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn rename_account(
+        &self,
+        site: &str,
+        old_name: &str,
+        new_name: &str,
+        updated_at: &str,
+    ) -> Result<Option<AccountRecord>> {
+        if old_name == new_name {
+            return self.get_account(site, old_name);
+        }
+        let changed = self.conn.execute(
+            r#"UPDATE accounts
+               SET name = ?1, updated_at = ?2
+               WHERE site = ?3 AND name = ?4"#,
+            params![new_name, updated_at, site, old_name],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_account(site, new_name)
+    }
+
+    pub fn set_active_account(
+        &self,
+        site: &str,
+        name: &str,
+        updated_at: &str,
+    ) -> Result<Option<AccountRecord>> {
+        if self.get_account(site, name)?.is_none() {
+            return Ok(None);
+        }
+        self.conn.execute(
+            r#"UPDATE accounts
+               SET active = CASE WHEN name = ?2 THEN 1 ELSE 0 END,
+                   updated_at = CASE
+                       WHEN name = ?2 THEN ?3
+                       WHEN active != 0 THEN ?3
+                       ELSE updated_at
+                   END
+               WHERE site = ?1"#,
+            params![site, name, updated_at],
+        )?;
+        self.get_account(site, name)
+    }
+
+    pub fn get_active_account(&self, site: &str) -> Result<Option<AccountRecord>> {
+        self.conn
+            .query_row(
+                r#"SELECT site, name, display_name, account_json, active, updated_at
+                   FROM accounts
+                   WHERE site = ?1 AND active != 0
+                   ORDER BY updated_at DESC, name ASC
+                   LIMIT 1"#,
+                [site],
+                account_record_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn upsert_work(&self, work: &WorkRecord) -> Result<()> {
@@ -602,6 +683,20 @@ fn parse_status(value: &str) -> TaskStatus {
     }
 }
 
+fn account_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRecord> {
+    let account_json: String = row.get(3)?;
+    let account: crate::core::model::AccountFile =
+        serde_json::from_str(&account_json).unwrap_or_default();
+    Ok(AccountRecord {
+        site: row.get(0)?,
+        name: row.get(1)?,
+        display_name: row.get(2)?,
+        account,
+        active: row.get::<_, i64>(4)? != 0,
+        updated_at: row.get(5)?,
+    })
+}
+
 fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
     let request_json: String = row.get(4)?;
     let request: RequestData = serde_json::from_str(&request_json).unwrap_or_default();
@@ -637,6 +732,21 @@ mod tests {
             status: TaskStatus::Queued,
             error: None,
             created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn sample_account(site: &str, name: &str, active: bool) -> AccountRecord {
+        AccountRecord {
+            site: site.to_string(),
+            name: name.to_string(),
+            display_name: Some(format!("{name} display")),
+            account: crate::core::model::AccountFile {
+                cookies: serde_json::json!({"session": name}),
+                user_agent: Some(format!("{name}-ua")),
+                display_name: Some(format!("{name} display")),
+            },
+            active,
             updated_at: "2025-01-01T00:00:00Z".to_string(),
         }
     }
@@ -752,5 +862,74 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].key, "tracked_users/123/config");
         assert_eq!(records[1].key, "tracked_users/123/illust_ids");
+    }
+
+    #[test]
+    fn account_helpers_support_lookup_switch_rename_and_delete() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .upsert_account(&sample_account("pixiv", "alpha", true))
+            .expect("insert alpha");
+        store
+            .upsert_account(&sample_account("pixiv", "beta", false))
+            .expect("insert beta");
+
+        let active = store
+            .get_active_account("pixiv")
+            .expect("get active")
+            .expect("active exists");
+        assert_eq!(active.name, "alpha");
+
+        let fetched = store
+            .get_account("pixiv", "beta")
+            .expect("get beta")
+            .expect("beta exists");
+        assert_eq!(fetched.display_name.as_deref(), Some("beta display"));
+
+        let switched = store
+            .set_active_account("pixiv", "beta", "2025-01-01T00:00:01Z")
+            .expect("switch active")
+            .expect("beta switched");
+        assert_eq!(switched.name, "beta");
+        assert!(switched.active);
+        assert_eq!(
+            store
+                .get_active_account("pixiv")
+                .expect("get switched active")
+                .map(|account| account.name),
+            Some("beta".to_string())
+        );
+
+        let renamed = store
+            .rename_account("pixiv", "beta", "gamma", "2025-01-01T00:00:02Z")
+            .expect("rename beta")
+            .expect("gamma exists");
+        assert_eq!(renamed.name, "gamma");
+        assert!(renamed.active);
+        assert!(
+            store
+                .get_account("pixiv", "beta")
+                .expect("old beta lookup")
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .get_active_account("pixiv")
+                .expect("active after rename")
+                .map(|account| account.name),
+            Some("gamma".to_string())
+        );
+
+        assert!(
+            store
+                .delete_account("pixiv", "alpha")
+                .expect("delete alpha account")
+        );
+        assert!(
+            store
+                .get_account("pixiv", "alpha")
+                .expect("alpha lookup after delete")
+                .is_none()
+        );
     }
 }

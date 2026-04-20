@@ -188,34 +188,53 @@ async fn upload_account_query(
     let Some(file_text) = payload.file else {
         return create_error(StatusCode::BAD_REQUEST, "file is required".to_string());
     };
-    let account_name = payload.name.unwrap_or_else(random_account_name);
-    let saved_name = if account_name.ends_with(".json") {
-        account_name
-    } else {
-        format!("{account_name}.json")
-    };
     let account_json: AccountFile = serde_json::from_str(&file_text).unwrap_or_default();
-    let dir = state.config.cookie_dir_path(&site);
-    if let Err(err) = fs::create_dir_all(&dir).await {
-        return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-    }
-    let path = unique_name_path(&dir, &saved_name).await;
-    if let Err(err) = fs::write(&path, file_text.as_bytes()).await {
-        return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-    }
-    let record = AccountRecord {
-        site: site.clone(),
-        name: saved_name.trim_end_matches(".json").to_string(),
-        display_name: account_json.display_name.clone(),
-        account: account_json,
-        active: saved_name == "login.json",
-        updated_at: now_string(),
+    let preferred_name = payload
+        .name
+        .as_deref()
+        .and_then(normalize_account_name)
+        .unwrap_or_else(random_account_name);
+    let updated_at = now_string();
+    let (saved_name, accounts) = {
+        let store = state.store.lock().await;
+        let saved_name = match choose_available_account_name(&store, &site, &preferred_name) {
+            Ok(name) => name,
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
+        let should_activate = preferred_name == "login"
+            || match store.get_active_account(&site) {
+                Ok(active) => active.is_none(),
+                Err(err) => {
+                    return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                }
+            };
+        let record = AccountRecord {
+            site: site.clone(),
+            name: saved_name.clone(),
+            display_name: account_json.display_name.clone(),
+            account: account_json,
+            active: should_activate,
+            updated_at: updated_at.clone(),
+        };
+        if let Err(err) = store.upsert_account(&record) {
+            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+        }
+        if should_activate
+            && let Err(err) = store.set_active_account(&site, &saved_name, &updated_at)
+        {
+            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+        }
+        let accounts = match store.list_accounts(&site) {
+            Ok(accounts) => accounts,
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
+        (saved_name, accounts)
     };
-    let store = state.store.lock().await;
-    if let Err(err) = store.upsert_account(&record) {
+    if let Err(err) = rewrite_cookie_site_mirror(&state.config, &site, &accounts) {
         return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
     }
-    Json(json!({"status": "success", "message": format!("Account {saved_name} uploaded successfully"), "site": site, "account": saved_name})).into_response()
+    let file_name = account_file_name(&saved_name);
+    Json(json!({"status": "success", "message": format!("Account {file_name} uploaded successfully"), "site": site, "account": file_name})).into_response()
 }
 
 async fn delete_account_query(
@@ -228,16 +247,31 @@ async fn delete_account_query(
     let Some(account) = query.account else {
         return create_error(StatusCode::BAD_REQUEST, "account is required".to_string());
     };
-    let file_name = if account.ends_with(".json") {
-        account
-    } else {
-        format!("{account}.json")
+    let Some(account_name) = normalize_account_name(&account) else {
+        return create_error(StatusCode::BAD_REQUEST, "account is required".to_string());
     };
-    let path = state.config.cookie_dir_path(&site).join(&file_name);
-    match fs::remove_file(&path).await {
-        Ok(_) => Json(json!({"status": "success", "message": format!("Account {file_name} deleted successfully")})).into_response(),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => create_error(StatusCode::NOT_FOUND, "Account not found".to_string()),
-        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    let accounts = {
+        let store = state.store.lock().await;
+        match store.get_account(&site, &account_name) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return create_error(StatusCode::NOT_FOUND, "Account not found".to_string());
+            }
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+        if let Err(err) = store.delete_account(&site, &account_name) {
+            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+        }
+        match store.list_accounts(&site) {
+            Ok(accounts) => accounts,
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    };
+    if let Err(err) = rewrite_cookie_site_mirror(&state.config, &site, &accounts) {
+        create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+    } else {
+        let file_name = account_file_name(&account_name);
+        Json(json!({"status": "success", "message": format!("Account {file_name} deleted successfully")})).into_response()
     }
 }
 
@@ -252,28 +286,33 @@ async fn switch_account_query(
     let Some(account) = payload.account else {
         return create_error(StatusCode::BAD_REQUEST, "account is required".to_string());
     };
-    let name = if account.ends_with(".json") {
-        account
-    } else {
-        format!("{account}.json")
+    let Some(account_name) = normalize_account_name(&account) else {
+        return create_error(StatusCode::BAD_REQUEST, "account is required".to_string());
     };
-    let dir = state.config.cookie_dir_path(&site);
-    let source = dir.join(&name);
-    let target = dir.join("login.json");
-    if !source.exists() {
-        return create_error(StatusCode::NOT_FOUND, format!("Account {name} not found"));
-    }
-    if target.exists() {
-        let backup = dir.join(format!(
-            "login.json.backup.{}",
-            chrono::Utc::now().format("%Y%m%d%H%M%S")
-        ));
-        let _ = fs::rename(&target, &backup).await;
-    }
-    if let Err(err) = fs::rename(&source, &target).await {
+    let updated_at = now_string();
+    let (saved_name, accounts) = {
+        let store = state.store.lock().await;
+        let account = match store.set_active_account(&site, &account_name, &updated_at) {
+            Ok(Some(account)) => account,
+            Ok(None) => {
+                return create_error(
+                    StatusCode::NOT_FOUND,
+                    format!("Account {} not found", account_file_name(&account_name)),
+                );
+            }
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
+        let accounts = match store.list_accounts(&site) {
+            Ok(accounts) => accounts,
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
+        (account.name, accounts)
+    };
+    if let Err(err) = rewrite_cookie_site_mirror(&state.config, &site, &accounts) {
         return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
     }
-    Json(json!({"status": "success", "message": format!("Switched to account {name}"), "site": site, "account": name})).into_response()
+    let file_name = account_file_name(&saved_name);
+    Json(json!({"status": "success", "message": format!("Switched to account {file_name}"), "site": site, "account": file_name})).into_response()
 }
 
 async fn rename_account_query(
@@ -290,36 +329,58 @@ async fn rename_account_query(
     let Some(new_name_raw) = payload.new_name else {
         return create_error(StatusCode::BAD_REQUEST, "new_name is required".to_string());
     };
-    let old_name = if old_name.ends_with(".json") {
-        old_name
-    } else {
-        format!("{old_name}.json")
+    let Some(old_name) = normalize_account_name(&old_name) else {
+        return create_error(StatusCode::BAD_REQUEST, "account is required".to_string());
     };
-    let new_name = if new_name_raw.ends_with(".json") {
-        new_name_raw
-    } else {
-        format!("{new_name_raw}.json")
+    let Some(new_name) = normalize_account_name(&new_name_raw) else {
+        return create_error(StatusCode::BAD_REQUEST, "new_name is required".to_string());
     };
     if old_name == new_name {
-        return Json(json!({"status": "success", "message": "Account name unchanged"}))
-            .into_response();
+        let store = state.store.lock().await;
+        return match store.get_account(&site, &old_name) {
+            Ok(Some(_)) => Json(json!({"status": "success", "message": "Account name unchanged"}))
+                .into_response(),
+            Ok(None) => create_error(StatusCode::NOT_FOUND, "Account not found".to_string()),
+            Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
     }
-    let dir = state.config.cookie_dir_path(&site);
-    let old_path = dir.join(&old_name);
-    let new_path = dir.join(&new_name);
-    if !old_path.exists() {
-        return create_error(StatusCode::NOT_FOUND, "Account not found".to_string());
-    }
-    if new_path.exists() {
-        return create_error(
-            StatusCode::CONFLICT,
-            format!("Account name '{new_name}' already exists"),
-        );
-    }
-    if let Err(err) = fs::rename(&old_path, &new_path).await {
+    let updated_at = now_string();
+    let accounts = {
+        let store = state.store.lock().await;
+        match store.get_account(&site, &old_name) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return create_error(StatusCode::NOT_FOUND, "Account not found".to_string());
+            }
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+        match store.get_account(&site, &new_name) {
+            Ok(Some(_)) => {
+                return create_error(
+                    StatusCode::CONFLICT,
+                    format!(
+                        "Account name '{}' already exists",
+                        account_file_name(&new_name)
+                    ),
+                );
+            }
+            Ok(None) => {}
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+        if let Err(err) = store.rename_account(&site, &old_name, &new_name, &updated_at) {
+            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+        }
+        match store.list_accounts(&site) {
+            Ok(accounts) => accounts,
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    };
+    if let Err(err) = rewrite_cookie_site_mirror(&state.config, &site, &accounts) {
         return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
     }
-    Json(json!({"status": "success", "message": format!("Account renamed from {old_name} to {new_name}"), "site": site, "old_name": old_name, "new_name": new_name})).into_response()
+    let old_file_name = account_file_name(&old_name);
+    let new_file_name = account_file_name(&new_name);
+    Json(json!({"status": "success", "message": format!("Account renamed from {old_file_name} to {new_file_name}"), "site": site, "old_name": old_file_name, "new_name": new_file_name})).into_response()
 }
 
 async fn handle_post(State(state): State<RuntimeState>, request: Request) -> impl IntoResponse {
@@ -1073,23 +1134,77 @@ async fn ensure_runtime_dirs(config: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-async fn unique_name_path(dir: &Path, name: &str) -> PathBuf {
-    let mut candidate = dir.join(name);
+fn choose_available_account_name(
+    store: &Store,
+    site: &str,
+    preferred_name: &str,
+) -> Result<String> {
+    let mut candidate = preferred_name.to_string();
     let mut counter = 1;
-    while candidate.exists() {
-        let stem = Path::new(name)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or(name);
-        let ext = Path::new(name)
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|s| format!(".{s}"))
-            .unwrap_or_default();
-        candidate = dir.join(format!("{stem}_{counter}{ext}"));
+    while store.get_account(site, &candidate)?.is_some() {
+        candidate = format!("{preferred_name}_{counter}");
         counter += 1;
     }
-    candidate
+    Ok(candidate)
+}
+
+fn normalize_account_name(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let file_name = Path::new(trimmed)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(trimmed)
+        .trim();
+    if file_name.is_empty() {
+        return None;
+    }
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(file_name)
+        .trim();
+    if stem.is_empty() {
+        None
+    } else {
+        Some(stem.to_string())
+    }
+}
+
+fn account_file_name(name: &str) -> String {
+    format!("{name}.json")
+}
+
+fn rewrite_cookie_site_mirror(
+    config: &AppConfig,
+    site: &str,
+    accounts: &[AccountRecord],
+) -> Result<()> {
+    let dir = config.cookie_dir_path(site);
+    stdfs::create_dir_all(&dir)?;
+    for entry in stdfs::read_dir(&dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file()
+            && entry.path().extension().and_then(|ext| ext.to_str()) == Some("json")
+        {
+            stdfs::remove_file(entry.path())?;
+        }
+    }
+
+    let mut active_json = None;
+    for account in accounts {
+        let json = serde_json::to_string_pretty(&account.account)?;
+        stdfs::write(dir.join(account_file_name(&account.name)), &json)?;
+        if account.active {
+            active_json = Some(json);
+        }
+    }
+    if let Some(json) = active_json {
+        stdfs::write(dir.join("login.json"), json)?;
+    }
+    Ok(())
 }
 
 fn random_account_name() -> String {
@@ -1185,6 +1300,36 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::io::{Cursor, Write};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("test-output")
+            .join(format!("{name}-{unique}"));
+        stdfs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn sample_account(site: &str, name: &str, active: bool) -> AccountRecord {
+        AccountRecord {
+            site: site.to_string(),
+            name: name.to_string(),
+            display_name: Some(format!("{name} display")),
+            account: AccountFile {
+                cookies: json!({"session": name}),
+                user_agent: Some(format!("{name}-ua")),
+                display_name: Some(format!("{name} display")),
+            },
+            active,
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
+        }
+    }
 
     fn zip_archive(entries: &[(&str, &str)]) -> zip::ZipArchive<Cursor<Vec<u8>>> {
         let cursor = Cursor::new(Vec::new());
@@ -1319,6 +1464,35 @@ mod tests {
         let err = collect_zip_payload_entries(&mut archive, Path::new("data"), "narou")
             .expect_err("unexpected root should fail");
         assert!(err.to_string().contains("unexpected top-level entry"));
+    }
+
+    #[test]
+    fn rewrite_cookie_site_mirror_tracks_db_accounts_and_active_login() {
+        let root = test_dir("runtime-account-mirror");
+        let cookie_root = root.join("cookie");
+        let site_dir = cookie_root.join("pixiv");
+        stdfs::create_dir_all(&site_dir).unwrap();
+        stdfs::write(site_dir.join("stale.json"), "{}").unwrap();
+
+        let config = AppConfig {
+            cookie_dir: cookie_root.to_string_lossy().to_string(),
+            ..AppConfig::default()
+        };
+        let accounts = vec![
+            sample_account("pixiv", "alpha", false),
+            sample_account("pixiv", "beta", true),
+        ];
+
+        rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
+
+        assert!(!site_dir.join("stale.json").exists());
+        assert!(site_dir.join("alpha.json").exists());
+        assert!(site_dir.join("beta.json").exists());
+        let active_named = stdfs::read_to_string(site_dir.join("beta.json")).unwrap();
+        let active_login = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
+        assert_eq!(active_named, active_login);
+
+        stdfs::remove_dir_all(root).unwrap();
     }
 
     #[test]

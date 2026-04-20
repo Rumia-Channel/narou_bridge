@@ -1,4 +1,4 @@
-use crate::core::model::{ImageRecord, WorkRecord};
+use crate::core::model::{AccountFile, ImageRecord, WorkRecord};
 use crate::core::renderer;
 use crate::core::storage::Store;
 use crate::sites::{Site, SiteActionContext, SiteActionResult, SiteId};
@@ -184,7 +184,7 @@ fn pixiv_download(
     let folder_path = PathBuf::from(data_dir).join("pixiv");
     fs::create_dir_all(&folder_path)?;
 
-    let client = build_client(cookie_dir)?;
+    let client = build_client(store, cookie_dir)?;
     let target = parse_pixiv_url(url).ok_or_else(|| anyhow!("unsupported pixiv url: {url}"))?;
 
     let (message, deferred_error) = match target {
@@ -294,7 +294,7 @@ fn pixiv_update(
         );
     }
 
-    let client = build_client(cookie_dir)?;
+    let client = build_client(store, cookie_dir)?;
     let mut updated_users = 0usize;
     let mut downloaded_works = 0usize;
     let mut failures = Vec::new();
@@ -838,7 +838,7 @@ fn now_string() -> String {
 // Client construction with optional cookie loading
 // ---------------------------------------------------------------------------
 
-fn build_client(cookie_dir: &str) -> Result<Client> {
+fn build_client(store: &Store, cookie_dir: &str) -> Result<Client> {
     let mut headers = HeaderMap::new();
     headers.insert(
         USER_AGENT,
@@ -847,26 +847,18 @@ fn build_client(cookie_dir: &str) -> Result<Client> {
     headers.insert(REFERER, HeaderValue::from_static("https://www.pixiv.net/"));
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
 
-    // Try loading cookies from cookie/pixiv/login.json
-    let login_path = PathBuf::from(cookie_dir).join("pixiv").join("login.json");
-    if login_path.exists() {
-        if let Ok(content) = fs::read_to_string(&login_path) {
-            if let Ok(account) = serde_json::from_str::<Value>(&content) {
-                let cookie_str = build_cookie_string(&account);
-                if !cookie_str.is_empty() {
-                    info!("Loaded Pixiv cookies from {}", login_path.display());
-                    if let Ok(val) = HeaderValue::from_str(&cookie_str) {
-                        headers.insert(COOKIE, val);
-                    }
-                }
-                // Use user_agent from cookie file if present
-                if let Some(ua) = account.get("user_agent").and_then(Value::as_str) {
-                    if !ua.is_empty() {
-                        if let Ok(val) = HeaderValue::from_str(ua) {
-                            headers.insert(USER_AGENT, val);
-                        }
-                    }
-                }
+    if let Some((account, source)) = resolve_active_pixiv_account(store, cookie_dir) {
+        let account_value = serde_json::to_value(&account).unwrap_or(Value::Null);
+        let cookie_str = build_cookie_string(&account_value);
+        if !cookie_str.is_empty() {
+            info!("Loaded Pixiv cookies from {source}");
+            if let Ok(val) = HeaderValue::from_str(&cookie_str) {
+                headers.insert(COOKIE, val);
+            }
+        }
+        if let Some(ua) = account.user_agent.as_deref().filter(|ua| !ua.is_empty()) {
+            if let Ok(val) = HeaderValue::from_str(ua) {
+                headers.insert(USER_AGENT, val);
             }
         }
     }
@@ -875,6 +867,20 @@ fn build_client(cookie_dir: &str) -> Result<Client> {
         .default_headers(headers)
         .timeout(Duration::from_secs(30))
         .build()?)
+}
+
+fn resolve_active_pixiv_account(store: &Store, cookie_dir: &str) -> Option<(AccountFile, String)> {
+    if let Ok(Some(account)) = store.get_active_account("pixiv") {
+        return Some((
+            account.account,
+            format!("sqlite accounts table (pixiv/{})", account.name),
+        ));
+    }
+
+    let login_path = PathBuf::from(cookie_dir).join("pixiv").join("login.json");
+    let content = fs::read_to_string(&login_path).ok()?;
+    let account = serde_json::from_str::<AccountFile>(&content).ok()?;
+    Some((account, login_path.display().to_string()))
 }
 
 fn build_cookie_string(account: &Value) -> String {
@@ -2431,5 +2437,49 @@ mod tests {
         assert_eq!(tracked, vec!["12345".to_string()]);
 
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_active_pixiv_account_prefers_sqlite_before_login_json() {
+        let root = test_dir("pixiv-active-account");
+        let cookie_root = root.join("cookie");
+        let pixiv_cookie_dir = cookie_root.join("pixiv");
+        fs::create_dir_all(&pixiv_cookie_dir).unwrap();
+        fs::write(
+            pixiv_cookie_dir.join("login.json"),
+            serde_json::to_string_pretty(&AccountFile {
+                cookies: json!({"session": "file"}),
+                user_agent: Some("file-ua".to_string()),
+                display_name: Some("file".to_string()),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_account(&crate::core::model::AccountRecord {
+                site: "pixiv".to_string(),
+                name: "db-primary".to_string(),
+                display_name: Some("db".to_string()),
+                account: AccountFile {
+                    cookies: json!({"session": "db"}),
+                    user_agent: Some("db-ua".to_string()),
+                    display_name: Some("db".to_string()),
+                },
+                active: true,
+                updated_at: "2025-01-01T00:00:00Z".to_string(),
+            })
+            .unwrap();
+
+        let (account, source) =
+            resolve_active_pixiv_account(&store, &cookie_root.to_string_lossy()).unwrap();
+        assert_eq!(
+            account.cookies.get("session").and_then(Value::as_str),
+            Some("db")
+        );
+        assert!(source.contains("sqlite accounts table"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
