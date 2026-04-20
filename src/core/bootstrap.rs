@@ -81,6 +81,8 @@ fn build_app_config(repo_root: &Path, document: &IniDocument) -> AppConfig {
         archive_dir: repo_root.join("archive").to_string_lossy().to_string(),
         bind_addr,
         host_name,
+        auto_update: parse_bool(document.get("setting", "auto_update")),
+        auto_update_interval: parse_u64(document.get("setting", "auto_update_interval"), 43_200),
         legacy_root: Some(repo_root.join("sample").to_string_lossy().to_string()),
     }
 }
@@ -128,6 +130,12 @@ fn parse_bool(value: Option<&str>) -> bool {
 fn parse_port(value: Option<&str>, default: u16) -> u16 {
     value
         .and_then(|value| value.trim().parse::<u16>().ok())
+        .unwrap_or(default)
+}
+
+fn parse_u64(value: Option<&str>, default: u64) -> u64 {
+    value
+        .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(default)
 }
 
@@ -271,7 +279,8 @@ impl IniDocument {
 #[cfg(test)]
 mod tests {
     use super::{
-        IniDocument, build_app_config, derive_bind_addr, derive_host_name, resolve_runtime_dir,
+        IniDocument, build_app_config, derive_bind_addr, derive_host_name, parse_u64,
+        resolve_runtime_dir,
     };
     use std::path::Path;
 
@@ -302,6 +311,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_u64_uses_default_for_invalid_values() {
+        assert_eq!(parse_u64(Some("600"), 43_200), 600);
+        assert_eq!(parse_u64(Some("invalid"), 43_200), 43_200);
+        assert_eq!(parse_u64(None, 43_200), 43_200);
+    }
+
+    #[test]
     fn build_config_reads_legacy_sections() {
         let root = Path::new(r"C:\repo");
         let document = IniDocument::parse(
@@ -309,6 +325,8 @@ mod tests {
 [setting]
 data=
 cookie=D:\runtime
+auto_update=1
+auto_update_interval=600
 
 [server]
 domain=localhost
@@ -326,6 +344,8 @@ use_proxy=0
         );
         assert_eq!(config.bind_addr, "127.0.0.1:9000");
         assert_eq!(config.host_name, "http://localhost:9000");
+        assert!(config.auto_update);
+        assert_eq!(config.auto_update_interval, 600);
         assert_eq!(
             config.legacy_root,
             Some(root.join("sample").to_string_lossy().into_owned())

@@ -24,10 +24,13 @@ use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs;
 use tokio::sync::{Mutex, Notify};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info, warn};
+
+const AUTO_UPDATE_STARTUP_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct RuntimeState {
@@ -100,6 +103,9 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
     recover_queued_runtime_state(&state).await?;
     sync_queue_state(&state).await?;
     tokio::spawn(worker_loop(state.clone()));
+    if state.config.auto_update {
+        tokio::spawn(auto_update_loop(state.clone()));
+    }
 
     let data_dir = state.config.data_dir_path();
     let static_files = ServeDir::new(&data_dir).append_index_html_on_directories(true);
@@ -414,21 +420,110 @@ async fn handle_post(State(state): State<RuntimeState>, request: Request) -> imp
         updated_at: now_string(),
     };
 
-    let store = state.store.lock().await;
-    match store.enqueue_task(&task) {
-        Ok(_) => {}
+    match enqueue_task_record(&state, task, false).await {
+        Ok(EnqueueTaskOutcome::Enqueued) => {}
+        Ok(EnqueueTaskOutcome::SkippedDuplicate) => unreachable!("HTTP enqueue does not dedupe"),
         Err(err) => {
             return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
         }
     }
 
-    drop(store);
-    if let Err(err) = sync_queue_state(&state).await {
-        warn!(request_id = %request_id, error = %err, "failed to persist queue/task.json after enqueue");
-    }
-    state.worker_notify.notify_one();
-
     Json(json!({"status": "queued", "request_id": request_id})).into_response()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnqueueTaskOutcome {
+    Enqueued,
+    SkippedDuplicate,
+}
+
+async fn enqueue_task_record(
+    state: &RuntimeState,
+    task: TaskRecord,
+    dedupe_incomplete: bool,
+) -> Result<EnqueueTaskOutcome> {
+    let request_id = task.request_id.clone();
+    let action = task.action.clone();
+    let param = task.param.clone();
+
+    let outcome = {
+        let store = state.store.lock().await;
+        if dedupe_incomplete && store.has_incomplete_task(&action, &param)? {
+            EnqueueTaskOutcome::SkippedDuplicate
+        } else {
+            store.enqueue_task(&task)?;
+            EnqueueTaskOutcome::Enqueued
+        }
+    };
+
+    if matches!(outcome, EnqueueTaskOutcome::Enqueued) {
+        if let Err(err) = sync_queue_state(state).await {
+            warn!(request_id = %request_id, error = %err, "failed to persist queue/task.json after enqueue");
+        }
+        state.worker_notify.notify_one();
+    }
+
+    Ok(outcome)
+}
+
+fn auto_update_task() -> TaskRecord {
+    let request_id = random_request_id();
+    let now = now_string();
+    TaskRecord {
+        id: 0,
+        request_id: request_id.clone(),
+        action: "update".to_string(),
+        param: "all".to_string(),
+        request: RequestData {
+            request_id,
+            update: Some("all".to_string()),
+            ..RequestData::default()
+        },
+        status: TaskStatus::Queued,
+        error: None,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+async fn enqueue_auto_update_task(state: &RuntimeState) -> Result<EnqueueTaskOutcome> {
+    enqueue_task_record(state, auto_update_task(), true).await
+}
+
+async fn auto_update_loop(state: RuntimeState) {
+    info!(
+        startup_delay_seconds = AUTO_UPDATE_STARTUP_DELAY.as_secs(),
+        interval_seconds = state.config.auto_update_interval,
+        "auto-update loop started"
+    );
+    tokio::time::sleep(AUTO_UPDATE_STARTUP_DELAY).await;
+
+    let interval = Duration::from_secs(state.config.auto_update_interval.max(1));
+    loop {
+        match enqueue_auto_update_task(&state).await {
+            Ok(EnqueueTaskOutcome::Enqueued) => {
+                info!("enqueued automatic update=all task");
+            }
+            Ok(EnqueueTaskOutcome::SkippedDuplicate) => {
+                info!(
+                    "skipped automatic update because equivalent work is already queued or running"
+                );
+            }
+            Err(err) => {
+                error!(error = %err, "failed to enqueue automatic update task");
+            }
+        }
+
+        let next_run = chrono::Utc::now()
+            + chrono::TimeDelta::from_std(interval)
+                .unwrap_or_else(|_| chrono::TimeDelta::seconds(0));
+        info!(
+            next_run = %next_run.to_rfc3339(),
+            interval_seconds = interval.as_secs(),
+            "next auto-update scheduled"
+        );
+        tokio::time::sleep(interval).await;
+    }
 }
 
 async fn migrate(
@@ -1493,6 +1588,15 @@ mod tests {
         assert_eq!(active_named, active_login);
 
         stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn auto_update_task_targets_update_all() {
+        let task = auto_update_task();
+        assert_eq!(task.action, "update");
+        assert_eq!(task.param, "all");
+        assert_eq!(task.request.request_id, task.request_id);
+        assert_eq!(task.request.update.as_deref(), Some("all"));
     }
 
     #[test]

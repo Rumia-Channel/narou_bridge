@@ -8,6 +8,8 @@ Narou rb が対応していないウェブサイトを, 小説家になろうに
 1. seetting.ini を設定
 2. main.cmd または main.sh を実行
 
+Rust ランタイムでは `auto_update=1` を設定すると、起動から約30秒後に `update=all` を内部キューへ投入し、その後は `auto_update_interval` 秒ごとに重複を避けつつ自動更新します。
+
 ## How to download
 1. Narou.rb で narou init したフォルダに webnovel フォルダをコピー
 2. Narou.rb で利用する Aozora Epub 3 フォルダ内の chuki_tag.txt の行末に以下のテキストを追加

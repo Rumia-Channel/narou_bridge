@@ -134,6 +134,18 @@ impl Store {
         Ok(tasks)
     }
 
+    pub fn has_incomplete_task(&self, action: &str, param: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            r#"SELECT COUNT(*) FROM tasks
+               WHERE action = ?1
+                 AND param = ?2
+                 AND status IN ('queued', 'running')"#,
+            params![action, param],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     pub fn upsert_account(&self, account: &AccountRecord) -> Result<()> {
         self.conn.execute(
             r#"INSERT INTO accounts (site, name, display_name, account_json, active, updated_at)
@@ -930,6 +942,46 @@ mod tests {
                 .get_account("pixiv", "alpha")
                 .expect("alpha lookup after delete")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn has_incomplete_task_checks_only_queued_and_running_matches() {
+        let store = Store::open_in_memory().expect("store");
+        let queued = TaskRecord {
+            action: "update".to_string(),
+            param: "all".to_string(),
+            request: RequestData {
+                request_id: "req-update".to_string(),
+                update: Some("all".to_string()),
+                ..RequestData::default()
+            },
+            ..sample_task("req-update")
+        };
+        store.enqueue_task(&queued).expect("enqueue queued update");
+        assert!(
+            store
+                .has_incomplete_task("update", "all")
+                .expect("queued task should match")
+        );
+
+        let claimed = store
+            .claim_next_queued_task("2025-01-01T00:00:01Z")
+            .expect("claim update task");
+        assert!(claimed.is_some());
+        assert!(
+            store
+                .has_incomplete_task("update", "all")
+                .expect("running task should match")
+        );
+
+        store
+            .mark_task_status(1, TaskStatus::Succeeded, None, "2025-01-01T00:00:02Z")
+            .expect("mark succeeded");
+        assert!(
+            !store
+                .has_incomplete_task("update", "all")
+                .expect("completed task should not match")
         );
     }
 }
