@@ -8,7 +8,7 @@ use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::{fs, thread, time::Duration};
 use tracing::{info, warn};
@@ -20,6 +20,8 @@ pub mod repair;
 pub mod update;
 
 const VERSION: i64 = 0;
+const USER_CONFIG_VERSION: i64 = 5;
+const ENABLED_FLAG: &str = "enable";
 const DEFAULT_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0";
 const SLEEP_MS: u64 = 500;
@@ -32,6 +34,24 @@ pub struct PixivSite;
 
 pub fn site() -> Box<dyn Site> {
     Box::new(PixivSite)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PixivUrlTarget {
+    Novel(String),
+    Series(String),
+    User(String),
+    Art(String),
+    Comic(String),
+}
+
+#[derive(Debug, Default)]
+struct UserDownloadSummary {
+    user_id: String,
+    user_name: Option<String>,
+    downloaded_works: usize,
+    tracked_artworks: usize,
+    failures: Vec<String>,
 }
 
 impl Site for PixivSite {
@@ -55,7 +75,7 @@ impl Site for PixivSite {
     }
 
     fn matches_url(&self, url: &str) -> bool {
-        url.contains("pixiv.net")
+        parse_pixiv_url(url).is_some()
     }
 
     fn execute(
@@ -78,21 +98,28 @@ impl Site for PixivSite {
                     Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
                 }
             }
-            "update" | "convert" | "repair" => {
-                match renderer::render_site_from_store(
-                    store,
-                    "pixiv",
-                    &context.data_dir,
-                    &context.host_name,
-                ) {
-                    Ok(_) => SiteActionResult::success(
-                        self.id(),
-                        action,
-                        format!("pixiv {action} completed"),
-                    ),
-                    Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
-                }
-            }
+            "update" => match pixiv_update(
+                store,
+                &context.data_dir,
+                &context.cookie_dir,
+                &context.host_name,
+            ) {
+                Ok(message) => SiteActionResult::success(self.id(), action, message),
+                Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
+            },
+            "convert" | "repair" => match renderer::render_site_from_store(
+                store,
+                "pixiv",
+                &context.data_dir,
+                &context.host_name,
+            ) {
+                Ok(_) => SiteActionResult::success(
+                    self.id(),
+                    action,
+                    format!("pixiv {action} completed"),
+                ),
+                Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
+            },
             "login" => {
                 SiteActionResult::skipped(self.id(), action, "login moved to separate helper")
             }
@@ -121,37 +148,313 @@ fn pixiv_download(
     fs::create_dir_all(&folder_path)?;
 
     let client = build_client(cookie_dir)?;
-    let path = url.split('?').next().unwrap_or(url);
+    let target = parse_pixiv_url(url).ok_or_else(|| anyhow!("unsupported pixiv url: {url}"))?;
 
-    let record = if path.contains("/novel/show.php") {
-        let id = query_value(url, "id").ok_or_else(|| anyhow!("missing novel id in url: {url}"))?;
-        info!("Pixiv download: novel id={id}");
-        download_novel(&client, &id, &folder_path, &img_path)?
-    } else if path.contains("/novel/series/") {
-        let id = last_numeric_segment(path)
-            .ok_or_else(|| anyhow!("missing novel series id in url: {url}"))?;
-        info!("Pixiv download: novel series id={id}");
-        download_series(&client, &id, &folder_path, &img_path)?
-    } else if path.contains("/artworks/") {
-        let id = last_numeric_segment(path)
-            .ok_or_else(|| anyhow!("missing artwork id in url: {url}"))?;
-        info!("Pixiv download: artwork id={id}");
-        download_art(&client, &id, &folder_path, &img_path)?
-    } else if path.contains("/user/") && path.contains("/series/") {
-        let id = last_numeric_segment(path)
-            .ok_or_else(|| anyhow!("missing comic series id in url: {url}"))?;
-        info!("Pixiv download: comic series id={id}");
-        download_comic(&client, &id, &folder_path, &img_path)?
-    } else {
-        return Err(anyhow!("unsupported pixiv url: {url}"));
+    let (message, deferred_error) = match target {
+        PixivUrlTarget::Novel(id) => {
+            info!("Pixiv download: novel id={id}");
+            let record = download_novel(&client, &id, &folder_path, &img_path)?;
+            persist_work_record(store, &record, &img_path)?;
+            (format!("stored {}", record.work_key), None)
+        }
+        PixivUrlTarget::Series(id) => {
+            info!("Pixiv download: novel series id={id}");
+            let record = download_series(&client, &id, &folder_path, &img_path)?;
+            persist_work_record(store, &record, &img_path)?;
+            (format!("stored {}", record.work_key), None)
+        }
+        PixivUrlTarget::Art(id) => {
+            info!("Pixiv download: artwork id={id}");
+            let record = download_art(&client, &id, &folder_path, &img_path)?;
+            persist_work_record(store, &record, &img_path)?;
+            (format!("stored {}", record.work_key), None)
+        }
+        PixivUrlTarget::Comic(id) => {
+            info!("Pixiv download: comic series id={id}");
+            let record = download_comic(&client, &id, &folder_path, &img_path)?;
+            persist_work_record(store, &record, &img_path)?;
+            (format!("stored {}", record.work_key), None)
+        }
+        PixivUrlTarget::User(user_id) => {
+            info!("Pixiv download: user id={user_id}");
+            let summary = download_user(&client, &user_id, &folder_path, &img_path, store, false)?;
+            let user_name = summary.user_name.as_deref().unwrap_or(&summary.user_id);
+            let deferred_error = (!summary.failures.is_empty()).then(|| {
+                anyhow!(
+                    "tracked pixiv user {user_name} ({}) with {} stored works, but some downloads failed: {}",
+                    summary.user_id,
+                    summary.downloaded_works,
+                    summary.failures.join("; ")
+                )
+            });
+            (
+                format!(
+                    "tracked pixiv user {} ({}) and stored {} works",
+                    user_name, summary.user_id, summary.downloaded_works
+                ),
+                deferred_error,
+            )
+        }
     };
 
-    // Persist to store and render
-    store.upsert_work(&record)?;
+    renderer::render_site_from_store(store, "pixiv", data_dir, host_name)?;
+    if let Some(err) = deferred_error {
+        return Err(err);
+    }
+    Ok(message)
+}
 
-    // Register cover image record if we downloaded one
+fn parse_pixiv_url(url: &str) -> Option<PixivUrlTarget> {
+    let path = url.split('?').next().unwrap_or(url);
+    if path.contains("/novel/show.php") {
+        return query_value(url, "id").map(PixivUrlTarget::Novel);
+    }
+    if path.contains("/novel/series/") {
+        return last_numeric_segment(path).map(PixivUrlTarget::Series);
+    }
+    if path.contains("/artworks/") {
+        return last_numeric_segment(path).map(PixivUrlTarget::Art);
+    }
+    if path.contains("/user/") && path.contains("/series/") {
+        return last_numeric_segment(path).map(PixivUrlTarget::Comic);
+    }
+    if let Some(user_id) = user_id_from_path(path, "users") {
+        return Some(PixivUrlTarget::User(user_id));
+    }
+    if let Some(user_id) = user_id_from_path(path, "user") {
+        return Some(PixivUrlTarget::User(user_id));
+    }
+    None
+}
+
+fn user_id_from_path(path: &str, marker: &str) -> Option<String> {
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    segments
+        .windows(2)
+        .find(|window| window[0] == marker && window[1].chars().all(|ch| ch.is_ascii_digit()))
+        .map(|window| window[1].to_string())
+}
+
+fn pixiv_update(
+    store: &mut Store,
+    data_dir: &str,
+    cookie_dir: &str,
+    host_name: &str,
+) -> Result<String> {
+    let img_path = PathBuf::from(data_dir).join("images");
+    fs::create_dir_all(&img_path)?;
+    let folder_path = PathBuf::from(data_dir).join("pixiv");
+    fs::create_dir_all(&folder_path)?;
+
+    let tracked_users = tracked_user_ids(&folder_path)?;
+    if tracked_users.is_empty() {
+        renderer::render_site_from_store(store, "pixiv", data_dir, host_name)?;
+        return Ok(
+            "pixiv update rendered existing works; no tracked users in user.json".to_string(),
+        );
+    }
+
+    let client = build_client(cookie_dir)?;
+    let mut updated_users = 0usize;
+    let mut downloaded_works = 0usize;
+    let mut failures = Vec::new();
+
+    for user_id in tracked_users {
+        match download_user(&client, &user_id, &folder_path, &img_path, store, true) {
+            Ok(summary) => {
+                updated_users += 1;
+                downloaded_works += summary.downloaded_works;
+                if !summary.failures.is_empty() {
+                    failures.push(format!(
+                        "user {}: {}",
+                        summary.user_id,
+                        summary.failures.join(", ")
+                    ));
+                }
+            }
+            Err(err) => failures.push(format!("user {user_id}: {err}")),
+        }
+    }
+
+    renderer::render_site_from_store(store, "pixiv", data_dir, host_name)?;
+
+    if !failures.is_empty() {
+        return Err(anyhow!(
+            "pixiv update refreshed {updated_users} tracked users and stored {downloaded_works} works, but some updates failed: {}",
+            failures.join("; ")
+        ));
+    }
+
+    Ok(format!(
+        "pixiv update refreshed {updated_users} tracked users and stored {downloaded_works} works"
+    ))
+}
+
+fn download_user(
+    client: &Client,
+    user_id: &str,
+    folder_path: &Path,
+    img_path: &Path,
+    store: &mut Store,
+    update: bool,
+) -> Result<UserDownloadSummary> {
+    let user_conf = ensure_tracked_user(folder_path, user_id)?;
+    let profile_all = fetch_body_json(
+        client,
+        &format!("https://www.pixiv.net/ajax/user/{user_id}/profile/all"),
+    )?;
+    let user_body = fetch_body_json(
+        client,
+        &format!("https://www.pixiv.net/ajax/user/{user_id}"),
+    )
+    .ok();
+
+    let user_name = user_body
+        .as_ref()
+        .and_then(|body| body.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string);
+
+    let novel_series = extract_profile_ids(profile_all.get("novelSeries"));
+    let comic_series = extract_profile_ids(profile_all.get("mangaSeries"));
+    let mut novels = extract_object_keys(profile_all.get("novels"));
+    let illusts = extract_object_keys(profile_all.get("illusts"));
+    let mangas = extract_object_keys(profile_all.get("manga"));
+
+    let mut series_novel_ids = HashSet::new();
+    for series_id in &novel_series {
+        match fetch_body_json(
+            client,
+            &format!("https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles"),
+        ) {
+            Ok(body) => {
+                if let Some(entries) = body.as_array() {
+                    for entry in entries {
+                        if let Some(id) = entry
+                            .get("id")
+                            .map(value_to_string)
+                            .filter(|id| !id.is_empty())
+                        {
+                            series_novel_ids.insert(id);
+                        }
+                    }
+                }
+            }
+            Err(err) => warn!("Failed to inspect Pixiv novel series {series_id}: {err}"),
+        }
+    }
+    novels.retain(|novel_id| !series_novel_ids.contains(novel_id));
+
+    let mut series_art_ids = HashSet::new();
+    for series_id in &comic_series {
+        match fetch_comic_series_art_ids(client, series_id) {
+            Ok(ids) => {
+                for id in ids {
+                    series_art_ids.insert(id);
+                }
+            }
+            Err(err) => warn!("Failed to inspect Pixiv comic series {series_id}: {err}"),
+        }
+    }
+
+    let mut summary = UserDownloadSummary {
+        user_id: user_id.to_string(),
+        user_name,
+        ..UserDownloadSummary::default()
+    };
+
+    if action_enabled(&user_conf, "novel") {
+        for series_id in &novel_series {
+            match download_series(client, series_id, folder_path, img_path) {
+                Ok(record) => {
+                    persist_work_record(store, &record, img_path)?;
+                    summary.downloaded_works += 1;
+                }
+                Err(err) => summary
+                    .failures
+                    .push(format!("novel series {series_id}: {err}")),
+            }
+        }
+        for novel_id in &novels {
+            match download_novel(client, novel_id, folder_path, img_path) {
+                Ok(record) => {
+                    persist_work_record(store, &record, img_path)?;
+                    summary.downloaded_works += 1;
+                }
+                Err(err) => summary.failures.push(format!("novel {novel_id}: {err}")),
+            }
+        }
+    }
+
+    if action_enabled(&user_conf, "comic") {
+        for series_id in &comic_series {
+            match download_comic(client, series_id, folder_path, img_path) {
+                Ok(record) => {
+                    persist_work_record(store, &record, img_path)?;
+                    summary.downloaded_works += 1;
+                }
+                Err(err) => summary
+                    .failures
+                    .push(format!("comic series {series_id}: {err}")),
+            }
+        }
+
+        let mut target_art_ids = BTreeSet::new();
+        for art_id in illusts.iter().chain(mangas.iter()) {
+            if !series_art_ids.contains(art_id) {
+                target_art_ids.insert(art_id.clone());
+            }
+        }
+
+        let previous_snapshot = load_illust_snapshot(folder_path, user_id)?;
+        let mut new_art_ids = Vec::new();
+        for art_id in &target_art_ids {
+            if !update || !previous_snapshot.contains(art_id) {
+                new_art_ids.push(art_id.clone());
+            }
+        }
+
+        for art_id in &new_art_ids {
+            match download_art(client, art_id, folder_path, img_path) {
+                Ok(record) => {
+                    persist_work_record(store, &record, img_path)?;
+                    summary.downloaded_works += 1;
+                }
+                Err(err) => summary.failures.push(format!("artwork {art_id}: {err}")),
+            }
+        }
+
+        let hash = save_illust_snapshot(folder_path, user_id, &target_art_ids)?;
+        summary.tracked_artworks = target_art_ids.len();
+        update_tracked_user(folder_path, user_id, |entry| {
+            entry.insert(
+                "illust_ids_snapshot_hash".to_string(),
+                Value::String(hash.clone()),
+            );
+            if let Some(user_name) = summary.user_name.clone() {
+                entry.insert("name".to_string(), Value::String(user_name));
+            }
+        })?;
+    } else if summary.user_name.is_some() {
+        update_tracked_user(folder_path, user_id, |entry| {
+            if let Some(user_name) = summary.user_name.clone() {
+                entry.insert("name".to_string(), Value::String(user_name));
+            }
+        })?;
+    }
+
+    Ok(summary)
+}
+
+fn persist_work_record(store: &Store, record: &WorkRecord, img_path: &Path) -> Result<()> {
+    store.upsert_work(record)?;
+
     let cover_logical = format!("pixiv_{}_cover", record.work_key);
-    if let Some(hash) = find_image_by_logical_prefix(&img_path, &cover_logical) {
+    if let Some(hash) = find_image_by_logical_prefix(img_path, &cover_logical) {
         let ext = hash.rsplit('.').next().unwrap_or("jpg").to_string();
         store.upsert_image(&ImageRecord {
             logical_name: format!("{cover_logical}.{ext}"),
@@ -161,8 +464,215 @@ fn pixiv_download(
         })?;
     }
 
-    renderer::render_site_from_store(store, "pixiv", data_dir, host_name)?;
-    Ok(format!("stored {}", record.work_key))
+    Ok(())
+}
+
+fn user_config_path(folder_path: &Path) -> PathBuf {
+    folder_path.join("user.json")
+}
+
+fn snapshot_path(folder_path: &Path, user_id: &str) -> PathBuf {
+    folder_path
+        .join("snapshots")
+        .join("illust_ids")
+        .join(format!("{user_id}.json"))
+}
+
+fn load_user_config_document(folder_path: &Path) -> Result<Map<String, Value>> {
+    let path = user_config_path(folder_path);
+    let mut document = if path.exists() {
+        let content = fs::read_to_string(&path)?;
+        serde_json::from_str::<Value>(&content)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default()
+    } else {
+        Map::new()
+    };
+    document.insert("version".to_string(), json!(USER_CONFIG_VERSION));
+    Ok(document)
+}
+
+fn save_user_config_document(folder_path: &Path, document: &Map<String, Value>) -> Result<()> {
+    let path = user_config_path(folder_path);
+    save_json_pretty(&path, &Value::Object(document.clone()))
+}
+
+fn ensure_tracked_user(folder_path: &Path, user_id: &str) -> Result<Map<String, Value>> {
+    let mut document = load_user_config_document(folder_path)?;
+    let defaults = default_tracked_user_entry();
+    let mut changed = false;
+
+    let entry = document.entry(user_id.to_string()).or_insert_with(|| {
+        changed = true;
+        Value::Object(defaults.clone())
+    });
+
+    if !entry.is_object() {
+        *entry = Value::Object(defaults.clone());
+        changed = true;
+    }
+
+    let entry_map = entry
+        .as_object_mut()
+        .expect("tracked user entry must be object");
+    for (key, value) in defaults {
+        if !entry_map.contains_key(&key) {
+            entry_map.insert(key, value);
+            changed = true;
+        }
+    }
+
+    let entry_clone = entry_map.clone();
+    if changed {
+        save_user_config_document(folder_path, &document)?;
+    }
+    Ok(entry_clone)
+}
+
+fn update_tracked_user<F>(folder_path: &Path, user_id: &str, mut updater: F) -> Result<()>
+where
+    F: FnMut(&mut Map<String, Value>),
+{
+    let mut document = load_user_config_document(folder_path)?;
+    let defaults = default_tracked_user_entry();
+    let entry = document
+        .entry(user_id.to_string())
+        .or_insert_with(|| Value::Object(defaults.clone()));
+    if !entry.is_object() {
+        *entry = Value::Object(defaults);
+    }
+    let entry_map = entry
+        .as_object_mut()
+        .expect("tracked user entry must be object");
+    updater(entry_map);
+    save_user_config_document(folder_path, &document)
+}
+
+fn tracked_user_ids(folder_path: &Path) -> Result<Vec<String>> {
+    let document = load_user_config_document(folder_path)?;
+    let mut ids = document
+        .into_iter()
+        .filter_map(|(key, value)| (key != "version" && value.is_object()).then_some(key))
+        .collect::<Vec<_>>();
+    ids.sort();
+    Ok(ids)
+}
+
+fn default_tracked_user_entry() -> Map<String, Value> {
+    let mut entry = Map::new();
+    entry.insert("novel".to_string(), Value::String(ENABLED_FLAG.to_string()));
+    entry.insert("comic".to_string(), Value::String(ENABLED_FLAG.to_string()));
+    entry
+}
+
+fn action_enabled(entry: &Map<String, Value>, key: &str) -> bool {
+    entry.get(key).and_then(Value::as_str) == Some(ENABLED_FLAG)
+}
+
+fn extract_profile_ids(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Object(map)) => map.keys().cloned().collect(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.get("id").map(value_to_string))
+            .filter(|id| !id.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn extract_object_keys(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_object)
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn fetch_comic_series_art_ids(client: &Client, comic_id: &str) -> Result<Vec<String>> {
+    let mut page = 1;
+    let mut ids = HashSet::new();
+    loop {
+        sleep();
+        let body = fetch_body_json(
+            client,
+            &format!("https://www.pixiv.net/ajax/series/{comic_id}?p={page}&lang=ja"),
+        )?;
+        let entries = extract_comic_series_entries(&body);
+        if entries.is_empty() {
+            break;
+        }
+        for entry in entries {
+            if let Some(id) = entry
+                .get("workId")
+                .or_else(|| entry.get("id"))
+                .map(value_to_string)
+                .filter(|id| !id.is_empty())
+            {
+                ids.insert(id);
+            }
+        }
+        page += 1;
+    }
+
+    let mut sorted = ids.into_iter().collect::<Vec<_>>();
+    sorted.sort();
+    Ok(sorted)
+}
+
+fn load_illust_snapshot(folder_path: &Path, user_id: &str) -> Result<BTreeSet<String>> {
+    let path = snapshot_path(folder_path, user_id);
+    if !path.exists() {
+        return Ok(BTreeSet::new());
+    }
+    let content = fs::read_to_string(&path)?;
+    let value = serde_json::from_str::<Value>(&content).unwrap_or(Value::Null);
+    let snapshot = value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    Value::String(value) => Some(value.clone()),
+                    Value::Number(value) => Some(value.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(snapshot)
+}
+
+fn save_illust_snapshot(
+    folder_path: &Path,
+    user_id: &str,
+    ids: &BTreeSet<String>,
+) -> Result<String> {
+    let path = snapshot_path(folder_path, user_id);
+    let values = ids.iter().cloned().collect::<Vec<_>>();
+    save_json_pretty(&path, &json!(values))?;
+    Ok(hash_ids(values.iter().map(String::as_str)))
+}
+
+fn hash_ids<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
+    let mut sorted = ids.into_iter().map(ToString::to_string).collect::<Vec<_>>();
+    sorted.sort();
+    let joined = sorted.join(",");
+    let mut hasher = Sha256::new();
+    hasher.update(joined.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn save_json_pretty(path: &Path, value: &Value) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_string_pretty(value)?)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1664,4 +2174,101 @@ fn regex_capture(pattern: &str, text: &str) -> Option<String> {
     re.captures(text)
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("test-output")
+            .join(format!("{name}-{unique}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn parse_pixiv_urls_support_user_forms() {
+        assert_eq!(
+            parse_pixiv_url("https://www.pixiv.net/users/12345"),
+            Some(PixivUrlTarget::User("12345".to_string()))
+        );
+        assert_eq!(
+            parse_pixiv_url("https://www.pixiv.net/user/12345"),
+            Some(PixivUrlTarget::User("12345".to_string()))
+        );
+        assert_eq!(
+            parse_pixiv_url("https://www.pixiv.net/user/12345/series/9876"),
+            Some(PixivUrlTarget::Comic("9876".to_string()))
+        );
+        assert_eq!(
+            parse_pixiv_url("https://www.pixiv.net/novel/show.php?id=100"),
+            Some(PixivUrlTarget::Novel("100".to_string()))
+        );
+    }
+
+    #[test]
+    fn ensure_tracked_user_creates_compat_entry() {
+        let dir = test_dir("pixiv-user-config");
+        let entry = ensure_tracked_user(&dir, "12345").unwrap();
+
+        assert_eq!(entry.get("novel").and_then(Value::as_str), Some("enable"));
+        assert_eq!(entry.get("comic").and_then(Value::as_str), Some("enable"));
+
+        let stored: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("user.json")).unwrap()).unwrap();
+        assert_eq!(
+            stored.get("version").and_then(Value::as_i64),
+            Some(USER_CONFIG_VERSION)
+        );
+        assert_eq!(
+            stored
+                .get("12345")
+                .and_then(|value| value.get("novel"))
+                .and_then(Value::as_str),
+            Some("enable")
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ensure_tracked_user_preserves_existing_flags_and_snapshot_helpers_are_stable() {
+        let dir = test_dir("pixiv-user-snapshot");
+        fs::write(
+            dir.join("user.json"),
+            r#"{
+  "version": 1,
+  "12345": {
+    "novel": "disable"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let entry = ensure_tracked_user(&dir, "12345").unwrap();
+        assert_eq!(entry.get("novel").and_then(Value::as_str), Some("disable"));
+        assert_eq!(entry.get("comic").and_then(Value::as_str), Some("enable"));
+
+        let ids = ["30".to_string(), "10".to_string(), "20".to_string()]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let hash = save_illust_snapshot(&dir, "12345", &ids).unwrap();
+        let loaded = load_illust_snapshot(&dir, "12345").unwrap();
+        assert_eq!(loaded, ids);
+        assert_eq!(hash, hash_ids(["20", "10", "30"]));
+
+        let tracked = tracked_user_ids(&dir).unwrap();
+        assert_eq!(tracked, vec!["12345".to_string()]);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
