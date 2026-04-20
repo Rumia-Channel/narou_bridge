@@ -1,9 +1,10 @@
 use crate::core::model::{
-    AccountRecord, ImageRecord, MigrationSummary, RequestData, TaskRecord, TaskState, TaskStatus,
-    WorkRecord,
+    AccountRecord, ImageRecord, MigrationSummary, RequestData, SiteDocumentRecord, TaskRecord,
+    TaskState, TaskStatus, WorkRecord,
 };
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
 use std::time::Duration;
 
@@ -80,6 +81,14 @@ impl Store {
                 hash TEXT NOT NULL,
                 ext TEXT NOT NULL,
                 kind TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS site_documents (
+                site TEXT NOT NULL,
+                key TEXT NOT NULL,
+                document_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(site, key)
             );
 
             CREATE TABLE IF NOT EXISTS migrations (
@@ -295,6 +304,147 @@ impl Store {
         Ok(images)
     }
 
+    pub fn upsert_site_document_json(&self, record: &SiteDocumentRecord) -> Result<()> {
+        self.conn.execute(
+            r#"INSERT INTO site_documents (site, key, document_json, updated_at)
+               VALUES (?1, ?2, ?3, ?4)
+               ON CONFLICT(site, key) DO UPDATE SET
+                   document_json=excluded.document_json,
+                   updated_at=excluded.updated_at"#,
+            params![
+                record.site,
+                record.key,
+                serde_json::to_string(&record.document)?,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_site_document<T>(
+        &self,
+        site: &str,
+        key: &str,
+        document: &T,
+        updated_at: &str,
+    ) -> Result<()>
+    where
+        T: Serialize,
+    {
+        self.upsert_site_document_json(&SiteDocumentRecord {
+            site: site.to_string(),
+            key: key.to_string(),
+            document: serde_json::to_value(document)?,
+            updated_at: updated_at.to_string(),
+        })
+    }
+
+    pub fn get_site_document_record(
+        &self,
+        site: &str,
+        key: &str,
+    ) -> Result<Option<SiteDocumentRecord>> {
+        self.conn
+            .query_row(
+                r#"SELECT site, key, document_json, updated_at
+                   FROM site_documents WHERE site = ?1 AND key = ?2"#,
+                params![site, key],
+                |row| {
+                    let document_json: String = row.get(2)?;
+                    Ok(SiteDocumentRecord {
+                        site: row.get(0)?,
+                        key: row.get(1)?,
+                        document: serde_json::from_str(&document_json).unwrap_or_default(),
+                        updated_at: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn get_site_document<T>(&self, site: &str, key: &str) -> Result<Option<T>>
+    where
+        T: DeserializeOwned,
+    {
+        self.get_site_document_record(site, key)?
+            .map(|record| {
+                serde_json::from_value(record.document)
+                    .context("failed to deserialize site document")
+            })
+            .transpose()
+    }
+
+    pub fn list_site_document_records(
+        &self,
+        site: &str,
+        key_prefix: Option<&str>,
+    ) -> Result<Vec<SiteDocumentRecord>> {
+        let mut records = Vec::new();
+        match key_prefix {
+            Some(prefix) => {
+                let mut stmt = self.conn.prepare(
+                    r#"SELECT site, key, document_json, updated_at
+                       FROM site_documents
+                       WHERE site = ?1 AND key LIKE ?2
+                       ORDER BY key ASC"#,
+                )?;
+                let rows = stmt.query_map(params![site, format!("{prefix}%")], |row| {
+                    let document_json: String = row.get(2)?;
+                    Ok(SiteDocumentRecord {
+                        site: row.get(0)?,
+                        key: row.get(1)?,
+                        document: serde_json::from_str(&document_json).unwrap_or_default(),
+                        updated_at: row.get(3)?,
+                    })
+                })?;
+                for row in rows {
+                    records.push(row?);
+                }
+            }
+            None => {
+                let mut stmt = self.conn.prepare(
+                    r#"SELECT site, key, document_json, updated_at
+                       FROM site_documents
+                       WHERE site = ?1
+                       ORDER BY key ASC"#,
+                )?;
+                let rows = stmt.query_map([site], |row| {
+                    let document_json: String = row.get(2)?;
+                    Ok(SiteDocumentRecord {
+                        site: row.get(0)?,
+                        key: row.get(1)?,
+                        document: serde_json::from_str(&document_json).unwrap_or_default(),
+                        updated_at: row.get(3)?,
+                    })
+                })?;
+                for row in rows {
+                    records.push(row?);
+                }
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn list_site_documents<T>(
+        &self,
+        site: &str,
+        key_prefix: Option<&str>,
+    ) -> Result<Vec<(String, T)>>
+    where
+        T: DeserializeOwned,
+    {
+        self.list_site_document_records(site, key_prefix)?
+            .into_iter()
+            .map(|record| {
+                let key = record.key;
+                let document = serde_json::from_value(record.document)
+                    .context("failed to deserialize site document while listing")?;
+                Ok((key, document))
+            })
+            .collect()
+    }
+
     pub fn record_migration(
         &self,
         source_root: &str,
@@ -415,6 +565,12 @@ impl Store {
             images: self
                 .conn
                 .query_row("SELECT COUNT(*) FROM images", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap_or(0) as usize,
+            site_documents: self
+                .conn
+                .query_row("SELECT COUNT(*) FROM site_documents", [], |row| {
                     row.get::<_, i64>(0)
                 })
                 .unwrap_or(0) as usize,
@@ -554,5 +710,47 @@ mod tests {
         assert!(state.current_task.is_none());
         assert_eq!(state.queue.len(), 1);
         assert_eq!(state.queue[0].request_id, "req-1");
+    }
+
+    #[test]
+    fn site_documents_support_roundtrip_and_prefix_listing() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .upsert_site_document(
+                "pixiv",
+                "tracked_users/123/config",
+                &serde_json::json!({"novel": "enable"}),
+                "2025-01-01T00:00:00Z",
+            )
+            .expect("insert config");
+        store
+            .upsert_site_document(
+                "pixiv",
+                "tracked_users/123/illust_ids",
+                &serde_json::json!(["1", "2"]),
+                "2025-01-01T00:00:01Z",
+            )
+            .expect("insert snapshot");
+        store
+            .upsert_site_document(
+                "narou",
+                "documents/example",
+                &serde_json::json!({"value": true}),
+                "2025-01-01T00:00:02Z",
+            )
+            .expect("insert other site");
+
+        let config: serde_json::Value = store
+            .get_site_document("pixiv", "tracked_users/123/config")
+            .expect("load config")
+            .expect("config exists");
+        assert_eq!(config["novel"], "enable");
+
+        let records = store
+            .list_site_document_records("pixiv", Some("tracked_users/123/"))
+            .expect("list pixiv docs");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].key, "tracked_users/123/config");
+        assert_eq!(records[1].key, "tracked_users/123/illust_ids");
     }
 }

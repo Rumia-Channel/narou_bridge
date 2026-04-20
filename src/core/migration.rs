@@ -4,7 +4,7 @@ use crate::core::model::{
 };
 use crate::core::storage::Store;
 use anyhow::{Context, Result};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -22,6 +22,7 @@ pub fn migrate_legacy_tree(store: &Store, plan: MigrationPlan) -> Result<Migrati
         summary.tasks += migrate_tasks(store, &plan.source_root)?;
         summary.works += migrate_works(store, &plan.source_root)?;
         summary.images += migrate_images(store, &plan.source_root)?;
+        summary.site_documents += migrate_pixiv_site_documents(store, &plan.source_root)?;
         summary.archived_files += archive_legacy_files(&plan.source_root, &plan.archive_root)?;
     }
 
@@ -348,6 +349,61 @@ fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
     Ok(count)
 }
 
+fn migrate_pixiv_site_documents(store: &Store, root: &Path) -> Result<usize> {
+    let Some(pixiv_dir) = legacy_pixiv_dir(root) else {
+        return Ok(0);
+    };
+
+    let mut count = 0;
+    let user_config = pixiv_dir.join("user.json");
+    if user_config.exists() {
+        let document: Value = load_json_or_default(&user_config)?;
+        let updated_at = file_modified_string(&user_config).unwrap_or_else(now_string);
+        if let Some(entries) = document.as_object() {
+            for (user_id, value) in entries {
+                if user_id == "version" {
+                    continue;
+                }
+                store.upsert_site_document(
+                    "pixiv",
+                    &format!("tracked_users/{user_id}/config"),
+                    &normalize_pixiv_tracked_user_entry(value),
+                    &updated_at,
+                )?;
+                count += 1;
+            }
+        }
+    }
+
+    let snapshot_dir = pixiv_dir.join("snapshots").join("illust_ids");
+    if snapshot_dir.exists() {
+        for entry in fs::read_dir(&snapshot_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(user_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let snapshot: Value = load_json_or_default(&path)?;
+            let updated_at = file_modified_string(&path).unwrap_or_else(now_string);
+            store.upsert_site_document(
+                "pixiv",
+                &format!("tracked_users/{user_id}/illust_ids"),
+                &json!({ "illust_ids": normalize_pixiv_illust_ids(&snapshot) }),
+                &updated_at,
+            )?;
+            count += 1;
+        }
+    }
+
+    Ok(count)
+}
+
 fn archive_legacy_files(root: &Path, archive_root: &Path) -> Result<usize> {
     if !archive_root.exists() {
         fs::create_dir_all(archive_root)?;
@@ -480,6 +536,50 @@ fn detect_param(req: &RequestData) -> String {
         .unwrap_or_default()
 }
 
+fn legacy_pixiv_dir(root: &Path) -> Option<PathBuf> {
+    let data_path = root.join("data").join("pixiv");
+    if data_path.exists() {
+        return Some(data_path);
+    }
+
+    let direct_path = root.join("pixiv");
+    if direct_path.exists() {
+        return Some(direct_path);
+    }
+
+    None
+}
+
+fn normalize_pixiv_tracked_user_entry(value: &Value) -> Value {
+    let mut entry = value.as_object().cloned().unwrap_or_default();
+    entry
+        .entry("novel".to_string())
+        .or_insert_with(|| Value::String("enable".to_string()));
+    entry
+        .entry("comic".to_string())
+        .or_insert_with(|| Value::String("enable".to_string()));
+    Value::Object(entry)
+}
+
+fn normalize_pixiv_illust_ids(value: &Value) -> Vec<String> {
+    let mut ids = value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    Value::String(value) => Some(value.clone()),
+                    Value::Number(value) => Some(value.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 fn load_json_or_default<T>(path: &Path) -> Result<T>
 where
     T: serde::de::DeserializeOwned + Default,
@@ -497,4 +597,92 @@ fn file_modified_string(path: &Path) -> Option<String> {
 
 fn now_string() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("test-output")
+            .join(format!("{name}-{unique}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn migrate_pixiv_site_documents_imports_user_config_and_snapshot() {
+        let root = test_dir("migration-pixiv-site-docs");
+        let pixiv_dir = root.join("data").join("pixiv");
+        fs::create_dir_all(pixiv_dir.join("snapshots").join("illust_ids")).unwrap();
+        fs::write(
+            pixiv_dir.join("user.json"),
+            serde_json::to_string_pretty(&json!({
+                "version": 5,
+                "12345": {
+                    "novel": "disable",
+                    "name": "Example User"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            pixiv_dir
+                .join("snapshots")
+                .join("illust_ids")
+                .join("12345.json"),
+            serde_json::to_string_pretty(&json!(["30", 10, "20"])).unwrap(),
+        )
+        .unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        let summary = migrate_legacy_tree(
+            &store,
+            MigrationPlan {
+                source_root: root.clone(),
+                archive_root: root.join("archive"),
+            },
+        )
+        .expect("migrate");
+
+        assert_eq!(summary.site_documents, 2);
+
+        let config = store
+            .get_site_document_record("pixiv", "tracked_users/12345/config")
+            .expect("load config")
+            .expect("config exists");
+        let snapshot = store
+            .get_site_document_record("pixiv", "tracked_users/12345/illust_ids")
+            .expect("load snapshot")
+            .expect("snapshot exists");
+
+        let config_object = config.document.as_object().expect("config object");
+        assert_eq!(
+            config_object.get("novel").and_then(Value::as_str),
+            Some("disable")
+        );
+        assert_eq!(
+            config_object.get("comic").and_then(Value::as_str),
+            Some("enable")
+        );
+        assert_eq!(
+            snapshot
+                .document
+                .get("illust_ids")
+                .and_then(Value::as_array)
+                .map(|items| { items.iter().filter_map(Value::as_str).collect::<Vec<_>>() }),
+            Some(vec!["10", "20", "30"])
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

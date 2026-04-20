@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
             tasks = summary.tasks,
             works = summary.works,
             images = summary.images,
+            site_documents = summary.site_documents,
             archived = summary.archived_files,
             "migration completed"
         );

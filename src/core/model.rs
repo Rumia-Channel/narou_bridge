@@ -233,10 +233,19 @@ pub struct ImageRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SiteDocumentRecord {
+    pub site: String,
+    pub key: String,
+    pub document: serde_json::Value,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MigrationSummary {
     pub accounts: usize,
     pub tasks: usize,
     pub works: usize,
     pub images: usize,
+    pub site_documents: usize,
     pub archived_files: usize,
 }

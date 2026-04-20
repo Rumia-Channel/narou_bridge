@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use regex::Regex;
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -22,6 +23,10 @@ pub mod update;
 const VERSION: i64 = 0;
 const USER_CONFIG_VERSION: i64 = 5;
 const ENABLED_FLAG: &str = "enable";
+const PIXIV_SITE_DOCUMENT_SCOPE: &str = "pixiv";
+const TRACKED_USER_KEY_PREFIX: &str = "tracked_users/";
+const TRACKED_USER_CONFIG_SUFFIX: &str = "/config";
+const TRACKED_USER_ILLUST_IDS_SUFFIX: &str = "/illust_ids";
 const DEFAULT_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0";
 const SLEEP_MS: u64 = 500;
@@ -52,6 +57,38 @@ struct UserDownloadSummary {
     downloaded_works: usize,
     tracked_artworks: usize,
     failures: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct PixivTrackedUserEntry {
+    #[serde(default = "enabled_flag_string")]
+    novel: String,
+    #[serde(default = "enabled_flag_string")]
+    comic: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    illust_ids_snapshot_hash: Option<String>,
+    #[serde(flatten, default)]
+    extra: BTreeMap<String, Value>,
+}
+
+impl Default for PixivTrackedUserEntry {
+    fn default() -> Self {
+        Self {
+            novel: enabled_flag_string(),
+            comic: enabled_flag_string(),
+            name: None,
+            illust_ids_snapshot_hash: None,
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+struct PixivIllustSnapshotDocument {
+    #[serde(default)]
+    illust_ids: BTreeSet<String>,
 }
 
 impl Site for PixivSite {
@@ -249,7 +286,7 @@ fn pixiv_update(
     let folder_path = PathBuf::from(data_dir).join("pixiv");
     fs::create_dir_all(&folder_path)?;
 
-    let tracked_users = tracked_user_ids(&folder_path)?;
+    let tracked_users = tracked_user_ids(store, &folder_path)?;
     if tracked_users.is_empty() {
         renderer::render_site_from_store(store, "pixiv", data_dir, host_name)?;
         return Ok(
@@ -301,7 +338,7 @@ fn download_user(
     store: &mut Store,
     update: bool,
 ) -> Result<UserDownloadSummary> {
-    let user_conf = ensure_tracked_user(folder_path, user_id)?;
+    let user_conf = ensure_tracked_user(store, folder_path, user_id)?;
     let profile_all = fetch_body_json(
         client,
         &format!("https://www.pixiv.net/ajax/user/{user_id}/profile/all"),
@@ -410,7 +447,7 @@ fn download_user(
             }
         }
 
-        let previous_snapshot = load_illust_snapshot(folder_path, user_id)?;
+        let previous_snapshot = load_illust_snapshot(store, folder_path, user_id)?;
         let mut new_art_ids = Vec::new();
         for art_id in &target_art_ids {
             if !update || !previous_snapshot.contains(art_id) {
@@ -428,21 +465,18 @@ fn download_user(
             }
         }
 
-        let hash = save_illust_snapshot(folder_path, user_id, &target_art_ids)?;
+        let hash = save_illust_snapshot(store, folder_path, user_id, &target_art_ids)?;
         summary.tracked_artworks = target_art_ids.len();
-        update_tracked_user(folder_path, user_id, |entry| {
-            entry.insert(
-                "illust_ids_snapshot_hash".to_string(),
-                Value::String(hash.clone()),
-            );
+        update_tracked_user(store, folder_path, user_id, |entry| {
+            entry.illust_ids_snapshot_hash = Some(hash.clone());
             if let Some(user_name) = summary.user_name.clone() {
-                entry.insert("name".to_string(), Value::String(user_name));
+                entry.name = Some(user_name);
             }
         })?;
     } else if summary.user_name.is_some() {
-        update_tracked_user(folder_path, user_id, |entry| {
+        update_tracked_user(store, folder_path, user_id, |entry| {
             if let Some(user_name) = summary.user_name.clone() {
-                entry.insert("name".to_string(), Value::String(user_name));
+                entry.name = Some(user_name);
             }
         })?;
     }
@@ -478,7 +512,24 @@ fn snapshot_path(folder_path: &Path, user_id: &str) -> PathBuf {
         .join(format!("{user_id}.json"))
 }
 
-fn load_user_config_document(folder_path: &Path) -> Result<Map<String, Value>> {
+fn enabled_flag_string() -> String {
+    ENABLED_FLAG.to_string()
+}
+
+fn tracked_user_config_key(user_id: &str) -> String {
+    format!("{TRACKED_USER_KEY_PREFIX}{user_id}{TRACKED_USER_CONFIG_SUFFIX}")
+}
+
+fn tracked_user_snapshot_key(user_id: &str) -> String {
+    format!("{TRACKED_USER_KEY_PREFIX}{user_id}{TRACKED_USER_ILLUST_IDS_SUFFIX}")
+}
+
+fn tracked_user_id_from_config_key(key: &str) -> Option<&str> {
+    key.strip_prefix(TRACKED_USER_KEY_PREFIX)?
+        .strip_suffix(TRACKED_USER_CONFIG_SUFFIX)
+}
+
+fn load_legacy_user_config_document(folder_path: &Path) -> Result<Map<String, Value>> {
     let path = user_config_path(folder_path);
     let mut document = if path.exists() {
         let content = fs::read_to_string(&path)?;
@@ -498,76 +549,135 @@ fn save_user_config_document(folder_path: &Path, document: &Map<String, Value>) 
     save_json_pretty(&path, &Value::Object(document.clone()))
 }
 
-fn ensure_tracked_user(folder_path: &Path, user_id: &str) -> Result<Map<String, Value>> {
-    let mut document = load_user_config_document(folder_path)?;
-    let defaults = default_tracked_user_entry();
-    let mut changed = false;
-
-    let entry = document.entry(user_id.to_string()).or_insert_with(|| {
-        changed = true;
-        Value::Object(defaults.clone())
-    });
-
-    if !entry.is_object() {
-        *entry = Value::Object(defaults.clone());
-        changed = true;
-    }
-
-    let entry_map = entry
-        .as_object_mut()
-        .expect("tracked user entry must be object");
-    for (key, value) in defaults {
-        if !entry_map.contains_key(&key) {
-            entry_map.insert(key, value);
-            changed = true;
-        }
-    }
-
-    let entry_clone = entry_map.clone();
-    if changed {
-        save_user_config_document(folder_path, &document)?;
-    }
-    Ok(entry_clone)
+fn tracked_user_entry_from_value(value: Value) -> PixivTrackedUserEntry {
+    serde_json::from_value(value).unwrap_or_default()
 }
 
-fn update_tracked_user<F>(folder_path: &Path, user_id: &str, mut updater: F) -> Result<()>
-where
-    F: FnMut(&mut Map<String, Value>),
-{
-    let mut document = load_user_config_document(folder_path)?;
-    let defaults = default_tracked_user_entry();
-    let entry = document
-        .entry(user_id.to_string())
-        .or_insert_with(|| Value::Object(defaults.clone()));
-    if !entry.is_object() {
-        *entry = Value::Object(defaults);
+fn list_tracked_user_entries(
+    store: &Store,
+    folder_path: &Path,
+) -> Result<Vec<(String, PixivTrackedUserEntry)>> {
+    let mut entries = store
+        .list_site_document_records(PIXIV_SITE_DOCUMENT_SCOPE, Some(TRACKED_USER_KEY_PREFIX))?
+        .into_iter()
+        .filter_map(|record| {
+            tracked_user_id_from_config_key(&record.key).map(|user_id| {
+                (
+                    user_id.to_string(),
+                    tracked_user_entry_from_value(record.document),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        import_legacy_tracked_user_documents(store, folder_path)?;
+        entries = store
+            .list_site_document_records(PIXIV_SITE_DOCUMENT_SCOPE, Some(TRACKED_USER_KEY_PREFIX))?
+            .into_iter()
+            .filter_map(|record| {
+                tracked_user_id_from_config_key(&record.key).map(|user_id| {
+                    (
+                        user_id.to_string(),
+                        tracked_user_entry_from_value(record.document),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
     }
-    let entry_map = entry
-        .as_object_mut()
-        .expect("tracked user entry must be object");
-    updater(entry_map);
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(entries)
+}
+
+fn sync_tracked_user_config_mirror(store: &Store, folder_path: &Path) -> Result<()> {
+    let mut document = Map::new();
+    document.insert("version".to_string(), json!(USER_CONFIG_VERSION));
+    for (user_id, entry) in list_tracked_user_entries(store, folder_path)? {
+        document.insert(user_id, serde_json::to_value(entry)?);
+    }
     save_user_config_document(folder_path, &document)
 }
 
-fn tracked_user_ids(folder_path: &Path) -> Result<Vec<String>> {
-    let document = load_user_config_document(folder_path)?;
-    let mut ids = document
+fn import_legacy_tracked_user_documents(store: &Store, folder_path: &Path) -> Result<usize> {
+    let path = user_config_path(folder_path);
+    if !path.exists() {
+        return Ok(0);
+    }
+
+    let document = load_legacy_user_config_document(folder_path)?;
+    let updated_at = file_modified_string(&path).unwrap_or_else(now_string);
+    let mut imported = 0;
+    for (user_id, value) in document {
+        if user_id == "version" {
+            continue;
+        }
+        let entry = tracked_user_entry_from_value(value);
+        store.upsert_site_document(
+            PIXIV_SITE_DOCUMENT_SCOPE,
+            &tracked_user_config_key(&user_id),
+            &entry,
+            &updated_at,
+        )?;
+        imported += 1;
+    }
+    Ok(imported)
+}
+
+fn ensure_tracked_user(
+    store: &Store,
+    folder_path: &Path,
+    user_id: &str,
+) -> Result<PixivTrackedUserEntry> {
+    let key = tracked_user_config_key(user_id);
+    if let Some(record) = store.get_site_document_record(PIXIV_SITE_DOCUMENT_SCOPE, &key)? {
+        return Ok(tracked_user_entry_from_value(record.document));
+    }
+
+    import_legacy_tracked_user_documents(store, folder_path)?;
+    if let Some(record) = store.get_site_document_record(PIXIV_SITE_DOCUMENT_SCOPE, &key)? {
+        return Ok(tracked_user_entry_from_value(record.document));
+    }
+
+    let entry = PixivTrackedUserEntry::default();
+    store.upsert_site_document(PIXIV_SITE_DOCUMENT_SCOPE, &key, &entry, &now_string())?;
+    sync_tracked_user_config_mirror(store, folder_path)?;
+    Ok(entry)
+}
+
+fn update_tracked_user<F>(
+    store: &Store,
+    folder_path: &Path,
+    user_id: &str,
+    mut updater: F,
+) -> Result<()>
+where
+    F: FnMut(&mut PixivTrackedUserEntry),
+{
+    let mut entry = ensure_tracked_user(store, folder_path, user_id)?;
+    updater(&mut entry);
+    store.upsert_site_document(
+        PIXIV_SITE_DOCUMENT_SCOPE,
+        &tracked_user_config_key(user_id),
+        &entry,
+        &now_string(),
+    )?;
+    sync_tracked_user_config_mirror(store, folder_path)
+}
+
+fn tracked_user_ids(store: &Store, folder_path: &Path) -> Result<Vec<String>> {
+    let mut ids = list_tracked_user_entries(store, folder_path)?
         .into_iter()
-        .filter_map(|(key, value)| (key != "version" && value.is_object()).then_some(key))
+        .map(|(key, _)| key)
         .collect::<Vec<_>>();
     ids.sort();
     Ok(ids)
 }
 
-fn default_tracked_user_entry() -> Map<String, Value> {
-    let mut entry = Map::new();
-    entry.insert("novel".to_string(), Value::String(ENABLED_FLAG.to_string()));
-    entry.insert("comic".to_string(), Value::String(ENABLED_FLAG.to_string()));
-    entry
-}
-
-fn action_enabled(entry: &Map<String, Value>, key: &str) -> bool {
-    entry.get(key).and_then(Value::as_str) == Some(ENABLED_FLAG)
+fn action_enabled(entry: &PixivTrackedUserEntry, key: &str) -> bool {
+    match key {
+        "novel" => entry.novel == ENABLED_FLAG,
+        "comic" => entry.comic == ENABLED_FLAG,
+        _ => false,
+    }
 }
 
 fn extract_profile_ids(value: Option<&Value>) -> Vec<String> {
@@ -620,7 +730,7 @@ fn fetch_comic_series_art_ids(client: &Client, comic_id: &str) -> Result<Vec<Str
     Ok(sorted)
 }
 
-fn load_illust_snapshot(folder_path: &Path, user_id: &str) -> Result<BTreeSet<String>> {
+fn load_legacy_illust_snapshot(folder_path: &Path, user_id: &str) -> Result<BTreeSet<String>> {
     let path = snapshot_path(folder_path, user_id);
     if !path.exists() {
         return Ok(BTreeSet::new());
@@ -643,13 +753,52 @@ fn load_illust_snapshot(folder_path: &Path, user_id: &str) -> Result<BTreeSet<St
     Ok(snapshot)
 }
 
+fn load_illust_snapshot(
+    store: &Store,
+    folder_path: &Path,
+    user_id: &str,
+) -> Result<BTreeSet<String>> {
+    if let Some(snapshot) = store.get_site_document::<PixivIllustSnapshotDocument>(
+        PIXIV_SITE_DOCUMENT_SCOPE,
+        &tracked_user_snapshot_key(user_id),
+    )? {
+        return Ok(snapshot.illust_ids);
+    }
+
+    let legacy_snapshot = load_legacy_illust_snapshot(folder_path, user_id)?;
+    if legacy_snapshot.is_empty() {
+        return Ok(legacy_snapshot);
+    }
+
+    let updated_at =
+        file_modified_string(&snapshot_path(folder_path, user_id)).unwrap_or_else(now_string);
+    store.upsert_site_document(
+        PIXIV_SITE_DOCUMENT_SCOPE,
+        &tracked_user_snapshot_key(user_id),
+        &PixivIllustSnapshotDocument {
+            illust_ids: legacy_snapshot.clone(),
+        },
+        &updated_at,
+    )?;
+    Ok(legacy_snapshot)
+}
+
 fn save_illust_snapshot(
+    store: &Store,
     folder_path: &Path,
     user_id: &str,
     ids: &BTreeSet<String>,
 ) -> Result<String> {
     let path = snapshot_path(folder_path, user_id);
     let values = ids.iter().cloned().collect::<Vec<_>>();
+    store.upsert_site_document(
+        PIXIV_SITE_DOCUMENT_SCOPE,
+        &tracked_user_snapshot_key(user_id),
+        &PixivIllustSnapshotDocument {
+            illust_ids: ids.clone(),
+        },
+        &now_string(),
+    )?;
     save_json_pretty(&path, &json!(values))?;
     Ok(hash_ids(values.iter().map(String::as_str)))
 }
@@ -673,6 +822,16 @@ fn save_json_pretty(path: &Path, value: &Value) -> Result<()> {
     }
     fs::write(path, serde_json::to_string_pretty(value)?)?;
     Ok(())
+}
+
+fn file_modified_string(path: &Path) -> Option<String> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    let dt: chrono::DateTime<chrono::Utc> = modified.into();
+    Some(dt.to_rfc3339())
+}
+
+fn now_string() -> String {
+    chrono::Utc::now().to_rfc3339()
 }
 
 // ---------------------------------------------------------------------------
@@ -2218,10 +2377,11 @@ mod tests {
     #[test]
     fn ensure_tracked_user_creates_compat_entry() {
         let dir = test_dir("pixiv-user-config");
-        let entry = ensure_tracked_user(&dir, "12345").unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let entry = ensure_tracked_user(&store, &dir, "12345").unwrap();
 
-        assert_eq!(entry.get("novel").and_then(Value::as_str), Some("enable"));
-        assert_eq!(entry.get("comic").and_then(Value::as_str), Some("enable"));
+        assert_eq!(entry.novel, "enable");
+        assert_eq!(entry.comic, "enable");
 
         let stored: Value =
             serde_json::from_str(&fs::read_to_string(dir.join("user.json")).unwrap()).unwrap();
@@ -2243,6 +2403,7 @@ mod tests {
     #[test]
     fn ensure_tracked_user_preserves_existing_flags_and_snapshot_helpers_are_stable() {
         let dir = test_dir("pixiv-user-snapshot");
+        let store = Store::open_in_memory().unwrap();
         fs::write(
             dir.join("user.json"),
             r#"{
@@ -2254,19 +2415,19 @@ mod tests {
         )
         .unwrap();
 
-        let entry = ensure_tracked_user(&dir, "12345").unwrap();
-        assert_eq!(entry.get("novel").and_then(Value::as_str), Some("disable"));
-        assert_eq!(entry.get("comic").and_then(Value::as_str), Some("enable"));
+        let entry = ensure_tracked_user(&store, &dir, "12345").unwrap();
+        assert_eq!(entry.novel, "disable");
+        assert_eq!(entry.comic, "enable");
 
         let ids = ["30".to_string(), "10".to_string(), "20".to_string()]
             .into_iter()
             .collect::<BTreeSet<_>>();
-        let hash = save_illust_snapshot(&dir, "12345", &ids).unwrap();
-        let loaded = load_illust_snapshot(&dir, "12345").unwrap();
+        let hash = save_illust_snapshot(&store, &dir, "12345", &ids).unwrap();
+        let loaded = load_illust_snapshot(&store, &dir, "12345").unwrap();
         assert_eq!(loaded, ids);
         assert_eq!(hash, hash_ids(["20", "10", "30"]));
 
-        let tracked = tracked_user_ids(&dir).unwrap();
+        let tracked = tracked_user_ids(&store, &dir).unwrap();
         assert_eq!(tracked, vec!["12345".to_string()]);
 
         fs::remove_dir_all(dir).unwrap();
