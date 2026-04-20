@@ -31,3 +31,4 @@ uuid = { version = "1.23.0", features = ["v4", "fast-rng", "serde"] }
 tracing-appender = "0.2.4"
 regex = "1.12.3"
 sha2 = "0.11.0"
+zip = "8.5.1"

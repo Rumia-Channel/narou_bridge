@@ -1,23 +1,31 @@
 use crate::core::migration::{MigrationPlan, migrate_legacy_tree};
 use crate::core::model::{
-    AccountFile, AccountRecord, AppConfig, RequestData, TaskRecord, TaskStatus, WorkRecord,
+    AccountFile, AccountRecord, AppConfig, ImageRecord, RequestData, TaskRecord, TaskStatus,
+    WorkRecord, ZipImportMetadata,
 };
+use crate::core::renderer;
+use crate::core::static_bootstrap::write_static_bootstrap;
 use crate::core::storage::Store;
 use crate::sites::SiteRegistry;
 use anyhow::{Context, Result};
 use axum::Router;
-use axum::extract::{Query, State};
+use axum::extract::{FromRequest, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
-use axum::response::{Html, IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
+use axum_extra::extract::Multipart;
 use bytes::Bytes;
+use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::fs as stdfs;
+use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::{Mutex, Notify};
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -55,12 +63,6 @@ struct WorksQuery {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct ReaderQuery {
-    site: Option<String>,
-    nid: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 struct TaskInput {
     request_id: Option<String>,
     pdf_path: Option<String>,
@@ -78,6 +80,12 @@ struct TaskInput {
     add: Option<String>,
 }
 
+#[derive(Debug)]
+struct PendingUpload {
+    original_name: Option<String>,
+    bytes: Bytes,
+}
+
 pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Result<()> {
     let state = RuntimeState {
         config: config.clone(),
@@ -87,11 +95,13 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
     };
 
     ensure_runtime_dirs(&state.config).await?;
-    write_minimal_frontend(&state.config).await?;
+    write_static_bootstrap(&state.config, &state.registry.site_names()).await?;
     recover_queued_runtime_state(&state).await?;
     sync_queue_state(&state).await?;
     tokio::spawn(worker_loop(state.clone()));
 
+    let data_dir = state.config.data_dir_path();
+    let static_files = ServeDir::new(&data_dir).append_index_html_on_directories(true);
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/tasks", get(list_tasks))
@@ -106,9 +116,16 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
         .route("/api/account/rename", post(rename_account_query))
         .route("/api/", post(handle_post))
         .route("/api/migrate", get(migrate))
-        .route("/", get(root))
-        .route("/reader", get(reader))
-        .route("/reader/", get(reader))
+        .route_service("/", ServeFile::new(data_dir.join("index.html")))
+        .route_service(
+            "/reader",
+            ServeFile::new(data_dir.join("reader").join("index.html")),
+        )
+        .route_service(
+            "/reader/",
+            ServeFile::new(data_dir.join("reader").join("index.html")),
+        )
+        .fallback_service(static_files)
         .with_state(state.clone());
 
     let addr: SocketAddr = state
@@ -124,33 +141,6 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
 
 async fn health() -> Json<Value> {
     Json(json!({"status": "ok"}))
-}
-
-async fn root(State(state): State<RuntimeState>) -> Html<String> {
-    Html(render_root_page(&state.registry.site_names()))
-}
-
-async fn reader(
-    State(state): State<RuntimeState>,
-    Query(query): Query<ReaderQuery>,
-) -> Html<String> {
-    let Some(site) = query.site else {
-        return Html(render_reader_error("site is required"));
-    };
-    let Some(nid) = query.nid else {
-        return Html(render_reader_error("nid is required"));
-    };
-
-    let store = state.store.lock().await;
-    let works = match store.list_works(Some(&site)) {
-        Ok(works) => works,
-        Err(err) => return Html(render_reader_error(&err.to_string())),
-    };
-    let Some(work) = works.into_iter().find(|work| work.work_key == nid) else {
-        return Html(render_reader_error("work not found"));
-    };
-
-    Html(render_reader_page(&state.config.host_name, &work))
 }
 
 async fn list_tasks(State(state): State<RuntimeState>) -> impl IntoResponse {
@@ -331,33 +321,14 @@ async fn rename_account_query(
     Json(json!({"status": "success", "message": format!("Account renamed from {old_name} to {new_name}"), "site": site, "old_name": old_name, "new_name": new_name})).into_response()
 }
 
-async fn handle_post(
-    State(state): State<RuntimeState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> impl IntoResponse {
-    let payload = match parse_task_input(&headers, &body) {
+async fn handle_post(State(state): State<RuntimeState>, request: Request) -> impl IntoResponse {
+    let payload = match parse_task_input(&state, request).await {
         Ok(payload) => payload,
         Err(message) => return create_error(StatusCode::BAD_REQUEST, message),
     };
 
-    let request_id = payload.request_id.unwrap_or_else(random_request_id);
-    let req_data = RequestData {
-        request_id: request_id.clone(),
-        pdf_path: payload.pdf_path,
-        pdf_name: payload.pdf_name,
-        zip_name: payload.zip_name,
-        author_id: payload.author_id,
-        author_url: payload.author_url,
-        novel_type: payload.novel_type,
-        chapter: payload.chapter,
-        repair: payload.repair,
-        login: payload.login,
-        update: payload.update,
-        re_download: payload.re_download,
-        convert: payload.convert,
-        add: payload.add,
-    };
+    let request_id = payload.request_id.clone().unwrap_or_else(random_request_id);
+    let req_data = request_data_from_input(payload, request_id.clone());
 
     let (action, param) = match resolve_request_action(&req_data) {
         Some(v) => v,
@@ -445,6 +416,9 @@ fn resolve_request_action(req: &RequestData) -> Option<(String, String)> {
     if let Some(v) = req.convert.clone() {
         return Some(("convert".to_string(), v));
     }
+    if req.zip_name.is_some() {
+        return Some(("convert".to_string(), "zip".to_string()));
+    }
     if let Some(v) = req.add.clone() {
         return Some(("download".to_string(), v));
     }
@@ -453,6 +427,19 @@ fn resolve_request_action(req: &RequestData) -> Option<(String, String)> {
 
 async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskRecord) -> Result<()> {
     let mut store = Store::open(state.config.db_path_buf())?;
+
+    if should_import_zip_request(&task.request) {
+        import_uploaded_zip(
+            &store,
+            &task.request,
+            &state.config.data_dir,
+            &state.config.pdf_dir,
+            &state.config.host_name,
+        )?;
+        let _ = store.mark_task_status(task_id, TaskStatus::Succeeded, None, &now_string());
+        return Ok(());
+    }
+
     let context = crate::sites::SiteActionContext {
         host_name: state.config.host_name.clone(),
         data_dir: state.config.data_dir.clone(),
@@ -494,7 +481,32 @@ fn create_error(status: StatusCode, message: String) -> Response {
     (status, Json(json!({"status": "error", "message": message}))).into_response()
 }
 
-fn parse_task_input(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput, String> {
+async fn parse_task_input(state: &RuntimeState, request: Request) -> Result<TaskInput, String> {
+    let (parts, body) = request.into_parts();
+    let content_type = parts
+        .headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if content_type.contains("multipart/form-data") {
+        let request = Request::from_parts(parts, body);
+        let multipart = Multipart::from_request(request, state)
+            .await
+            .map_err(|err| err.to_string())?;
+        return parse_multipart_task_input(&state.config, multipart).await;
+    }
+
+    let collected = body
+        .collect()
+        .await
+        .map_err(|err| err.to_string())?
+        .to_bytes();
+    parse_task_input_bytes(&parts.headers, &collected)
+}
+
+fn parse_task_input_bytes(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput, String> {
     let content_type = headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -502,136 +514,416 @@ fn parse_task_input(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput, Stri
         .to_ascii_lowercase();
 
     if content_type.contains("application/json") || content_type.ends_with("+json") {
-        return serde_json::from_slice(body).map_err(|err| err.to_string());
+        return serde_json::from_slice(body)
+            .map(normalize_task_input)
+            .map_err(|err| err.to_string());
     }
 
     if content_type.contains("application/x-www-form-urlencoded") {
-        return serde_urlencoded::from_bytes(body).map_err(|err| err.to_string());
+        return serde_urlencoded::from_bytes(body)
+            .map(normalize_task_input)
+            .map_err(|err| err.to_string());
     }
 
     serde_json::from_slice(body)
         .or_else(|_| serde_urlencoded::from_bytes(body))
+        .map(normalize_task_input)
         .map_err(|err| err.to_string())
 }
 
-fn render_root_page(sites: &[String]) -> String {
-    let mut site_links = String::new();
-    for site in sites {
-        site_links.push_str(&format!(
-            "<li><a href=\"/api/works?site={site}\">{site}</a></li>"
-        ));
+async fn parse_multipart_task_input(
+    config: &AppConfig,
+    mut multipart: Multipart,
+) -> Result<TaskInput, String> {
+    let mut input = TaskInput::default();
+    let mut pdf_upload = None;
+    let mut zip_upload = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| err.to_string())?
+    {
+        let field_name = field.name().map(str::to_string).unwrap_or_default();
+        let file_name = field.file_name().map(str::to_string);
+
+        match field_name.as_str() {
+            "pdf" => {
+                let bytes = field.bytes().await.map_err(|err| err.to_string())?;
+                if !bytes.is_empty() {
+                    if input.pdf_name.is_none() {
+                        input.pdf_name = file_name.clone();
+                    }
+                    pdf_upload = Some(PendingUpload {
+                        original_name: file_name,
+                        bytes,
+                    });
+                }
+            }
+            "zip" => {
+                let bytes = field.bytes().await.map_err(|err| err.to_string())?;
+                if !bytes.is_empty() {
+                    if input.zip_name.is_none() {
+                        input.zip_name = file_name.clone();
+                    }
+                    zip_upload = Some(PendingUpload {
+                        original_name: file_name,
+                        bytes,
+                    });
+                }
+            }
+            _ => {
+                let text = field.text().await.map_err(|err| err.to_string())?;
+                apply_task_input_field(&mut input, &field_name, text);
+            }
+        }
     }
 
-    format!(
-        r#"<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Narou Bridge</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 24px; line-height: 1.5; }}
-    .grid {{ display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }}
-    .card {{ border: 1px solid #ddd; border-radius: 12px; padding: 16px; background: #fff; }}
-    input, button {{ font: inherit; padding: 8px 10px; }}
-    input {{ width: 100%; box-sizing: border-box; margin: 4px 0 8px; }}
-    button {{ cursor: pointer; }}
-    ul {{ padding-left: 20px; }}
-    code {{ background: #f4f4f4; padding: 1px 4px; border-radius: 4px; }}
-  </style>
-</head>
-<body>
-  <h1>Narou Bridge</h1>
-  <p>Pixiv を動作確認するための最小 UI。</p>
-  <div class="grid">
-    <section class="card">
-      <h2>Pixiv download</h2>
-      <form method="post" action="/api/">
-        <label>Pixiv URL</label>
-        <input name="add" placeholder="https://www.pixiv.net/..." required>
-        <button type="submit">送信</button>
-      </form>
-    </section>
-    <section class="card">
-      <h2>PDF import</h2>
-      <form method="post" action="/api/">
-        <label>PDF path</label>
-        <input name="pdf_path" placeholder="C:/path/to/file.pdf" required>
-        <label>Title</label>
-        <input name="pdf_name" placeholder="任意">
-        <label>Author ID</label>
-        <input name="author_id" placeholder="任意">
-        <label>Author URL</label>
-        <input name="author_url" placeholder="任意">
-        <label>Novel Type</label>
-        <input name="novel_type" placeholder="短編 / 連載中">
-        <label>Chapter</label>
-        <input name="chapter" placeholder="任意">
-        <button type="submit">送信</button>
-      </form>
-    </section>
-    <section class="card">
-      <h2>Sites</h2>
-      <ul>{site_links}</ul>
-      <p><a href="/api/tasks">/api/tasks</a> | <a href="/api/works">/api/works</a></p>
-    </section>
-  </div>
-</body>
-</html>"#
-    )
+    input = normalize_task_input(input);
+    let request_id = input.request_id.clone().unwrap_or_else(random_request_id);
+
+    if let Some(upload) = pdf_upload {
+        let path = persist_uploaded_file(config, &request_id, "pdf", upload.bytes).await?;
+        input.pdf_path = Some(path_to_string(&path));
+        if input.pdf_name.is_none() {
+            input.pdf_name = upload.original_name;
+        }
+    }
+
+    if let Some(upload) = zip_upload {
+        let _ = persist_uploaded_file(config, &request_id, "zip", upload.bytes).await?;
+        if input.zip_name.is_none() {
+            input.zip_name = upload.original_name;
+        }
+    }
+
+    input.request_id = Some(request_id);
+    Ok(input)
 }
 
-fn render_reader_page(host_name: &str, work: &WorkRecord) -> String {
-    let raw = work.raw_json.to_string();
-    let url = format!(
-        "{}/reader/?site={}&nid={}",
-        host_name.trim_end_matches('/'),
-        work.site,
-        work.work_key
-    );
-    format!(
-        r#"<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 24px; line-height: 1.7; }}
-    pre {{ white-space: pre-wrap; background: #f7f7f7; padding: 16px; border-radius: 12px; }}
-    .meta {{ color: #666; font-size: 14px; }}
-  </style>
-</head>
-<body>
-  <p><a href="/">back</a></p>
-  <h1>{title}</h1>
-  <p class="meta">{author} | {site} | <code>{work_key}</code></p>
-  <p class="meta"><a href="{url}">current url</a></p>
-  <pre>{raw}</pre>
-</body>
-</html>"#,
-        title = escape_html(&work.title),
-        author = escape_html(&work.author),
-        site = escape_html(&work.site),
-        work_key = escape_html(&work.work_key),
-        url = escape_html(&url),
-        raw = escape_html(&raw),
-    )
+fn request_data_from_input(input: TaskInput, request_id: String) -> RequestData {
+    RequestData {
+        request_id,
+        pdf_path: input.pdf_path,
+        pdf_name: input.pdf_name,
+        zip_name: input.zip_name,
+        author_id: input.author_id,
+        author_url: input.author_url,
+        novel_type: input.novel_type,
+        chapter: input.chapter,
+        repair: input.repair,
+        login: input.login,
+        update: input.update,
+        re_download: input.re_download,
+        convert: input.convert,
+        add: input.add,
+    }
 }
 
-fn render_reader_error(message: &str) -> String {
-    format!(
-        r#"<!doctype html>
-<html><body><h1>Error</h1><p>{}</p><p><a href="/">back</a></p></body></html>"#,
-        escape_html(message)
-    )
+fn normalize_task_input(input: TaskInput) -> TaskInput {
+    TaskInput {
+        request_id: normalize_optional_string(input.request_id),
+        pdf_path: normalize_optional_string(input.pdf_path),
+        pdf_name: normalize_optional_string(input.pdf_name),
+        zip_name: normalize_optional_string(input.zip_name),
+        author_id: normalize_optional_string(input.author_id),
+        author_url: normalize_optional_string(input.author_url),
+        novel_type: normalize_optional_string(input.novel_type),
+        chapter: normalize_optional_string(input.chapter),
+        repair: normalize_optional_string(input.repair),
+        login: normalize_optional_string(input.login),
+        update: normalize_optional_string(input.update),
+        re_download: normalize_optional_string(input.re_download),
+        convert: normalize_optional_string(input.convert),
+        add: normalize_optional_string(input.add),
+    }
 }
 
-fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn apply_task_input_field(input: &mut TaskInput, name: &str, value: String) {
+    match name {
+        "request_id" => input.request_id = Some(value),
+        "pdf_path" => input.pdf_path = Some(value),
+        "pdf_name" => input.pdf_name = Some(value),
+        "zip_name" => input.zip_name = Some(value),
+        "author_id" => input.author_id = Some(value),
+        "author_url" => input.author_url = Some(value),
+        "novel_type" => input.novel_type = Some(value),
+        "chapter" => input.chapter = Some(value),
+        "repair" => input.repair = Some(value),
+        "login" => input.login = Some(value),
+        "update" => input.update = Some(value),
+        "re_download" => input.re_download = Some(value),
+        "convert" => input.convert = Some(value),
+        "add" => input.add = Some(value),
+        _ => {}
+    }
+}
+
+async fn persist_uploaded_file(
+    config: &AppConfig,
+    request_id: &str,
+    extension: &str,
+    bytes: Bytes,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(config.pdf_dir_path())
+        .await
+        .map_err(|err| err.to_string())?;
+    let path = config
+        .pdf_dir_path()
+        .join(format!("{request_id}.{extension}"));
+    fs::write(&path, bytes)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(path)
+}
+
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn should_import_zip_request(request: &RequestData) -> bool {
+    request.zip_name.is_some()
+        && request.pdf_path.is_none()
+        && request.repair.is_none()
+        && request.login.is_none()
+        && request.update.is_none()
+        && request.re_download.is_none()
+        && request.convert.is_none()
+        && request.add.is_none()
+}
+
+fn import_uploaded_zip(
+    store: &Store,
+    request: &RequestData,
+    data_dir: &str,
+    pdf_dir: &str,
+    host_name: &str,
+) -> Result<String> {
+    let archive_path =
+        queued_zip_path(request, pdf_dir).context("queued ZIP upload is missing from pdf/")?;
+    let file = stdfs::File::open(&archive_path)
+        .with_context(|| format!("failed to open zip archive {}", archive_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .with_context(|| format!("invalid zip {}", archive_path.display()))?;
+    let metadata = read_zip_metadata(&mut archive)?;
+
+    extract_zip_payload(&mut archive, Path::new(data_dir), &metadata.site_name)?;
+    import_site_records_from_tree(
+        store,
+        &PathBuf::from(data_dir).join(&metadata.site_name),
+        &metadata.site_name,
+    )?;
+    merge_zip_images(store, &metadata)?;
+    renderer::refresh_image_manifests(store, data_dir)?;
+    renderer::render_site_from_store(store, &metadata.site_name, data_dir, host_name)?;
+
+    Ok(format!(
+        "imported {}",
+        request
+            .zip_name
+            .clone()
+            .unwrap_or_else(|| metadata.site_name.clone())
+    ))
+}
+
+fn queued_zip_path(request: &RequestData, pdf_dir: &str) -> Option<PathBuf> {
+    request.zip_name.as_ref()?;
+    let path = PathBuf::from(pdf_dir).join(format!("{}.zip", request.request_id));
+    path.exists().then_some(path)
+}
+
+fn read_zip_metadata<R>(archive: &mut zip::ZipArchive<R>) -> Result<ZipImportMetadata>
+where
+    R: Read + std::io::Seek,
+{
+    let mut metadata = String::new();
+    archive
+        .by_name("data.json")
+        .context("zip archive is missing data.json")?
+        .read_to_string(&mut metadata)
+        .context("failed to read zip data.json")?;
+    let metadata: ZipImportMetadata =
+        serde_json::from_str(&metadata).context("failed to parse zip data.json")?;
+    if metadata.site_name.trim().is_empty() {
+        anyhow::bail!("zip data.json is missing site_name");
+    }
+    Ok(metadata)
+}
+
+fn extract_zip_payload<R>(
+    archive: &mut zip::ZipArchive<R>,
+    data_dir: &Path,
+    site_name: &str,
+) -> Result<()>
+where
+    R: Read + std::io::Seek,
+{
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        if entry.is_dir() {
+            continue;
+        }
+
+        let name = entry.name().to_string();
+        if name == "data.json" {
+            continue;
+        }
+
+        let relative = sanitized_archive_path(&name)?;
+        let Some(root) = relative
+            .components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str())
+        else {
+            continue;
+        };
+        if root != site_name && root != "images" {
+            continue;
+        }
+
+        let target = data_dir.join(&relative);
+        if let Some(parent) = target.parent() {
+            stdfs::create_dir_all(parent)?;
+        }
+        let mut output = stdfs::File::create(&target)
+            .with_context(|| format!("failed to create extracted file {}", target.display()))?;
+        std::io::copy(&mut entry, &mut output)
+            .with_context(|| format!("failed to extract {}", target.display()))?;
+    }
+    Ok(())
+}
+
+fn sanitized_archive_path(name: &str) -> Result<PathBuf> {
+    let path = Path::new(name);
+    let mut clean = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => clean.push(part),
+            std::path::Component::CurDir => {}
+            _ => anyhow::bail!("unsupported zip entry path: {name}"),
+        }
+    }
+    Ok(clean)
+}
+
+fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str) -> Result<usize> {
+    if !site_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut count = 0;
+    for entry in stdfs::read_dir(site_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let work_key = entry.file_name().to_string_lossy().to_string();
+        let raw_path = entry.path().join("raw").join("raw.json");
+        let alt_path = entry.path().join("data.json");
+        let payload_path = if raw_path.exists() {
+            raw_path
+        } else if alt_path.exists() {
+            alt_path
+        } else {
+            continue;
+        };
+
+        let raw_json: Value = serde_json::from_reader(
+            stdfs::File::open(&payload_path)
+                .with_context(|| format!("failed to open {}", payload_path.display()))?,
+        )
+        .with_context(|| format!("failed to parse {}", payload_path.display()))?;
+        store.upsert_work(&work_record_from_json(site_name, &work_key, raw_json))?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+fn work_record_from_json(site: &str, work_key: &str, raw_json: Value) -> WorkRecord {
+    WorkRecord {
+        site: site.to_string(),
+        work_key: work_key.to_string(),
+        title: raw_json
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        author: raw_json
+            .get("author")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        author_id: raw_json
+            .get("author_id")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        author_url: raw_json
+            .get("author_url")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        r#type: raw_json
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        serialization: raw_json
+            .get("serialization")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        caption: raw_json
+            .get("caption")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        create_date: raw_json
+            .get("createDate")
+            .and_then(|value| value.as_str())
+            .or_else(|| raw_json.get("create_date").and_then(|value| value.as_str()))
+            .unwrap_or_default()
+            .to_string(),
+        update_date: raw_json
+            .get("updateDate")
+            .and_then(|value| value.as_str())
+            .or_else(|| raw_json.get("update_date").and_then(|value| value.as_str()))
+            .unwrap_or_default()
+            .to_string(),
+        raw_json,
+    }
+}
+
+fn merge_zip_images(store: &Store, metadata: &ZipImportMetadata) -> Result<()> {
+    for (logical_name, hash) in &metadata.images {
+        let ext = Path::new(logical_name)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let kind = if logical_name.to_ascii_lowercase().contains("cover") {
+            "cover"
+        } else {
+            "image"
+        };
+        store.upsert_image(&ImageRecord {
+            logical_name: logical_name.clone(),
+            hash: hash.clone(),
+            ext,
+            kind: kind.to_string(),
+        })?;
+    }
+    Ok(())
 }
 
 async fn ensure_runtime_dirs(config: &AppConfig) -> Result<()> {
@@ -643,30 +935,6 @@ async fn ensure_runtime_dirs(config: &AppConfig) -> Result<()> {
     fs::create_dir_all(config.data_images_dir()).await?;
     fs::create_dir_all(config.data_reader_dir()).await?;
     fs::create_dir_all(&config.archive_dir).await?;
-    Ok(())
-}
-
-async fn write_minimal_frontend(config: &AppConfig) -> Result<()> {
-    let index = config.data_dir_path().join("index.html");
-    if !index.exists() {
-        fs::write(
-            &index,
-            b"<html><body><h1>Narou Bridge API</h1></body></html>",
-        )
-        .await?;
-    }
-    let reader = config.data_reader_dir().join("index.html");
-    if !reader.exists() {
-        fs::write(
-            &reader,
-            b"<html><body><h1>Reader removed</h1></body></html>",
-        )
-        .await?;
-    }
-    let manifest = config.data_dir_path().join("manifest.json");
-    if !manifest.exists() {
-        fs::write(&manifest, b"{} ").await?;
-    }
     Ok(())
 }
 
@@ -811,5 +1079,59 @@ mod tests {
         };
         let action = resolve_request_action(&req).expect("action");
         assert_eq!(action, ("convert".to_string(), "narou".to_string()));
+    }
+
+    #[test]
+    fn resolve_request_action_accepts_zip_only_upload() {
+        let req = RequestData {
+            request_id: "req-zip".to_string(),
+            zip_name: Some("legacy.zip".to_string()),
+            ..RequestData::default()
+        };
+        let action = resolve_request_action(&req).expect("action");
+        assert_eq!(action, ("convert".to_string(), "zip".to_string()));
+    }
+
+    #[test]
+    fn normalize_task_input_trims_and_drops_empty_values() {
+        let input = TaskInput {
+            request_id: Some("  req-1  ".to_string()),
+            pdf_name: Some("  sample.pdf  ".to_string()),
+            zip_name: Some("   ".to_string()),
+            add: Some("\nhttps://example.com/work\t".to_string()),
+            ..TaskInput::default()
+        };
+        let normalized = normalize_task_input(input);
+        assert_eq!(normalized.request_id.as_deref(), Some("req-1"));
+        assert_eq!(normalized.pdf_name.as_deref(), Some("sample.pdf"));
+        assert_eq!(normalized.zip_name, None);
+        assert_eq!(normalized.add.as_deref(), Some("https://example.com/work"));
+    }
+
+    #[test]
+    fn should_import_zip_request_only_for_zip_only_payloads() {
+        let zip_only = RequestData {
+            request_id: "req-zip".to_string(),
+            zip_name: Some("legacy.zip".to_string()),
+            ..RequestData::default()
+        };
+        assert!(should_import_zip_request(&zip_only));
+
+        let with_action = RequestData {
+            add: Some("https://example.com/work".to_string()),
+            ..zip_only.clone()
+        };
+        assert!(!should_import_zip_request(&with_action));
+    }
+
+    #[test]
+    fn sanitized_archive_path_rejects_parent_segments() {
+        assert!(sanitized_archive_path("../outside.txt").is_err());
+        assert_eq!(
+            sanitized_archive_path("narou\\work\\raw\\raw.json")
+                .expect("path")
+                .to_string_lossy(),
+            "narou\\work\\raw\\raw.json"
+        );
     }
 }

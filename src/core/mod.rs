@@ -4,4 +4,5 @@ pub mod model;
 pub mod registry;
 pub mod renderer;
 pub mod runtime;
+pub mod static_bootstrap;
 pub mod storage;
