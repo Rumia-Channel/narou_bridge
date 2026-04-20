@@ -1,28 +1,31 @@
-use crate::core::migration::{migrate_legacy_tree, MigrationPlan};
-use crate::core::model::{AccountFile, AccountRecord, AppConfig, RequestData, TaskRecord, TaskStatus, WorkRecord};
+use crate::core::migration::{MigrationPlan, migrate_legacy_tree};
+use crate::core::model::{
+    AccountFile, AccountRecord, AppConfig, RequestData, TaskRecord, TaskStatus, WorkRecord,
+};
 use crate::core::storage::Store;
 use crate::sites::SiteRegistry;
 use anyhow::{Context, Result};
-use bytes::Bytes;
+use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::{header::CONTENT_TYPE, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
-use axum::Router;
+use bytes::Bytes;
 use serde::Deserialize;
-use serde_json::{json, Value};
-use tracing::info;
+use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
+use tracing::{error, info, warn};
 
 #[derive(Clone)]
 pub struct RuntimeState {
     pub config: AppConfig,
     pub store: Arc<Mutex<Store>>,
     pub registry: Arc<SiteRegistry>,
+    pub worker_notify: Arc<Notify>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,16 +83,25 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
         config: config.clone(),
         store: Arc::new(Mutex::new(store)),
         registry: Arc::new(registry),
+        worker_notify: Arc::new(Notify::new()),
     };
 
     ensure_runtime_dirs(&state.config).await?;
     write_minimal_frontend(&state.config).await?;
+    recover_queued_runtime_state(&state).await?;
+    sync_queue_state(&state).await?;
+    tokio::spawn(worker_loop(state.clone()));
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/tasks", get(list_tasks))
         .route("/api/works", get(list_works_query))
-        .route("/api/account", get(list_accounts_query).post(upload_account_query).delete(delete_account_query))
+        .route(
+            "/api/account",
+            get(list_accounts_query)
+                .post(upload_account_query)
+                .delete(delete_account_query),
+        )
         .route("/api/account/switch", post(switch_account_query))
         .route("/api/account/rename", post(rename_account_query))
         .route("/api/", post(handle_post))
@@ -99,7 +111,11 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
         .route("/reader/", get(reader))
         .with_state(state.clone());
 
-    let addr: SocketAddr = state.config.bind_addr.parse().context("invalid bind address")?;
+    let addr: SocketAddr = state
+        .config
+        .bind_addr
+        .parse()
+        .context("invalid bind address")?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(bind_addr = %state.config.bind_addr, host_name = %state.config.host_name, "http server listening");
     axum::serve(listener, app).await.context("server failed")?;
@@ -114,7 +130,10 @@ async fn root(State(state): State<RuntimeState>) -> Html<String> {
     Html(render_root_page(&state.registry.site_names()))
 }
 
-async fn reader(State(state): State<RuntimeState>, Query(query): Query<ReaderQuery>) -> Html<String> {
+async fn reader(
+    State(state): State<RuntimeState>,
+    Query(query): Query<ReaderQuery>,
+) -> Html<String> {
     let Some(site) = query.site else {
         return Html(render_reader_error("site is required"));
     };
@@ -142,7 +161,10 @@ async fn list_tasks(State(state): State<RuntimeState>) -> impl IntoResponse {
     }
 }
 
-async fn list_works_query(State(state): State<RuntimeState>, Query(query): Query<WorksQuery>) -> impl IntoResponse {
+async fn list_works_query(
+    State(state): State<RuntimeState>,
+    Query(query): Query<WorksQuery>,
+) -> impl IntoResponse {
     let store = state.store.lock().await;
     match store.list_works(query.site.as_deref()) {
         Ok(works) => Json(json!({"site": query.site, "works": works})).into_response(),
@@ -150,7 +172,10 @@ async fn list_works_query(State(state): State<RuntimeState>, Query(query): Query
     }
 }
 
-async fn list_accounts_query(State(state): State<RuntimeState>, Query(query): Query<AccountQuery>) -> impl IntoResponse {
+async fn list_accounts_query(
+    State(state): State<RuntimeState>,
+    Query(query): Query<AccountQuery>,
+) -> impl IntoResponse {
     let Some(site) = query.site else {
         return create_error(StatusCode::BAD_REQUEST, "site is required".to_string());
     };
@@ -161,7 +186,11 @@ async fn list_accounts_query(State(state): State<RuntimeState>, Query(query): Qu
     }
 }
 
-async fn upload_account_query(State(state): State<RuntimeState>, Query(query): Query<AccountQuery>, Json(payload): Json<AccountInput>) -> impl IntoResponse {
+async fn upload_account_query(
+    State(state): State<RuntimeState>,
+    Query(query): Query<AccountQuery>,
+    Json(payload): Json<AccountInput>,
+) -> impl IntoResponse {
     let Some(site) = query.site else {
         return create_error(StatusCode::BAD_REQUEST, "site is required".to_string());
     };
@@ -169,7 +198,11 @@ async fn upload_account_query(State(state): State<RuntimeState>, Query(query): Q
         return create_error(StatusCode::BAD_REQUEST, "file is required".to_string());
     };
     let account_name = payload.name.unwrap_or_else(random_account_name);
-    let saved_name = if account_name.ends_with(".json") { account_name } else { format!("{account_name}.json") };
+    let saved_name = if account_name.ends_with(".json") {
+        account_name
+    } else {
+        format!("{account_name}.json")
+    };
     let account_json: AccountFile = serde_json::from_str(&file_text).unwrap_or_default();
     let dir = state.config.cookie_dir_path(&site);
     if let Err(err) = fs::create_dir_all(&dir).await {
@@ -194,14 +227,21 @@ async fn upload_account_query(State(state): State<RuntimeState>, Query(query): Q
     Json(json!({"status": "success", "message": format!("Account {saved_name} uploaded successfully"), "site": site, "account": saved_name})).into_response()
 }
 
-async fn delete_account_query(State(state): State<RuntimeState>, Query(query): Query<AccountQuery>) -> impl IntoResponse {
+async fn delete_account_query(
+    State(state): State<RuntimeState>,
+    Query(query): Query<AccountQuery>,
+) -> impl IntoResponse {
     let Some(site) = query.site else {
         return create_error(StatusCode::BAD_REQUEST, "site is required".to_string());
     };
     let Some(account) = query.account else {
         return create_error(StatusCode::BAD_REQUEST, "account is required".to_string());
     };
-    let file_name = if account.ends_with(".json") { account } else { format!("{account}.json") };
+    let file_name = if account.ends_with(".json") {
+        account
+    } else {
+        format!("{account}.json")
+    };
     let path = state.config.cookie_dir_path(&site).join(&file_name);
     match fs::remove_file(&path).await {
         Ok(_) => Json(json!({"status": "success", "message": format!("Account {file_name} deleted successfully")})).into_response(),
@@ -210,14 +250,22 @@ async fn delete_account_query(State(state): State<RuntimeState>, Query(query): Q
     }
 }
 
-async fn switch_account_query(State(state): State<RuntimeState>, Query(query): Query<AccountQuery>, Json(payload): Json<AccountSwitchPayload>) -> impl IntoResponse {
+async fn switch_account_query(
+    State(state): State<RuntimeState>,
+    Query(query): Query<AccountQuery>,
+    Json(payload): Json<AccountSwitchPayload>,
+) -> impl IntoResponse {
     let Some(site) = query.site else {
         return create_error(StatusCode::BAD_REQUEST, "site is required".to_string());
     };
     let Some(account) = payload.account else {
         return create_error(StatusCode::BAD_REQUEST, "account is required".to_string());
     };
-    let name = if account.ends_with(".json") { account } else { format!("{account}.json") };
+    let name = if account.ends_with(".json") {
+        account
+    } else {
+        format!("{account}.json")
+    };
     let dir = state.config.cookie_dir_path(&site);
     let source = dir.join(&name);
     let target = dir.join("login.json");
@@ -225,7 +273,10 @@ async fn switch_account_query(State(state): State<RuntimeState>, Query(query): Q
         return create_error(StatusCode::NOT_FOUND, format!("Account {name} not found"));
     }
     if target.exists() {
-        let backup = dir.join(format!("login.json.backup.{}", chrono::Utc::now().format("%Y%m%d%H%M%S")));
+        let backup = dir.join(format!(
+            "login.json.backup.{}",
+            chrono::Utc::now().format("%Y%m%d%H%M%S")
+        ));
         let _ = fs::rename(&target, &backup).await;
     }
     if let Err(err) = fs::rename(&source, &target).await {
@@ -234,7 +285,11 @@ async fn switch_account_query(State(state): State<RuntimeState>, Query(query): Q
     Json(json!({"status": "success", "message": format!("Switched to account {name}"), "site": site, "account": name})).into_response()
 }
 
-async fn rename_account_query(State(state): State<RuntimeState>, Query(query): Query<AccountQuery>, Json(payload): Json<AccountRenamePayload>) -> impl IntoResponse {
+async fn rename_account_query(
+    State(state): State<RuntimeState>,
+    Query(query): Query<AccountQuery>,
+    Json(payload): Json<AccountRenamePayload>,
+) -> impl IntoResponse {
     let Some(site) = query.site else {
         return create_error(StatusCode::BAD_REQUEST, "site is required".to_string());
     };
@@ -244,10 +299,19 @@ async fn rename_account_query(State(state): State<RuntimeState>, Query(query): Q
     let Some(new_name_raw) = payload.new_name else {
         return create_error(StatusCode::BAD_REQUEST, "new_name is required".to_string());
     };
-    let old_name = if old_name.ends_with(".json") { old_name } else { format!("{old_name}.json") };
-    let new_name = if new_name_raw.ends_with(".json") { new_name_raw } else { format!("{new_name_raw}.json") };
+    let old_name = if old_name.ends_with(".json") {
+        old_name
+    } else {
+        format!("{old_name}.json")
+    };
+    let new_name = if new_name_raw.ends_with(".json") {
+        new_name_raw
+    } else {
+        format!("{new_name_raw}.json")
+    };
     if old_name == new_name {
-        return Json(json!({"status": "success", "message": "Account name unchanged"})).into_response();
+        return Json(json!({"status": "success", "message": "Account name unchanged"}))
+            .into_response();
     }
     let dir = state.config.cookie_dir_path(&site);
     let old_path = dir.join(&old_name);
@@ -256,7 +320,10 @@ async fn rename_account_query(State(state): State<RuntimeState>, Query(query): Q
         return create_error(StatusCode::NOT_FOUND, "Account not found".to_string());
     }
     if new_path.exists() {
-        return create_error(StatusCode::CONFLICT, format!("Account name '{new_name}' already exists"));
+        return create_error(
+            StatusCode::CONFLICT,
+            format!("Account name '{new_name}' already exists"),
+        );
     }
     if let Err(err) = fs::rename(&old_path, &new_path).await {
         return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
@@ -264,7 +331,11 @@ async fn rename_account_query(State(state): State<RuntimeState>, Query(query): Q
     Json(json!({"status": "success", "message": format!("Account renamed from {old_name} to {new_name}"), "site": site, "old_name": old_name, "new_name": new_name})).into_response()
 }
 
-async fn handle_post(State(state): State<RuntimeState>, headers: HeaderMap, body: Bytes) -> impl IntoResponse {
+async fn handle_post(
+    State(state): State<RuntimeState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
     let payload = match parse_task_input(&headers, &body) {
         Ok(payload) => payload,
         Err(message) => return create_error(StatusCode::BAD_REQUEST, message),
@@ -290,7 +361,12 @@ async fn handle_post(State(state): State<RuntimeState>, headers: HeaderMap, body
 
     let (action, param) = match resolve_request_action(&req_data) {
         Some(v) => v,
-        None => return create_error(StatusCode::BAD_REQUEST, "No valid action found in request data".to_string()),
+        None => {
+            return create_error(
+                StatusCode::BAD_REQUEST,
+                "No valid action found in request data".to_string(),
+            );
+        }
     };
 
     let task = TaskRecord {
@@ -306,25 +382,33 @@ async fn handle_post(State(state): State<RuntimeState>, headers: HeaderMap, body
     };
 
     let store = state.store.lock().await;
-    let task_id = match store.enqueue_task(&task) {
-        Ok(id) => id,
+    match store.enqueue_task(&task) {
+        Ok(_) => {}
         Err(err) => {
             return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
         }
-    };
+    }
 
     drop(store);
-    if let Err(err) = execute_queued_task(&state, task_id, &task).await {
-        let store = state.store.lock().await;
-        let _ = store.mark_task_status(task_id, TaskStatus::Failed, Some(err.to_string()), &now_string());
-        return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+    if let Err(err) = sync_queue_state(&state).await {
+        warn!(request_id = %request_id, error = %err, "failed to persist queue/task.json after enqueue");
     }
+    state.worker_notify.notify_one();
 
     Json(json!({"status": "queued", "request_id": request_id})).into_response()
 }
 
-async fn migrate(State(state): State<RuntimeState>, Query(query): Query<MigrationQuery>) -> impl IntoResponse {
-    let source_root = query.source_root.unwrap_or_else(|| state.config.legacy_root.clone().unwrap_or_else(|| "sample".to_string()));
+async fn migrate(
+    State(state): State<RuntimeState>,
+    Query(query): Query<MigrationQuery>,
+) -> impl IntoResponse {
+    let source_root = query.source_root.unwrap_or_else(|| {
+        state
+            .config
+            .legacy_root
+            .clone()
+            .unwrap_or_else(|| "sample".to_string())
+    });
     let plan = MigrationPlan {
         source_root: PathBuf::from(&source_root),
         archive_root: PathBuf::from(&state.config.archive_dir),
@@ -346,17 +430,29 @@ fn resolve_request_action(req: &RequestData) -> Option<(String, String)> {
     if req.pdf_path.is_some() {
         return Some(("convert".to_string(), "narou".to_string()));
     }
-    if let Some(v) = req.repair.clone() { return Some(("repair".to_string(), v)); }
-    if let Some(v) = req.login.clone() { return Some(("login".to_string(), v)); }
-    if let Some(v) = req.update.clone() { return Some(("update".to_string(), v)); }
-    if let Some(v) = req.re_download.clone() { return Some(("re_download".to_string(), v)); }
-    if let Some(v) = req.convert.clone() { return Some(("convert".to_string(), v)); }
-    if let Some(v) = req.add.clone() { return Some(("download".to_string(), v)); }
+    if let Some(v) = req.repair.clone() {
+        return Some(("repair".to_string(), v));
+    }
+    if let Some(v) = req.login.clone() {
+        return Some(("login".to_string(), v));
+    }
+    if let Some(v) = req.update.clone() {
+        return Some(("update".to_string(), v));
+    }
+    if let Some(v) = req.re_download.clone() {
+        return Some(("re_download".to_string(), v));
+    }
+    if let Some(v) = req.convert.clone() {
+        return Some(("convert".to_string(), v));
+    }
+    if let Some(v) = req.add.clone() {
+        return Some(("download".to_string(), v));
+    }
     None
 }
 
 async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskRecord) -> Result<()> {
-    let mut store = state.store.lock().await;
+    let mut store = Store::open(state.config.db_path_buf())?;
     let context = crate::sites::SiteActionContext {
         host_name: state.config.host_name.clone(),
         data_dir: state.config.data_dir.clone(),
@@ -367,11 +463,29 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
         request: task.request.clone(),
     };
 
-    let results = state.registry.dispatch(&task.action, &task.param, &context, &mut store);
+    let results = state
+        .registry
+        .dispatch(&task.action, &task.param, &context, &mut store);
     let has_success = results.iter().any(|r| r.status == "success");
     let has_failed = results.iter().any(|r| r.status == "failed");
-    let status = if has_success { TaskStatus::Succeeded } else if has_failed { TaskStatus::Failed } else { TaskStatus::Skipped };
-    let error = if has_failed { Some(results.iter().find(|r| r.status == "failed").map(|r| r.message.clone()).unwrap_or_default()) } else { None };
+    let status = if has_success {
+        TaskStatus::Succeeded
+    } else if has_failed {
+        TaskStatus::Failed
+    } else {
+        TaskStatus::Skipped
+    };
+    let error = if has_failed {
+        Some(
+            results
+                .iter()
+                .find(|r| r.status == "failed")
+                .map(|r| r.message.clone())
+                .unwrap_or_default(),
+        )
+    } else {
+        None
+    };
     let _ = store.mark_task_status(task_id, status, error, &now_string());
     Ok(())
 }
@@ -469,7 +583,12 @@ fn render_root_page(sites: &[String]) -> String {
 
 fn render_reader_page(host_name: &str, work: &WorkRecord) -> String {
     let raw = work.raw_json.to_string();
-    let url = format!("{}/reader/?site={}&nid={}", host_name.trim_end_matches('/'), work.site, work.work_key);
+    let url = format!(
+        "{}/reader/?site={}&nid={}",
+        host_name.trim_end_matches('/'),
+        work.site,
+        work.work_key
+    );
     format!(
         r#"<!doctype html>
 <html>
@@ -530,11 +649,19 @@ async fn ensure_runtime_dirs(config: &AppConfig) -> Result<()> {
 async fn write_minimal_frontend(config: &AppConfig) -> Result<()> {
     let index = config.data_dir_path().join("index.html");
     if !index.exists() {
-        fs::write(&index, b"<html><body><h1>Narou Bridge API</h1></body></html>").await?;
+        fs::write(
+            &index,
+            b"<html><body><h1>Narou Bridge API</h1></body></html>",
+        )
+        .await?;
     }
     let reader = config.data_reader_dir().join("index.html");
     if !reader.exists() {
-        fs::write(&reader, b"<html><body><h1>Reader removed</h1></body></html>").await?;
+        fs::write(
+            &reader,
+            b"<html><body><h1>Reader removed</h1></body></html>",
+        )
+        .await?;
     }
     let manifest = config.data_dir_path().join("manifest.json");
     if !manifest.exists() {
@@ -547,8 +674,15 @@ async fn unique_name_path(dir: &Path, name: &str) -> PathBuf {
     let mut candidate = dir.join(name);
     let mut counter = 1;
     while candidate.exists() {
-        let stem = Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or(name);
-        let ext = Path::new(name).extension().and_then(|s| s.to_str()).map(|s| format!(".{s}")).unwrap_or_default();
+        let stem = Path::new(name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(name);
+        let ext = Path::new(name)
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| format!(".{s}"))
+            .unwrap_or_default();
         candidate = dir.join(format!("{stem}_{counter}{ext}"));
         counter += 1;
     }
@@ -571,4 +705,111 @@ fn random_request_id() -> String {
 
 fn now_string() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+async fn recover_queued_runtime_state(state: &RuntimeState) -> Result<()> {
+    let recovered = {
+        let store = state.store.lock().await;
+        store.requeue_running_tasks(&now_string())?
+    };
+    if recovered > 0 {
+        warn!(
+            count = recovered,
+            "re-queued tasks left in running state from a previous process"
+        );
+    }
+    Ok(())
+}
+
+async fn sync_queue_state(state: &RuntimeState) -> Result<()> {
+    let task_state = {
+        let store = state.store.lock().await;
+        store.task_state()?
+    };
+    let payload = serde_json::to_vec_pretty(&task_state)?;
+    fs::write(state.config.queue_task_json_path(), payload)
+        .await
+        .context("failed to write queue/task.json")?;
+    Ok(())
+}
+
+async fn worker_loop(state: RuntimeState) {
+    loop {
+        let task = match claim_next_task(&state).await {
+            Ok(task) => task,
+            Err(err) => {
+                error!(error = %err, "failed to claim queued task");
+                state.worker_notify.notified().await;
+                continue;
+            }
+        };
+
+        let Some(task) = task else {
+            state.worker_notify.notified().await;
+            continue;
+        };
+
+        if let Err(err) = sync_queue_state(&state).await {
+            error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to persist queue/task.json for running task");
+        }
+
+        if let Err(err) = execute_queued_task(&state, task.id, &task).await {
+            error!(task_id = task.id, request_id = %task.request_id, error = %err, "queued task failed with runtime error");
+            let store = state.store.lock().await;
+            if let Err(mark_err) = store.mark_task_status(
+                task.id,
+                TaskStatus::Failed,
+                Some(err.to_string()),
+                &now_string(),
+            ) {
+                error!(task_id = task.id, request_id = %task.request_id, error = %mark_err, "failed to persist failed task status");
+            }
+        }
+
+        if let Err(err) = sync_queue_state(&state).await {
+            error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to persist queue/task.json after task completion");
+        }
+    }
+}
+
+async fn claim_next_task(state: &RuntimeState) -> Result<Option<TaskRecord>> {
+    let store = state.store.lock().await;
+    store.claim_next_queued_task(&now_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_with_actions() -> RequestData {
+        RequestData {
+            request_id: "req-1".to_string(),
+            repair: Some("repair-site".to_string()),
+            login: Some("login-site".to_string()),
+            update: Some("update-site".to_string()),
+            re_download: Some("re-download-site".to_string()),
+            convert: Some("convert-site".to_string()),
+            add: Some("https://example.com/work".to_string()),
+            ..RequestData::default()
+        }
+    }
+
+    #[test]
+    fn resolve_request_action_uses_expected_priority() {
+        let req = request_with_actions();
+        let action = resolve_request_action(&req).expect("action");
+        assert_eq!(action, ("repair".to_string(), "repair-site".to_string()));
+    }
+
+    #[test]
+    fn resolve_request_action_prefers_pdf_conversion() {
+        let req = RequestData {
+            request_id: "req-1".to_string(),
+            pdf_path: Some("input.pdf".to_string()),
+            repair: Some("repair-site".to_string()),
+            ..RequestData::default()
+        };
+        let action = resolve_request_action(&req).expect("action");
+        assert_eq!(action, ("convert".to_string(), "narou".to_string()));
+    }
 }

@@ -50,6 +50,10 @@ impl AppConfig {
     pub fn pdf_dir_path(&self) -> std::path::PathBuf {
         std::path::PathBuf::from(&self.pdf_dir)
     }
+
+    pub fn queue_task_json_path(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.queue_dir).join("task.json")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -1,5 +1,5 @@
 use crate::core::model::RequestData;
-use crate::sites::{narou, pixiv, SiteActionContext, SiteActionResult, SiteRegistry};
+use crate::sites::{SiteActionContext, SiteActionResult, SiteRegistry, narou, pixiv};
 
 pub fn build_registry() -> SiteRegistry {
     SiteRegistry::new(vec![pixiv::site(), narou::site()])

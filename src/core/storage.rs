@@ -1,9 +1,11 @@
 use crate::core::model::{
-    AccountRecord, ImageRecord, MigrationSummary, RequestData, TaskRecord, TaskStatus, WorkRecord,
+    AccountRecord, ImageRecord, MigrationSummary, RequestData, TaskRecord, TaskState, TaskStatus,
+    WorkRecord,
 };
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
+use std::time::Duration;
 
 pub struct Store {
     conn: Connection,
@@ -12,6 +14,19 @@ pub struct Store {
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let conn = Connection::open(path).context("failed to open sqlite database")?;
+        conn.busy_timeout(Duration::from_secs(5))
+            .context("failed to configure sqlite busy timeout")?;
+        let store = Self { conn };
+        store.init_schema()?;
+        Ok(store)
+    }
+
+    #[cfg(test)]
+    pub fn open_in_memory() -> Result<Self> {
+        let conn =
+            Connection::open_in_memory().context("failed to open in-memory sqlite database")?;
+        conn.busy_timeout(Duration::from_secs(5))
+            .context("failed to configure sqlite busy timeout")?;
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -102,22 +117,7 @@ impl Store {
             r#"SELECT id, request_id, action, param, request_json, status, error, created_at, updated_at
                FROM tasks ORDER BY id ASC"#,
         )?;
-        let rows = stmt.query_map([], |row| {
-            let request_json: String = row.get(4)?;
-            let request: RequestData = serde_json::from_str(&request_json).unwrap_or_default();
-            let status_str: String = row.get(5)?;
-            Ok(TaskRecord {
-                id: row.get(0)?,
-                request_id: row.get(1)?,
-                action: row.get(2)?,
-                param: row.get(3)?,
-                request,
-                status: parse_status(&status_str),
-                error: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
-            })
-        })?;
+        let rows = stmt.query_map([], task_record_from_row)?;
         let mut tasks = Vec::new();
         for row in rows {
             tasks.push(row?);
@@ -323,6 +323,72 @@ impl Store {
         Ok(())
     }
 
+    pub fn next_queued_task(&self) -> Result<Option<TaskRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"SELECT id, request_id, action, param, request_json, status, error, created_at, updated_at
+               FROM tasks WHERE status = 'queued' ORDER BY id ASC LIMIT 1"#,
+        )?;
+        let mut rows = stmt.query([])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(task_record_from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn current_running_task(&self) -> Result<Option<TaskRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"SELECT id, request_id, action, param, request_json, status, error, created_at, updated_at
+               FROM tasks WHERE status = 'running' ORDER BY id ASC LIMIT 1"#,
+        )?;
+        let mut rows = stmt.query([])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(task_record_from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn claim_next_queued_task(&self, updated_at: &str) -> Result<Option<TaskRecord>> {
+        if self.current_running_task()?.is_some() {
+            return Ok(None);
+        }
+
+        let Some(mut task) = self.next_queued_task()? else {
+            return Ok(None);
+        };
+
+        self.mark_task_status(task.id, TaskStatus::Running, None, updated_at)?;
+        task.status = TaskStatus::Running;
+        task.error = None;
+        task.updated_at = updated_at.to_string();
+        Ok(Some(task))
+    }
+
+    pub fn requeue_running_tasks(&self, updated_at: &str) -> Result<usize> {
+        let changed = self.conn.execute(
+            r#"UPDATE tasks
+               SET status = 'queued', error = NULL, updated_at = ?1
+               WHERE status = 'running'"#,
+            params![updated_at],
+        )?;
+        Ok(changed)
+    }
+
+    pub fn task_state(&self) -> Result<TaskState> {
+        let mut state = TaskState::default();
+        for task in self.list_tasks()? {
+            match task.status {
+                TaskStatus::Running => {
+                    if state.current_task.is_none() {
+                        state.current_task = Some(task.request);
+                    }
+                }
+                TaskStatus::Queued => state.queue.push(task.request),
+                TaskStatus::Succeeded | TaskStatus::Failed | TaskStatus::Skipped => {}
+            }
+        }
+        Ok(state)
+    }
+
     pub fn count_tasks(&self) -> Result<i64> {
         let count: i64 = self
             .conn
@@ -377,5 +443,116 @@ fn parse_status(value: &str) -> TaskStatus {
         "failed" => TaskStatus::Failed,
         "skipped" => TaskStatus::Skipped,
         _ => TaskStatus::Queued,
+    }
+}
+
+fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
+    let request_json: String = row.get(4)?;
+    let request: RequestData = serde_json::from_str(&request_json).unwrap_or_default();
+    let status_str: String = row.get(5)?;
+    Ok(TaskRecord {
+        id: row.get(0)?,
+        request_id: row.get(1)?,
+        action: row.get(2)?,
+        param: row.get(3)?,
+        request,
+        status: parse_status(&status_str),
+        error: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_task(request_id: &str) -> TaskRecord {
+        TaskRecord {
+            id: 0,
+            request_id: request_id.to_string(),
+            action: "download".to_string(),
+            param: "https://example.com/work".to_string(),
+            request: RequestData {
+                request_id: request_id.to_string(),
+                add: Some("https://example.com/work".to_string()),
+                ..RequestData::default()
+            },
+            status: TaskStatus::Queued,
+            error: None,
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn claim_next_queued_task_marks_single_running_task() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .enqueue_task(&sample_task("req-1"))
+            .expect("enqueue first");
+        store
+            .enqueue_task(&sample_task("req-2"))
+            .expect("enqueue second");
+
+        let claimed = store
+            .claim_next_queued_task("2025-01-01T00:00:01Z")
+            .expect("claim task")
+            .expect("task");
+        assert_eq!(claimed.request_id, "req-1");
+        assert_eq!(claimed.status, TaskStatus::Running);
+
+        let next = store
+            .claim_next_queued_task("2025-01-01T00:00:02Z")
+            .expect("claim again");
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn task_state_mirrors_running_and_queued_requests() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .enqueue_task(&sample_task("req-1"))
+            .expect("enqueue first");
+        store
+            .enqueue_task(&sample_task("req-2"))
+            .expect("enqueue second");
+        let claimed = store
+            .claim_next_queued_task("2025-01-01T00:00:01Z")
+            .expect("claim task");
+        assert!(claimed.is_some());
+
+        let state = store.task_state().expect("task state");
+        assert_eq!(
+            state
+                .current_task
+                .as_ref()
+                .map(|task| task.request_id.as_str()),
+            Some("req-1")
+        );
+        assert_eq!(state.queue.len(), 1);
+        assert_eq!(state.queue[0].request_id, "req-2");
+    }
+
+    #[test]
+    fn requeue_running_tasks_returns_task_to_queue() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .enqueue_task(&sample_task("req-1"))
+            .expect("enqueue task");
+        let claimed = store
+            .claim_next_queued_task("2025-01-01T00:00:01Z")
+            .expect("claim task");
+        assert!(claimed.is_some());
+
+        let changed = store
+            .requeue_running_tasks("2025-01-01T00:00:02Z")
+            .expect("requeue running");
+        assert_eq!(changed, 1);
+
+        let state = store.task_state().expect("task state");
+        assert!(state.current_task.is_none());
+        assert_eq!(state.queue.len(), 1);
+        assert_eq!(state.queue[0].request_id, "req-1");
     }
 }

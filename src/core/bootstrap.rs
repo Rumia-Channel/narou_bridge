@@ -1,5 +1,5 @@
 use crate::core::model::AppConfig;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -271,7 +271,7 @@ impl IniDocument {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_app_config, derive_bind_addr, derive_host_name, resolve_runtime_dir, IniDocument,
+        IniDocument, build_app_config, derive_bind_addr, derive_host_name, resolve_runtime_dir,
     };
     use std::path::Path;
 
