@@ -385,19 +385,18 @@ fn render_work_index(
         .map(|(key, _)| format!("./{key}.html"))
         .unwrap_or_else(|| "./info/index.html".to_string());
 
-    render_page_shell(
-        &format!("{} - {}", work.title, site),
-        &work.title,
-        &format!(
-            r#"<a href="../index.html">site index</a>
+    let page_title = format!("{} - {}", work.title, site);
+    let nav = format!(
+        r#"<a href="../index.html">site index</a>
 <a href="info/index.html">info</a>
 <a href="{reader_url}">reader</a>
 <a href="{first_episode}">first episode</a>"#,
-            reader_url = escape_html(&reader_url(host_name, site, work_key)),
-            first_episode = escape_html(&first_episode)
-        ),
-        &format!(
-            r#"<section class="meta-panel">
+        reader_url = escape_html(&reader_url(host_name, site, work_key)),
+        first_episode = escape_html(&first_episode)
+    );
+    
+    let body = format!(
+        r#"<section class="meta-panel">
   <p class="meta">{author} · {serialization} · {episode_count} 話</p>
   <p class="meta">作者ID: {author_id}</p>
   <p class="meta">作成: {create_date} / 更新: {update_date}</p>
@@ -408,18 +407,27 @@ fn render_work_index(
   <h2>Episodes</h2>
   {episodes}
 </section>"#,
-            author = escape_html(&work.author),
-            serialization = escape_html(&work.serialization),
-            episode_count = episode_count,
-            author_id = escape_html(work.author_id.as_deref().unwrap_or("-")),
-            create_date = escape_html(&work.create_date),
-            update_date = escape_html(&work.update_date),
-            caption = escape_html(&work.caption),
-            tags = tags,
-            episodes = episodes
-        ),
+        author = escape_html(&work.author),
+        serialization = escape_html(&work.serialization),
+        episode_count = episode_count,
+        author_id = escape_html(work.author_id.as_deref().unwrap_or("-")),
+        create_date = escape_html(&work.create_date),
+        update_date = escape_html(&work.update_date),
+        caption = escape_html(&work.caption),
+        tags = tags,
+        episodes = episodes
+    );
+
+    let canonical_url = format_canonical_url(host_name, &format!("/{}/{}/index.html", site, work_key));
+    let og_tags = build_og_tags(
+        &page_title,
+        &work.caption,
+        "article",
+        &canonical_url,
         "",
-    )
+    );
+
+    render_page_shell_with_ogp(&page_title, &work.title, &nav, &body, &og_tags)
 }
 
 fn render_work_info(
@@ -436,18 +444,17 @@ fn render_work_info(
         .map(|(key, _)| format!("../{key}.html"))
         .unwrap_or_else(|| "../index.html".to_string());
 
-    render_page_shell(
-        &format!("{} info", work.title),
-        &format!("{} / info", work.title),
-        &format!(
-            r#"<a href="../index.html">back</a>
+    let page_title = format!("{} info", work.title);
+    let nav = format!(
+        r#"<a href="../index.html">back</a>
 <a href="../{first_episode}">first episode</a>
 <a href="{reader_url}">reader</a>"#,
-            first_episode = escape_html(&first_episode),
-            reader_url = escape_html(&reader_url(host_name, site, work_key))
-        ),
-        &format!(
-            r#"<section class="meta-panel">
+        first_episode = escape_html(&first_episode),
+        reader_url = escape_html(&reader_url(host_name, site, work_key))
+    );
+    
+    let body = format!(
+        r#"<section class="meta-panel">
   <p class="meta">{author} · {serialization} · {work_key}</p>
   <p class="meta">version: {version} / get_date: {get_date}</p>
   <p class="meta">ID: {id} / NID: {nid}</p>
@@ -464,29 +471,38 @@ fn render_work_info(
   <h2>raw.json</h2>
   <pre>{raw_json}</pre>
 </section>"#,
-            author = escape_html(&work.author),
-            serialization = escape_html(&work.serialization),
-            work_key = escape_html(work_key),
-            version = rendered.work.version,
-            get_date = escape_html(&rendered.work.get_date),
-            id = escape_html(&rendered.work.id),
-            nid = escape_html(&rendered.work.nid),
-            url = escape_html(&rendered.work.url),
-            author_id = escape_html(work.author_id.as_deref().unwrap_or("-")),
-            author_url = escape_html(work.author_url.as_deref().unwrap_or("-")),
-            work_type = escape_html(&work.work_type),
-            episode_count = rendered.work.total_episodes,
-            all_episodes = rendered.work.all_episodes,
-            total_characters = work.total_characters,
-            all_characters = work.all_characters,
-            create_date = escape_html(&work.create_date),
-            update_date = escape_html(&work.update_date),
-            caption = escape_html(&work.caption),
-            tags = render_tag_list(&work.all_tags),
-            raw_json = escape_html(&raw_json)
-        ),
+        author = escape_html(&work.author),
+        serialization = escape_html(&work.serialization),
+        work_key = escape_html(work_key),
+        version = rendered.work.version,
+        get_date = escape_html(&rendered.work.get_date),
+        id = escape_html(&rendered.work.id),
+        nid = escape_html(&rendered.work.nid),
+        url = escape_html(&rendered.work.url),
+        author_id = escape_html(work.author_id.as_deref().unwrap_or("-")),
+        author_url = escape_html(work.author_url.as_deref().unwrap_or("-")),
+        work_type = escape_html(&work.work_type),
+        episode_count = rendered.work.total_episodes,
+        all_episodes = rendered.work.all_episodes,
+        total_characters = work.total_characters,
+        all_characters = work.all_characters,
+        create_date = escape_html(&work.create_date),
+        update_date = escape_html(&work.update_date),
+        caption = escape_html(&work.caption),
+        tags = render_tag_list(&work.all_tags),
+        raw_json = escape_html(&raw_json)
+    );
+
+    let canonical_url = format_canonical_url(host_name, &format!("/{}/{}/info/index.html", site, work_key));
+    let og_tags = build_og_tags(
+        &page_title,
+        &work.caption,
+        "article",
+        &canonical_url,
         "",
-    )
+    );
+
+    render_page_shell_with_ogp(&page_title, &format!("{} / info", work.title), &nav, &body, &og_tags)
 }
 
 fn render_episode_page(
@@ -540,7 +556,16 @@ fn render_episode_page(
         postscript_html = postscript_html
     );
 
-    render_page_shell(&page_title, &episode.title, &nav, &body, "")
+    let canonical_url = format_canonical_url(host_name, &format!("/{}/{}/{}.html", site, work_key, episode_key));
+    let og_tags = build_og_tags(
+        &page_title,
+        &episode.introduction,
+        "article",
+        &canonical_url,
+        "",
+    );
+
+    render_page_shell_with_ogp(&page_title, &episode.title, &nav, &body, &og_tags)
 }
 
 fn render_episode_summary_list(
