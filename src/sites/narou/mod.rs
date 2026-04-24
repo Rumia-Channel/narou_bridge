@@ -5,6 +5,7 @@ use crate::sites::{Site, SiteActionContext, SiteActionResult, SiteId};
 use anyhow::{Context, Result, bail};
 use lopdf::Document;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -164,12 +165,8 @@ fn import_pdf_file(
     pdf_dir: &str,
     host_name: &str,
 ) -> Result<WorkRecord> {
-    let work_key = sanitize_key(
-        pdf_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("ncode"),
-    );
+    let extracted_pages = extract_pdf_pages(pdf_path)?;
+    let work_key = derive_pdf_work_key(request, pdf_path, &extracted_pages);
     let title = request.pdf_name.clone().unwrap_or_else(|| work_key.clone());
     let author_id = request.author_id.clone();
     let author_url = request.author_url.clone();
@@ -179,7 +176,6 @@ fn import_pdf_file(
         .unwrap_or_else(|| "narou".to_string());
     let chapter_input = parse_chapter_input(request.chapter.as_deref())?;
     let serialization = normalize_serialization(request.novel_type.as_deref(), &chapter_input);
-    let extracted_pages = extract_pdf_pages(pdf_path)?;
     let now = chrono::Utc::now().to_rfc3339();
     let record = WorkRecord {
         site: "narou".to_string(),
@@ -303,6 +299,135 @@ fn build_raw_json(
         "updateDate": now,
         "episodes": episode_map
     }))
+}
+
+fn derive_pdf_work_key(
+    request: &crate::core::model::RequestData,
+    pdf_path: &Path,
+    pages: &[String],
+) -> String {
+    let author_identity = normalized_identity_component(
+        request
+            .author_id
+            .as_deref()
+            .or(request.author_url.as_deref()),
+    );
+    let title_identity =
+        normalized_identity_component(pdf_identity_title(request, pdf_path).as_deref());
+    let chapter_identity = if author_identity.is_some() && title_identity.is_some() {
+        None
+    } else {
+        normalized_identity_component(request.chapter.as_deref())
+    };
+
+    let mut basis_parts = Vec::new();
+    if let Some(author) = author_identity.as_deref() {
+        basis_parts.push(format!("author:{author}"));
+    }
+    if let Some(title) = title_identity.as_deref() {
+        basis_parts.push(format!("title:{title}"));
+    }
+    if let Some(chapter) = chapter_identity.as_deref() {
+        basis_parts.push(format!("chapter:{chapter}"));
+    }
+    if basis_parts.len() < 2 {
+        basis_parts.push(format!("content:{}", pdf_content_fingerprint(pages)));
+    }
+
+    let slug = build_work_key_slug(
+        author_identity.as_deref(),
+        title_identity.as_deref(),
+        chapter_identity.as_deref(),
+    );
+    let digest = short_hash(&basis_parts.join("\n"));
+    format!("ncode_pdf_{slug}_{digest}")
+}
+
+fn pdf_identity_title(
+    request: &crate::core::model::RequestData,
+    pdf_path: &Path,
+) -> Option<String> {
+    request
+        .pdf_name
+        .as_deref()
+        .and_then(file_stem_string)
+        .or_else(|| {
+            pdf_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+        })
+}
+
+fn file_stem_string(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Path::new(trimmed)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(str::to_string)
+        .or_else(|| Some(trimmed.to_string()))
+}
+
+fn normalized_identity_component(raw: Option<&str>) -> Option<String> {
+    raw.map(|value| {
+        value
+            .trim()
+            .to_lowercase()
+            .chars()
+            .map(|ch| if ch.is_whitespace() { ' ' } else { ch })
+            .collect::<String>()
+    })
+    .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
+    .filter(|value| !value.is_empty())
+}
+
+fn build_work_key_slug(author: Option<&str>, title: Option<&str>, chapter: Option<&str>) -> String {
+    let mut slug = String::new();
+    for part in [author, title, chapter].into_iter().flatten() {
+        if !slug.is_empty() {
+            slug.push('_');
+        }
+        slug.push_str(part);
+        if slug.chars().count() >= 48 {
+            break;
+        }
+    }
+
+    let slug = sanitize_key(&slug);
+    let slug = slug.trim_matches('_');
+    if slug.is_empty() {
+        "import".to_string()
+    } else {
+        slug.chars().take(48).collect()
+    }
+}
+
+fn pdf_content_fingerprint(pages: &[String]) -> String {
+    let mut hasher = Sha256::new();
+    for page in pages {
+        hasher.update(page.as_bytes());
+        hasher.update([0]);
+    }
+    hex_prefix(hasher.finalize())
+}
+
+fn short_hash(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    hex_prefix(hasher.finalize())
+}
+
+fn hex_prefix(bytes: impl AsRef<[u8]>) -> String {
+    bytes
+        .as_ref()
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn sanitize_key(value: &str) -> String {
@@ -658,5 +783,51 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("exceeds PDF page count"));
+    }
+
+    #[test]
+    fn derive_pdf_work_key_ignores_request_id_paths_when_author_and_title_exist() {
+        let request = crate::core::model::RequestData {
+            request_id: "req-1".to_string(),
+            pdf_name: Some("作品タイトル.pdf".to_string()),
+            author_id: Some("author-1".to_string()),
+            author_url: Some("https://example.com/authors/1".to_string()),
+            chapter: Some("1-3:前編,4-5:後編".to_string()),
+            ..Default::default()
+        };
+        let pages = vec!["1ページ".to_string(), "2ページ".to_string()];
+
+        let first = derive_pdf_work_key(&request, Path::new("C:\\queued\\req-1.pdf"), &pages);
+        let second = derive_pdf_work_key(&request, Path::new("C:\\queued\\req-2.pdf"), &pages);
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn derive_pdf_work_key_falls_back_to_content_when_metadata_is_too_sparse() {
+        let request = crate::core::model::RequestData {
+            request_id: "req-1".to_string(),
+            pdf_name: Some("sample.pdf".to_string()),
+            ..Default::default()
+        };
+
+        let first = derive_pdf_work_key(
+            &request,
+            Path::new("C:\\queued\\req-1.pdf"),
+            &["同じ本文".to_string()],
+        );
+        let second = derive_pdf_work_key(
+            &request,
+            Path::new("C:\\queued\\req-2.pdf"),
+            &["同じ本文".to_string()],
+        );
+        let third = derive_pdf_work_key(
+            &request,
+            Path::new("C:\\queued\\req-3.pdf"),
+            &["違う本文".to_string()],
+        );
+
+        assert_eq!(first, second);
+        assert_ne!(first, third);
     }
 }
