@@ -12,6 +12,7 @@ use axum::Router;
 use axum::extract::{FromRequest, Query, Request, State};
 use axum::http::header;
 use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
+use axum::middleware::map_response;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum_extra::extract::Multipart;
@@ -29,7 +30,6 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::sync::{Mutex, Notify};
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{error, info, warn};
 
 const AUTO_UPDATE_STARTUP_DELAY: Duration = Duration::from_secs(30);
@@ -135,10 +135,7 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
             ServeFile::new(data_dir.join("reader").join("index.html")),
         )
         .fallback_service(static_files)
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/html; charset=utf-8"),
-        ))
+        .layer(map_response(ensure_html_utf8_charset))
         .with_state(state.clone());
 
     let addr: SocketAddr = state
@@ -647,6 +644,27 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
 
 fn create_error(status: StatusCode, message: String) -> Response {
     (status, Json(json!({"status": "error", "message": message}))).into_response()
+}
+
+async fn ensure_html_utf8_charset(mut response: Response) -> Response {
+    let should_update = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            let normalized = value.to_ascii_lowercase();
+            normalized.starts_with("text/html") && !normalized.contains("charset=")
+        })
+        .unwrap_or(false);
+
+    if should_update {
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("text/html; charset=utf-8"),
+        );
+    }
+
+    response
 }
 
 async fn parse_task_input(state: &RuntimeState, request: Request) -> Result<TaskInput, String> {
@@ -1647,5 +1665,43 @@ mod tests {
         let err = work_record_from_json("narou", "work", raw_json)
             .expect_err("missing episodes should fail");
         assert!(err.to_string().contains("missing episodes"));
+    }
+
+    #[tokio::test]
+    async fn ensure_html_utf8_charset_updates_html_without_charset() {
+        let mut response = Response::new(axum::body::Body::empty());
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("text/html"),
+        );
+
+        let response = ensure_html_utf8_charset(response).await;
+
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/html; charset=utf-8")
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_html_utf8_charset_leaves_json_content_type_unchanged() {
+        let mut response = Response::new(axum::body::Body::empty());
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+
+        let response = ensure_html_utf8_charset(response).await;
+
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
     }
 }
