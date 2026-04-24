@@ -1,1 +1,1 @@
-pub fn placeholder() {}
+//! Narou repair utilities (delegates to central renderer)

@@ -1,1 +1,1 @@
-pub fn placeholder() {}
+//! Narou conversion utilities (delegates to central renderer)
