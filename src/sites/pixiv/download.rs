@@ -1,28 +1,23 @@
-use crate::core::model::{ImageRecord, WorkRecord};
+use crate::core::model::WorkRecord;
 use crate::core::storage::Store;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::blocking::Client;
-use serde_json::{json, Map, Value};
-use sha2::{Digest, Sha256};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fs;
 use std::path::Path;
-use std::{fs, path::PathBuf};
 use tracing::{info, warn};
 
-use super::fetch::{fetch_body_json, download_image, sleep};
+use super::fetch::{fetch_body_json, sleep};
 use super::{
-    add_ai_tag_if_needed, build_work, check_image_file, dedup_tags, download_cover,
-    extract_comic_series_entries, extract_flat_tags, extract_object_keys, extract_profile_ids,
-    extract_tag_names_from_translation, extract_tag_names_nested, find_image_by_logical_prefix,
-    find_key_recursively, format_image_links, format_ruby, format_survey, format_tags,
-    hash_ids, html_breaks_to_newlines, int_field, last_numeric_segment, load_illust_snapshot,
-    load_legacy_illust_snapshot, now_string, persist_work_record, regex_capture, remove_chapter_tag,
-    save_image_hashed, save_illust_snapshot, sort_episodes_by_create_date, str_field,
-    update_cover_json, url_decode, url_ext, value_to_string, format_jumpuri, format_jump_url,
-    PIXIV_SITE_DOCUMENT_SCOPE, VERSION, ensure_tracked_user, action_enabled,
+    action_enabled, add_ai_tag_if_needed, build_work, dedup_tags, download_cover,
+    ensure_tracked_user, extract_comic_series_entries, extract_flat_tags, extract_object_keys,
+    extract_profile_ids, extract_tag_names_from_translation, extract_tag_names_nested,
+    find_key_recursively, format_image_links, format_jump_url, format_jumpuri, format_ruby,
+    format_survey, html_breaks_to_newlines, int_field, load_illust_snapshot, persist_work_record,
+    regex_capture, remove_chapter_tag, save_illust_snapshot, sort_episodes_by_create_date,
+    str_field, url_decode, value_to_string,
 };
-
-const PIXIV_SITE_DOCUMENT_SCOPE_STR: &str = PIXIV_SITE_DOCUMENT_SCOPE;
 
 /// Download a single novel work
 pub fn download_novel(
@@ -194,13 +189,14 @@ pub fn download_series(
         );
         sleep();
 
-        let ep_json = match fetch_body_json(client, &format!("https://www.pixiv.net/ajax/novel/{ep_id}")) {
-            Ok(j) => j,
-            Err(e) => {
-                warn!("  Failed to fetch episode {ep_id}: {e}");
-                continue;
-            }
-        };
+        let ep_json =
+            match fetch_body_json(client, &format!("https://www.pixiv.net/ajax/novel/{ep_id}")) {
+                Ok(j) => j,
+                Err(e) => {
+                    warn!("  Failed to fetch episode {ep_id}: {e}");
+                    continue;
+                }
+            };
 
         // Per-episode cover
         download_cover(

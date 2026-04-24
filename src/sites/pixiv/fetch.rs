@@ -44,7 +44,10 @@ pub fn build_client(store: &Store, cookie_dir: &str) -> Result<Client> {
         .build()?)
 }
 
-fn resolve_active_pixiv_account(store: &Store, cookie_dir: &str) -> Option<(AccountFile, String)> {
+pub fn resolve_active_pixiv_account(
+    store: &Store,
+    cookie_dir: &str,
+) -> Option<(AccountFile, String)> {
     if let Ok(Some(account)) = store.get_active_account("pixiv") {
         return Some((
             account.account,

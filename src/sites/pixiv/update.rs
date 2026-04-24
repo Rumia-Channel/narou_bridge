@@ -1,9 +1,8 @@
 use crate::core::renderer;
 use crate::core::storage::Store;
 use anyhow::Result;
-use reqwest::blocking::Client;
-use std::path::Path;
-use std::{fs, path::PathBuf};
+use std::fs;
+use std::path::PathBuf;
 
 use super::download::download_user;
 use super::fetch::build_client;
