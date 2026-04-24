@@ -10,6 +10,7 @@ use crate::sites::SiteRegistry;
 use anyhow::{Context, Result};
 use axum::Router;
 use axum::extract::{FromRequest, Query, Request, State};
+use axum::http::header;
 use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
@@ -28,6 +29,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::sync::{Mutex, Notify};
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{error, info, warn};
 
 const AUTO_UPDATE_STARTUP_DELAY: Duration = Duration::from_secs(30);
@@ -133,6 +135,10 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
             ServeFile::new(data_dir.join("reader").join("index.html")),
         )
         .fallback_service(static_files)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("text/html; charset=utf-8"),
+        ))
         .with_state(state.clone());
 
     let addr: SocketAddr = state
