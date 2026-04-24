@@ -125,7 +125,7 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
         .route("/api/account/switch", post(switch_account_query))
         .route("/api/account/rename", post(rename_account_query))
         .route("/api/", post(handle_post))
-        .route("/api/migrate", get(migrate))
+        .route("/api/migrate", post(migrate))
         .route_service("/", ServeFile::new(data_dir.join("index.html")))
         .route_service(
             "/reader",
@@ -535,21 +535,109 @@ async fn auto_update_loop(state: RuntimeState) {
     }
 }
 
+fn validate_migration_source(
+    requested: &str,
+    config: &AppConfig,
+) -> Result<PathBuf, (StatusCode, String)> {
+    let raw = PathBuf::from(requested);
+    // Reject explicit parent traversal segments before canonicalization so symlink
+    // tricks cannot smuggle them past the check.
+    if raw
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "source_root must not contain '..'".to_string(),
+        ));
+    }
+
+    let canonical = stdfs::canonicalize(&raw).map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("source_root could not be resolved: {err}"),
+        )
+    })?;
+
+    // Reject filesystem / drive roots (no parent).
+    if canonical.parent().is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "source_root must not be the filesystem root".to_string(),
+        ));
+    }
+
+    let data_dir_canonical = stdfs::canonicalize(config.data_dir_path()).ok();
+    let legacy_canonical = config
+        .legacy_root_path()
+        .and_then(|p| stdfs::canonicalize(p).ok());
+    let repo_root_canonical = std::env::current_dir()
+        .ok()
+        .and_then(|p| stdfs::canonicalize(p).ok());
+
+    let mut allowed = false;
+
+    if let Some(legacy) = legacy_canonical.as_ref() {
+        if &canonical == legacy {
+            allowed = true;
+        }
+    }
+
+    if !allowed {
+        if let Some(data_dir) = data_dir_canonical.as_ref() {
+            // Allow ancestors of data_dir (i.e. data_dir starts with canonical).
+            if data_dir.starts_with(&canonical) {
+                allowed = true;
+            }
+        }
+    }
+
+    if !allowed {
+        if let Some(repo_root) = repo_root_canonical.as_ref() {
+            if let (Some(repo_parent), Some(src_parent)) = (repo_root.parent(), canonical.parent())
+            {
+                if repo_parent == src_parent {
+                    allowed = true;
+                }
+            }
+        }
+    }
+
+    if !allowed {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "source_root is not within an allowed location".to_string(),
+        ));
+    }
+
+    Ok(canonical)
+}
+
 async fn migrate(
     State(state): State<RuntimeState>,
     Query(query): Query<MigrationQuery>,
 ) -> impl IntoResponse {
-    let source_root = query.source_root.unwrap_or_else(|| {
+    let requested = query.source_root.unwrap_or_else(|| {
         state
             .config
             .legacy_root
             .clone()
             .unwrap_or_else(|| "sample".to_string())
     });
+
+    let source_root = match validate_migration_source(&requested, &state.config) {
+        Ok(path) => path,
+        Err((status, msg)) => return create_error(status, msg),
+    };
+
     let plan = MigrationPlan {
-        source_root: PathBuf::from(&source_root),
+        source_root,
         archive_root: PathBuf::from(&state.config.archive_dir),
     };
+    // NOTE: This handler holds the global store mutex for the entire migration,
+    // which can include large filesystem scans and copies. Concurrent /api/
+    // requests will block until completion. Refactor to release the lock
+    // around long-running fs scans if this becomes a DoS concern.
     let store = state.store.lock().await;
     match migrate_legacy_tree(&store, plan) {
         Ok(summary) => Json(json!({"status": "success", "summary": summary})).into_response(),

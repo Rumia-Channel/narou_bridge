@@ -328,7 +328,13 @@ impl Store {
                         caption: row.get(8)?,
                         create_date: row.get(9)?,
                         update_date: row.get(10)?,
-                        raw_json: serde_json::from_str(&raw_json).unwrap_or_default(),
+                        raw_json: serde_json::from_str(&raw_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                11,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
                     })
                 })?;
                 for row in rows {
@@ -354,7 +360,13 @@ impl Store {
                         caption: row.get(8)?,
                         create_date: row.get(9)?,
                         update_date: row.get(10)?,
-                        raw_json: serde_json::from_str(&raw_json).unwrap_or_default(),
+                        raw_json: serde_json::from_str(&raw_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                11,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
                     })
                 })?;
                 for row in rows {
@@ -447,7 +459,13 @@ impl Store {
                     Ok(SiteDocumentRecord {
                         site: row.get(0)?,
                         key: row.get(1)?,
-                        document: serde_json::from_str(&document_json).unwrap_or_default(),
+                        document: serde_json::from_str(&document_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                2,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
                         updated_at: row.get(3)?,
                     })
                 },
@@ -487,7 +505,13 @@ impl Store {
                     Ok(SiteDocumentRecord {
                         site: row.get(0)?,
                         key: row.get(1)?,
-                        document: serde_json::from_str(&document_json).unwrap_or_default(),
+                        document: serde_json::from_str(&document_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                2,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
                         updated_at: row.get(3)?,
                     })
                 })?;
@@ -507,7 +531,13 @@ impl Store {
                     Ok(SiteDocumentRecord {
                         site: row.get(0)?,
                         key: row.get(1)?,
-                        document: serde_json::from_str(&document_json).unwrap_or_default(),
+                        document: serde_json::from_str(&document_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                2,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
                         updated_at: row.get(3)?,
                     })
                 })?;
@@ -697,8 +727,10 @@ fn parse_status(value: &str) -> TaskStatus {
 
 fn account_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRecord> {
     let account_json: String = row.get(3)?;
-    let account: crate::core::model::AccountFile =
-        serde_json::from_str(&account_json).unwrap_or_default();
+    let account: crate::core::model::AccountFile = serde_json::from_str(&account_json)
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
+        })?;
     Ok(AccountRecord {
         site: row.get(0)?,
         name: row.get(1)?,
@@ -711,7 +743,9 @@ fn account_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountR
 
 fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
     let request_json: String = row.get(4)?;
-    let request: RequestData = serde_json::from_str(&request_json).unwrap_or_default();
+    let request: RequestData = serde_json::from_str(&request_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
+    })?;
     let status_str: String = row.get(5)?;
     Ok(TaskRecord {
         id: row.get(0)?,
