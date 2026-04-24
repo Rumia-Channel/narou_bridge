@@ -990,7 +990,39 @@ fn render_image(logical_name: &str, images: &HashMap<String, ImageAsset>) -> Str
         );
     }
 
+    // Fallback: pixiv (and migrated data) embed already-hashed filenames such as
+    // "abc1234567.jpg" directly into episode markup. These are not registered in
+    // the logical-name map, so emit the image tag if the name matches a stored
+    // image asset by hash + extension.
+    if let Some((stem, ext)) = split_hashed_name(logical_name) {
+        let matches_known_asset = images
+            .values()
+            .any(|asset| asset.hash == stem && asset.ext == ext);
+        if matches_known_asset {
+            return format!(
+                r#"<figure><img src="../../images/{}" alt=""></figure>"#,
+                escape_html(logical_name)
+            );
+        }
+    }
+
     format!("<p><code>{}</code></p>", escape_html(logical_name))
+}
+
+fn split_hashed_name(name: &str) -> Option<(&str, &str)> {
+    let dot = name.rfind('.')?;
+    let stem = &name[..dot];
+    let ext = &name[dot + 1..];
+    if stem.is_empty() || ext.is_empty() {
+        return None;
+    }
+    if !stem.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    if !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some((stem, ext))
 }
 
 fn parse_raw_work(value: &serde_json::Value) -> Result<RawWork> {
@@ -1369,5 +1401,48 @@ mod tests {
         assert_eq!(index["n123"]["caption"].as_str(), Some("Disk Caption"));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn render_image_uses_logical_name_lookup() {
+        let mut images = HashMap::new();
+        images.insert(
+            "pixiv_n123_cover.jpg".to_string(),
+            ImageAsset {
+                hash: "abc1234567".to_string(),
+                ext: "jpg".to_string(),
+            },
+        );
+
+        let html = render_image("pixiv_n123_cover.jpg", &images);
+        assert_eq!(
+            html,
+            r#"<figure><img src="../../images/abc1234567.jpg" alt="pixiv_n123_cover.jpg"></figure>"#
+        );
+    }
+
+    #[test]
+    fn render_image_resolves_hashed_filename() {
+        let mut images = HashMap::new();
+        images.insert(
+            "pixiv_n123_cover.jpg".to_string(),
+            ImageAsset {
+                hash: "abc1234567".to_string(),
+                ext: "jpg".to_string(),
+            },
+        );
+
+        let html = render_image("abc1234567.jpg", &images);
+        assert_eq!(
+            html,
+            r#"<figure><img src="../../images/abc1234567.jpg" alt=""></figure>"#
+        );
+    }
+
+    #[test]
+    fn render_image_falls_back_for_unknown_name() {
+        let images: HashMap<String, ImageAsset> = HashMap::new();
+        let html = render_image("not-an-image", &images);
+        assert_eq!(html, "<p><code>not-an-image</code></p>");
     }
 }
