@@ -1050,6 +1050,7 @@ fn get_cover_image_url(_site: &str, _work_key: &str, images: &HashMap<String, Im
 
 
 fn update_cover_json(store: &Store, site: &str, site_dir: &Path) -> Result<()> {
+    // Generate cover.json containing cover images for the site
     let images = store.list_images()?.into_iter()
         .filter(|img| img.logical_name.contains(site) || img.kind == "cover")
         .collect::<Vec<_>>();
