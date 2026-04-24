@@ -48,10 +48,14 @@ async fn write_empty_site_indexes(config: &AppConfig, sites: &[String]) -> Resul
     for site in sites {
         let site_dir = config.data_dir_path().join(site);
         fs::create_dir_all(&site_dir).await?;
+        let site_index_path = site_dir.join("index.html");
+        if fs::try_exists(&site_index_path).await? {
+            continue;
+        }
 
         // Create empty site index page that will be overwritten when data is loaded
         let empty_index = render_empty_site_index(site);
-        write_text_if_changed(&site_dir.join("index.html"), &empty_index).await?;
+        write_text_if_changed(&site_index_path, &empty_index).await?;
     }
     Ok(())
 }
@@ -248,6 +252,8 @@ fn escape_html(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::model::AppConfig;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn root_bootstrap_mentions_sites() {
@@ -278,5 +284,77 @@ mod tests {
         assert!(html.contains("<title>pixiv index</title>"));
         assert!(html.contains("作品がまだありません"));
         assert!(html.contains("href=\"/\""));
+    }
+
+    #[tokio::test]
+    async fn static_bootstrap_preserves_existing_site_index_html() {
+        let test_dir = unique_test_dir("preserve-existing-site-index");
+        let config = test_config(&test_dir);
+        let site_index_path = config.data_dir_path().join("pixiv").join("index.html");
+        let existing_html = "<html><body>existing site index</body></html>";
+
+        fs::create_dir_all(site_index_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs::write(&site_index_path, existing_html).await.unwrap();
+
+        write_static_bootstrap(&config, &["pixiv".to_string()])
+            .await
+            .unwrap();
+
+        let actual = fs::read_to_string(&site_index_path).await.unwrap();
+        assert_eq!(actual, existing_html);
+
+        std::fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn static_bootstrap_creates_missing_site_index_html() {
+        let test_dir = unique_test_dir("create-missing-site-index");
+        let config = test_config(&test_dir);
+        let site_index_path = config.data_dir_path().join("narou").join("index.html");
+
+        write_static_bootstrap(&config, &["narou".to_string()])
+            .await
+            .unwrap();
+
+        let actual = fs::read_to_string(&site_index_path).await.unwrap();
+        assert!(actual.contains("<title>narou index</title>"));
+        assert!(actual.contains("作品がまだありません"));
+
+        std::fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    fn test_config(root: &std::path::Path) -> AppConfig {
+        AppConfig {
+            data_dir: root.join("data").to_string_lossy().into_owned(),
+            cookie_dir: root.join("cookie").to_string_lossy().into_owned(),
+            queue_dir: root.join("queue").to_string_lossy().into_owned(),
+            pdf_dir: root.join("pdf").to_string_lossy().into_owned(),
+            log_dir: root.join("log").to_string_lossy().into_owned(),
+            db_path: root
+                .join("data")
+                .join("runtime.sqlite3")
+                .to_string_lossy()
+                .into_owned(),
+            archive_dir: root.join("archive").to_string_lossy().into_owned(),
+            bind_addr: "127.0.0.1:8080".to_string(),
+            host_name: "http://localhost:8080".to_string(),
+            auto_update: false,
+            auto_update_interval: 0,
+            legacy_root: None,
+        }
+    }
+
+    fn unique_test_dir(name: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("test-artifacts")
+            .join(format!("{name}-{unique}"))
     }
 }
