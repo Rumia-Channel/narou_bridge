@@ -751,18 +751,21 @@ fn parse_task_input_bytes(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput
     if content_type.contains("application/json") || content_type.ends_with("+json") {
         return serde_json::from_slice(body)
             .map(normalize_task_input)
+            .map(discard_client_request_id)
             .map_err(|err| err.to_string());
     }
 
     if content_type.contains("application/x-www-form-urlencoded") {
         return serde_urlencoded::from_bytes(body)
             .map(normalize_task_input)
+            .map(discard_client_request_id)
             .map_err(|err| err.to_string());
     }
 
     serde_json::from_slice(body)
         .or_else(|_| serde_urlencoded::from_bytes(body))
         .map(normalize_task_input)
+        .map(discard_client_request_id)
         .map_err(|err| err.to_string())
 }
 
@@ -815,7 +818,8 @@ async fn parse_multipart_task_input(
     }
 
     input = normalize_task_input(input);
-    let request_id = input.request_id.clone().unwrap_or_else(random_request_id);
+    input = discard_client_request_id(input);
+    let request_id = random_request_id();
 
     if let Some(upload) = pdf_upload {
         let path = persist_uploaded_file(config, &request_id, "pdf", upload.bytes).await?;
@@ -874,6 +878,11 @@ fn normalize_task_input(input: TaskInput) -> TaskInput {
     }
 }
 
+fn discard_client_request_id(mut input: TaskInput) -> TaskInput {
+    input.request_id = None;
+    input
+}
+
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value.and_then(|value| {
         let trimmed = value.trim();
@@ -911,12 +920,12 @@ async fn persist_uploaded_file(
     extension: &str,
     bytes: Bytes,
 ) -> Result<PathBuf, String> {
-    fs::create_dir_all(config.pdf_dir_path())
+    let pdf_dir = config.pdf_dir_path();
+    fs::create_dir_all(&pdf_dir)
         .await
         .map_err(|err| err.to_string())?;
-    let path = config
-        .pdf_dir_path()
-        .join(format!("{request_id}.{extension}"));
+    let path =
+        queued_upload_path(&pdf_dir, request_id, extension).map_err(|err| err.to_string())?;
     fs::write(&path, bytes)
         .await
         .map_err(|err| err.to_string())?;
@@ -946,7 +955,7 @@ fn import_uploaded_zip(
     host_name: &str,
 ) -> Result<String> {
     let archive_path =
-        queued_zip_path(request, pdf_dir).context("queued ZIP upload is missing from pdf/")?;
+        queued_zip_path(request, pdf_dir)?.context("queued ZIP upload is missing from pdf/")?;
     let file = stdfs::File::open(&archive_path)
         .with_context(|| format!("failed to open zip archive {}", archive_path.display()))?;
     let mut archive = zip::ZipArchive::new(file)
@@ -974,10 +983,13 @@ fn import_uploaded_zip(
     ))
 }
 
-fn queued_zip_path(request: &RequestData, pdf_dir: &str) -> Option<PathBuf> {
-    request.zip_name.as_ref()?;
-    let path = PathBuf::from(pdf_dir).join(format!("{}.zip", request.request_id));
-    path.exists().then_some(path)
+fn queued_zip_path(request: &RequestData, pdf_dir: &str) -> Result<Option<PathBuf>> {
+    if request.zip_name.is_none() {
+        return Ok(None);
+    }
+
+    let path = queued_upload_path(Path::new(pdf_dir), &request.request_id, "zip")?;
+    Ok(path.exists().then_some(path))
 }
 
 fn read_zip_metadata<R>(archive: &mut zip::ZipArchive<R>) -> Result<ZipImportMetadata>
@@ -1141,6 +1153,17 @@ fn is_simple_path_segment(value: &str) -> bool {
 
     let mut components = Path::new(value).components();
     matches!(components.next(), Some(std::path::Component::Normal(part)) if components.next().is_none() && part == value)
+}
+
+fn queued_upload_path(base_dir: &Path, request_id: &str, extension: &str) -> Result<PathBuf> {
+    if !is_simple_path_segment(request_id) {
+        anyhow::bail!("invalid request_id for queued upload path: {request_id}");
+    }
+    if extension.is_empty() || !extension.chars().all(|c| c.is_ascii_alphanumeric()) {
+        anyhow::bail!("invalid upload extension: {extension}");
+    }
+
+    Ok(base_dir.join(format!("{request_id}.{extension}")))
 }
 
 fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str) -> Result<usize> {
@@ -1576,6 +1599,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_task_input_bytes_discards_client_supplied_request_id() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+        let body = Bytes::from_static(br#"{"request_id":"../escape","update":"narou"}"#);
+
+        let input = parse_task_input_bytes(&headers, &body).expect("request should parse");
+
+        assert_eq!(input.request_id, None);
+        assert_eq!(input.update.as_deref(), Some("narou"));
+    }
+
+    #[test]
     fn should_import_zip_request_only_for_zip_only_payloads() {
         let zip_only = RequestData {
             request_id: "req-zip".to_string(),
@@ -1589,6 +1627,34 @@ mod tests {
             ..zip_only.clone()
         };
         assert!(!should_import_zip_request(&with_action));
+    }
+
+    #[tokio::test]
+    async fn persist_uploaded_file_rejects_invalid_request_id() {
+        let root = test_dir("runtime-invalid-request-id");
+        let config = AppConfig {
+            pdf_dir: root.to_string_lossy().to_string(),
+            ..AppConfig::default()
+        };
+
+        let err = persist_uploaded_file(&config, "../escape", "zip", Bytes::from_static(b"zip"))
+            .await
+            .expect_err("path traversal request_id should fail");
+
+        assert!(err.contains("invalid request_id"));
+        stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn queued_zip_path_rejects_invalid_request_id() {
+        let request = RequestData {
+            request_id: "../escape".to_string(),
+            zip_name: Some("upload.zip".to_string()),
+            ..RequestData::default()
+        };
+
+        let err = queued_zip_path(&request, "pdf").expect_err("invalid request_id should fail");
+        assert!(err.to_string().contains("invalid request_id"));
     }
 
     #[test]
