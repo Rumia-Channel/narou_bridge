@@ -135,7 +135,7 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
             ServeFile::new(data_dir.join("reader").join("index.html")),
         )
         .fallback_service(static_files)
-        .layer(SetResponseHeaderLayer::if_not_present(
+        .layer(SetResponseHeaderLayer::overriding(
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("text/html; charset=utf-8"),
         ))
