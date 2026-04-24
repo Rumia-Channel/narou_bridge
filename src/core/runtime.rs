@@ -564,9 +564,6 @@ struct AccountInput {
 }
 
 fn resolve_request_action(req: &RequestData) -> Option<(String, String)> {
-    if req.pdf_path.is_some() {
-        return Some(("convert".to_string(), "narou".to_string()));
-    }
     if let Some(v) = req.repair.clone() {
         return Some(("repair".to_string(), v));
     }
@@ -578,6 +575,9 @@ fn resolve_request_action(req: &RequestData) -> Option<(String, String)> {
     }
     if let Some(v) = req.re_download.clone() {
         return Some(("re_download".to_string(), v));
+    }
+    if req.pdf_path.is_some() {
+        return Some(("convert".to_string(), "narou".to_string()));
     }
     if let Some(v) = req.convert.clone() {
         return Some(("convert".to_string(), v));
@@ -1712,7 +1712,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_request_action_prefers_pdf_conversion() {
+    fn resolve_request_action_prefers_repair_over_pdf_conversion() {
         let req = RequestData {
             request_id: "req-1".to_string(),
             pdf_path: Some("input.pdf".to_string()),
@@ -1720,7 +1720,7 @@ mod tests {
             ..RequestData::default()
         };
         let action = resolve_request_action(&req).expect("action");
-        assert_eq!(action, ("convert".to_string(), "narou".to_string()));
+        assert_eq!(action, ("repair".to_string(), "repair-site".to_string()));
     }
 
     #[test]
