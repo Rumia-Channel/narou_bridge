@@ -1258,26 +1258,26 @@ pub fn url_ext(url: &str) -> String {
 }
 
 pub fn url_decode(s: &str) -> String {
-    // Simple percent-decode
-    let mut result = String::new();
-    let mut chars = s.bytes().peekable();
-    while let Some(b) = chars.next() {
-        if b == b'%' {
-            let h1 = chars.next().unwrap_or(b'0');
-            let h2 = chars.next().unwrap_or(b'0');
-            let hex = format!("{}{}", h1 as char, h2 as char);
-            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                result.push(byte as char);
-            } else {
-                result.push('%');
-                result.push(h1 as char);
-                result.push(h2 as char);
+    let bytes = s.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        if bytes[idx] == b'%' && idx + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[idx + 1..idx + 3]) {
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    decoded.push(byte);
+                    idx += 3;
+                    continue;
+                }
             }
-        } else {
-            result.push(b as char);
         }
+
+        decoded.push(bytes[idx]);
+        idx += 1;
     }
-    result
+
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 pub fn regex_capture(pattern: &str, text: &str) -> Option<String> {
@@ -1427,5 +1427,18 @@ mod tests {
         assert!(source.contains("sqlite accounts table"));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn url_decode_preserves_existing_unicode_text() {
+        assert_eq!(url_decode("先生×先生"), "先生×先生");
+    }
+
+    #[test]
+    fn url_decode_decodes_percent_encoded_utf8() {
+        assert_eq!(
+            url_decode("%E5%85%88%E7%94%9F%C3%97%E5%85%88%E7%94%9F"),
+            "先生×先生"
+        );
     }
 }
