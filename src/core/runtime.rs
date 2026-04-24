@@ -618,28 +618,77 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
     let results = state
         .registry
         .dispatch(&task.action, &task.param, &context, &mut store);
-    let has_success = results.iter().any(|r| r.status == "success");
-    let has_failed = results.iter().any(|r| r.status == "failed");
-    let status = if has_success {
-        TaskStatus::Succeeded
-    } else if has_failed {
+    let (status, error) = summarize_site_results(&results);
+    let _ = store.mark_task_status(task_id, status, error, &now_string());
+    Ok(())
+}
+
+fn summarize_site_results(
+    results: &[crate::sites::SiteActionResult],
+) -> (TaskStatus, Option<String>) {
+    let failed: Vec<_> = results
+        .iter()
+        .filter(|result| result.status == "failed")
+        .collect();
+    let succeeded: Vec<_> = results
+        .iter()
+        .filter(|result| result.status == "success")
+        .collect();
+    let skipped: Vec<_> = results
+        .iter()
+        .filter(|result| result.status == "skipped")
+        .collect();
+
+    let status = if !failed.is_empty() {
         TaskStatus::Failed
+    } else if !succeeded.is_empty() {
+        TaskStatus::Succeeded
     } else {
         TaskStatus::Skipped
     };
-    let error = if has_failed {
-        Some(
-            results
-                .iter()
-                .find(|r| r.status == "failed")
-                .map(|r| r.message.clone())
-                .unwrap_or_default(),
-        )
-    } else {
+
+    let error = if failed.is_empty() {
         None
+    } else {
+        let mut sections = vec![format!("failed sites: {}", summarize_result_group(&failed))];
+        if !succeeded.is_empty() {
+            sections.push(format!(
+                "succeeded sites: {}",
+                summarize_result_group(&succeeded)
+            ));
+        }
+        if !skipped.is_empty() {
+            sections.push(format!(
+                "skipped sites: {}",
+                summarize_result_group(&skipped)
+            ));
+        }
+        Some(sections.join(" | "))
     };
-    let _ = store.mark_task_status(task_id, status, error, &now_string());
-    Ok(())
+
+    (status, error)
+}
+
+fn summarize_result_group(results: &[&crate::sites::SiteActionResult]) -> String {
+    results
+        .iter()
+        .map(|result| {
+            format!(
+                "{} ({}) {}",
+                site_id_label(result.site_id),
+                result.action,
+                result.message
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn site_id_label(site_id: crate::sites::SiteId) -> &'static str {
+    match site_id {
+        crate::sites::SiteId::Pixiv => "pixiv",
+        crate::sites::SiteId::Narou => "narou",
+    }
 }
 
 fn create_error(status: StatusCode, message: String) -> Response {
@@ -1626,6 +1675,50 @@ mod tests {
         assert_eq!(task.param, "all");
         assert_eq!(task.request.request_id, task.request_id);
         assert_eq!(task.request.update.as_deref(), Some("all"));
+    }
+
+    #[test]
+    fn summarize_site_results_marks_partial_failures_as_failed() {
+        let results = vec![
+            crate::sites::SiteActionResult::success(
+                crate::sites::SiteId::Narou,
+                "update",
+                "narou update completed",
+            ),
+            crate::sites::SiteActionResult::failed(
+                crate::sites::SiteId::Pixiv,
+                "update",
+                "pixiv login expired",
+            ),
+        ];
+
+        let (status, error) = summarize_site_results(&results);
+
+        assert_eq!(status, TaskStatus::Failed);
+        let error = error.expect("partial failure should keep an error summary");
+        assert!(error.contains("failed sites: pixiv (update) pixiv login expired"));
+        assert!(error.contains("succeeded sites: narou (update) narou update completed"));
+    }
+
+    #[test]
+    fn summarize_site_results_marks_all_successes_as_succeeded() {
+        let results = vec![
+            crate::sites::SiteActionResult::success(
+                crate::sites::SiteId::Narou,
+                "convert",
+                "narou convert completed",
+            ),
+            crate::sites::SiteActionResult::success(
+                crate::sites::SiteId::Pixiv,
+                "convert",
+                "pixiv convert completed",
+            ),
+        ];
+
+        let (status, error) = summarize_site_results(&results);
+
+        assert_eq!(status, TaskStatus::Succeeded);
+        assert_eq!(error, None);
     }
 
     #[test]
