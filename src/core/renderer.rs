@@ -138,6 +138,7 @@ pub fn render_site_from_store(
     }
 
     write_site_index(&site_dir, site, &rendered, host_name)?;
+    update_cover_json(store, site, &site_dir)?;
     Ok(())
 }
 
@@ -320,6 +321,15 @@ fn render_site_index(site: &str, works: &[RenderedWork], host_name: &str) -> Str
         ));
     }
 
+    let canonical_url = format_canonical_url(host_name, &format!("/{}/", site));
+    let og_tags = build_og_tags(
+        &format!("{site} - Narou Bridge"),
+        "Web小説・漫画の管理・閲覧システム",
+        "website",
+        &canonical_url,
+        "",
+    );
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="ja">
@@ -327,6 +337,7 @@ fn render_site_index(site: &str, works: &[RenderedWork], host_name: &str) -> Str
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{site} index</title>
+  {og_tags}
   <style>
     body {{ font-family: system-ui, sans-serif; margin: 0; background: #f6f7fb; color: #1f2933; }}
     header {{ padding: 24px 20px; background: #111827; color: #fff; }}
@@ -491,6 +502,12 @@ fn render_episode_page(
 ) -> String {
     let page_title = format!("{} - {}", episode.title, rendered.work.title);
     let nav = render_episode_nav(site, work_key, episode_key, prev, next, host_name);
+    
+    let mut paragraph_id = 1usize;
+    let introduction_html = render_rich_text(&episode.introduction, site, work_key, images, &mut paragraph_id);
+    let text_html = render_rich_text(&episode.text, site, work_key, images, &mut paragraph_id);
+    let postscript_html = render_rich_text(&episode.postscript, site, work_key, images, &mut paragraph_id);
+    
     let body = format!(
         r#"<section class="meta-panel">
   <p class="meta">{author} · {serialization} · {work_key}</p>
@@ -518,9 +535,9 @@ fn render_episode_page(
         introduction = escape_html(&episode.introduction),
         tags = render_tag_list(&episode.tags),
         title = escape_html(&episode.title),
-        introduction_html = render_rich_text(&episode.introduction, site, work_key, images),
-        text_html = render_rich_text(&episode.text, site, work_key, images),
-        postscript_html = render_rich_text(&episode.postscript, site, work_key, images)
+        introduction_html = introduction_html,
+        text_html = text_html,
+        postscript_html = postscript_html
     );
 
     render_page_shell(&page_title, &episode.title, &nav, &body, "")
@@ -534,6 +551,8 @@ fn render_episode_summary_list(
 ) -> String {
     let mut items = String::new();
     for (episode_key, episode) in episodes {
+        let mut paragraph_id = 1usize;
+        let caption = render_rich_text(&episode.introduction, site, work_key, images, &mut paragraph_id);
         items.push_str(&format!(
             r#"<li>
   <a href="./{episode_key}.html">{title}</a>
@@ -544,7 +563,7 @@ fn render_episode_summary_list(
             title = escape_html(&episode.title),
             episode_id = escape_html(&episode.id),
             update_date = escape_html(&episode.update_date),
-            caption = render_rich_text(&episode.introduction, site, work_key, images)
+            caption = caption
         ));
     }
 
@@ -652,6 +671,7 @@ fn render_rich_text(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    paragraph_id: &mut usize,
 ) -> String {
     let mut blocks = Vec::new();
     let mut current = Vec::new();
@@ -665,6 +685,7 @@ fn render_rich_text(
                     site,
                     work_key,
                     images,
+                    paragraph_id,
                 ));
                 current.clear();
             }
@@ -673,7 +694,7 @@ fn render_rich_text(
         }
 
         if !trimmed.is_empty() && current.is_empty() && is_standalone_markup(trimmed) {
-            blocks.push(render_markup_line(trimmed, site, work_key, images));
+            blocks.push(render_markup_line(trimmed, site, work_key, images, paragraph_id));
             continue;
         }
 
@@ -686,6 +707,7 @@ fn render_rich_text(
             site,
             work_key,
             images,
+            paragraph_id,
         ));
     }
 
@@ -697,6 +719,7 @@ fn render_text_block(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    paragraph_id: &mut usize,
 ) -> String {
     let mut paragraphs = Vec::new();
     for paragraph in normalize_newlines(text).split("\n\n") {
@@ -704,10 +727,13 @@ fn render_text_block(
         if paragraph.is_empty() {
             continue;
         }
-        paragraphs.push(format!(
-            "<p>{}</p>",
+        let html = format!(
+            r#"<p id="p{}">{}</p>"#,
+            paragraph_id,
             render_inline_markup(paragraph, site, work_key, images)
-        ));
+        );
+        paragraphs.push(html);
+        *paragraph_id += 1;
     }
     paragraphs.join("\n")
 }
@@ -717,6 +743,7 @@ fn render_markup_line(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    paragraph_id: &mut usize,
 ) -> String {
     if let Some(inner) = line
         .strip_prefix("[image](")
@@ -730,27 +757,36 @@ fn render_markup_line(
     {
         if let Some((base, reading)) = inner.split_once(">(") {
             let reading = reading.trim_end_matches(')');
-            return format!(
-                "<p><ruby><rb>{}</rb><rt>{}</rt></ruby></p>",
+            let result = format!(
+                r#"<p id="p{}"><ruby><rb>{}</rb><rt>{}</rt></ruby></p>"#,
+                paragraph_id,
                 escape_html(base),
                 escape_html(reading)
             );
+            *paragraph_id += 1;
+            return result;
         }
     }
     if let Some(target) = line
         .strip_prefix("[jump:")
         .and_then(|s| s.strip_suffix(']'))
     {
-        return format!(
-            "<p><a href=\"./{}.html\">episode {}</a></p>",
+        let result = format!(
+            r#"<p id="p{}"><a href="./{}.html">episode {}</a></p>"#,
+            paragraph_id,
             escape_html(target),
             escape_html(target)
         );
+        *paragraph_id += 1;
+        return result;
     }
-    format!(
-        "<p>{}</p>",
+    let result = format!(
+        r#"<p id="p{}">{}</p>"#,
+        paragraph_id,
         render_inline_markup(line, site, work_key, images)
-    )
+    );
+    *paragraph_id += 1;
+    result
 }
 
 fn render_inline_markup(
@@ -864,4 +900,172 @@ fn escape_html(text: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+fn render_page_shell_with_ogp(
+    title: &str,
+    header_title: &str,
+    nav_links: &str,
+    body: &str,
+    og_tags: &str,
+) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  {og_tags}
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 0; background: #f6f7fb; color: #1f2933; line-height: 1.75; }}
+    header {{ position: sticky; top: 0; background: #111827; color: #fff; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.12); }}
+    header h1 {{ margin: 0 0 8px; font-size: 1.1rem; }}
+    header nav {{ display: flex; flex-wrap: wrap; gap: 10px; font-size: .92rem; }}
+    header a {{ color: #dbeafe; text-decoration: none; }}
+    main {{ max-width: 920px; margin: 0 auto; padding: 20px; }}
+    .meta-panel, .episode, .episode-list, .raw-json {{ background: #fff; border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
+    .meta {{ margin: 0 0 8px; color: #6b7280; font-size: .92rem; }}
+    .summary {{ margin: 0 0 10px; white-space: pre-wrap; }}
+    .episode-block {{ margin-top: 14px; }}
+    .episode-block > :first-child {{ margin-top: 0; }}
+    .episode-text, .episode-block.text {{ white-space: pre-wrap; }}
+    pre {{ white-space: pre-wrap; overflow-x: auto; }}
+    .tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }}
+    .tag {{ background: #e5eefc; color: #1d4ed8; border-radius: 999px; padding: 2px 10px; font-size: .82rem; }}
+    .episode-summary {{ margin: 0; padding-left: 1.4rem; }}
+    .episode-summary li {{ margin: 0 0 12px; }}
+    .episode-summary .summary {{ color: #4b5563; }}
+    img {{ max-width: 100%; height: auto; }}
+    figure {{ margin: 0; }}
+    hr.page-break {{ border: 0; border-top: 1px solid #d1d5db; margin: 1.5rem 0; }}
+    ruby rt {{ font-size: .7em; }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{header_title}</h1>
+    <nav>{nav_links}</nav>
+  </header>
+  <main>{body}</main>
+</body>
+</html>"#,
+        title = escape_html(title),
+        header_title = escape_html(header_title),
+        nav_links = nav_links,
+        body = body,
+        og_tags = og_tags
+    )
+}
+
+fn build_og_tags(
+    title: &str,
+    description: &str,
+    og_type: &str,
+    url: &str,
+    image: &str,
+) -> String {
+    let mut tags = String::new();
+    
+    if !title.is_empty() {
+        tags.push_str(&format!(
+            "  <meta property=\"og:title\" content=\"{}\">\n",
+            escape_html_attr(title)
+        ));
+    }
+    
+    if !description.is_empty() {
+        tags.push_str(&format!(
+            "  <meta property=\"og:description\" content=\"{}\">\n",
+            escape_html_attr(description)
+        ));
+        tags.push_str(&format!(
+            "  <meta name=\"description\" content=\"{}\">\n",
+            escape_html_attr(description)
+        ));
+    }
+    
+    if !og_type.is_empty() {
+        tags.push_str(&format!(
+            "  <meta property=\"og:type\" content=\"{}\">\n",
+            escape_html_attr(og_type)
+        ));
+    }
+    
+    if !url.is_empty() {
+        tags.push_str(&format!(
+            "  <meta property=\"og:url\" content=\"{}\">\n",
+            escape_html_attr(url)
+        ));
+    }
+    
+    if !image.is_empty() {
+        tags.push_str(&format!(
+            "  <meta property=\"og:image\" content=\"{}\">\n",
+            escape_html_attr(image)
+        ));
+    }
+    
+    tags.trim_end().to_string()
+}
+
+fn escape_html_attr(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn truncate_text(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        text.to_string()
+    } else {
+        text.chars()
+            .take(max_len)
+            .collect::<String>()
+            .trim_end()
+            .to_string() + "..."
+    }
+}
+
+fn format_canonical_url(host_name: &str, path: &str) -> String {
+    let base = host_name.trim_end_matches('/');
+    if base.is_empty() {
+        path.to_string()
+    } else {
+        format!("{}{}", base, path)
+    }
+}
+
+fn get_cover_image_url(_site: &str, _work_key: &str, images: &HashMap<String, ImageAsset>) -> String {
+    // Try to find a cover image
+    for (logical_name, image) in images.iter() {
+        if logical_name.contains("cover") || logical_name.contains("Cover") {
+            return format!("/images/{}.{}", image.hash, image.ext);
+        }
+    }
+    String::new()
+}
+
+
+fn update_cover_json(store: &Store, site: &str, site_dir: &Path) -> Result<()> {
+    let images = store.list_images()?.into_iter()
+        .filter(|img| img.logical_name.contains(site) || img.kind == "cover")
+        .collect::<Vec<_>>();
+    
+    let mut cover_map = serde_json::Map::new();
+    for img in images {
+        if img.kind == "cover" {
+            cover_map.insert(img.logical_name, serde_json::Value::String(img.hash));
+        }
+    }
+    
+    let cover_dir = site_dir.join("images");
+    fs::create_dir_all(&cover_dir).context("failed to create images dir")?;
+    fs::write(
+        cover_dir.join("cover.json"),
+        serde_json::to_string_pretty(&serde_json::Value::Object(cover_map))?
+    ).context("failed to write cover.json")?;
+    Ok(())
 }
