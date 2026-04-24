@@ -141,7 +141,12 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
         .parse()
         .context("invalid bind address")?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!(bind_addr = %state.config.bind_addr, host_name = %state.config.host_name, "http server listening");
+    info!(
+        bind_addr = %state.config.bind_addr,
+        host_name = %state.config.host_name,
+        data_dir = %state.config.data_dir,
+        "http server listening"
+    );
     axum::serve(listener, app).await.context("server failed")?;
     Ok(())
 }
