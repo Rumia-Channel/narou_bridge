@@ -1,4 +1,4 @@
-use crate::core::model::{AccountFile, ImageRecord, WorkRecord};
+use crate::core::model::{ImageRecord, WorkRecord};
 use crate::core::renderer;
 use crate::core::storage::Store;
 use crate::sites::{Site, SiteActionContext, SiteActionResult, SiteId};
@@ -285,6 +285,7 @@ fn user_id_from_path(path: &str, marker: &str) -> Option<String> {
 
 pub fn persist_work_record(store: &Store, record: &WorkRecord, img_path: &Path) -> Result<()> {
     store.upsert_work(record)?;
+    persist_body_image_records(store, &record.raw_json, img_path)?;
 
     let cover_logical = format!("pixiv_{}_cover", record.work_key);
     if let Some(hash) = find_image_by_logical_prefix(img_path, &cover_logical) {
@@ -298,6 +299,124 @@ pub fn persist_work_record(store: &Store, record: &WorkRecord, img_path: &Path) 
     }
 
     Ok(())
+}
+
+fn persist_body_image_records(store: &Store, raw_json: &Value, img_path: &Path) -> Result<()> {
+    let mut markup_images = BTreeSet::new();
+    collect_markup_image_names(raw_json, &mut markup_images);
+    if markup_images.is_empty() {
+        return Ok(());
+    }
+
+    let legacy_database = load_image_database(img_path);
+    let mut image_records = BTreeMap::new();
+
+    for logical_name in markup_images {
+        let Some((hash, ext)) = parse_markup_image_name(&logical_name) else {
+            continue;
+        };
+
+        image_records
+            .entry(logical_name.clone())
+            .or_insert_with(|| ImageRecord {
+                logical_name: logical_name.clone(),
+                hash: hash.clone(),
+                ext: ext.clone(),
+                kind: "image".to_string(),
+            });
+
+        for (legacy_logical_name, legacy_hash) in &legacy_database {
+            if legacy_hash == &hash && logical_name_ext(legacy_logical_name) == Some(ext.as_str()) {
+                image_records
+                    .entry(legacy_logical_name.clone())
+                    .or_insert_with(|| ImageRecord {
+                        logical_name: legacy_logical_name.clone(),
+                        hash: hash.clone(),
+                        ext: ext.clone(),
+                        kind: "image".to_string(),
+                    });
+            }
+        }
+    }
+
+    for image in image_records.values() {
+        store.upsert_image(image)?;
+    }
+
+    Ok(())
+}
+
+fn collect_markup_image_names(value: &Value, out: &mut BTreeSet<String>) {
+    match value {
+        Value::String(text) => {
+            for logical_name in extract_markup_image_names(text) {
+                out.insert(logical_name);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_markup_image_names(item, out);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values() {
+                collect_markup_image_names(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_markup_image_names(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut remainder = text;
+
+    while let Some(start) = remainder.find("[image](") {
+        let rest = &remainder[start + "[image](".len()..];
+        let Some(end) = rest.find(')') else {
+            break;
+        };
+        let logical_name = rest[..end].trim();
+        if !logical_name.is_empty() {
+            names.push(logical_name.to_string());
+        }
+        remainder = &rest[end + 1..];
+    }
+
+    names
+}
+
+fn parse_markup_image_name(logical_name: &str) -> Option<(String, String)> {
+    let path = Path::new(logical_name);
+    let ext = path.extension()?.to_str()?.to_string();
+    let hash = path.file_stem()?.to_str()?.to_string();
+    if hash.len() != 16 || !hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some((hash, ext))
+}
+
+fn load_image_database(img_path: &Path) -> BTreeMap<String, String> {
+    let db_path = img_path.join("database.json");
+    let content = match fs::read_to_string(&db_path) {
+        Ok(content) => content,
+        Err(_) => return BTreeMap::new(),
+    };
+    let value: Value = serde_json::from_str(&content).unwrap_or_else(|_| json!({}));
+    value
+        .as_object()
+        .map(|map| {
+            map.iter()
+                .filter_map(|(logical_name, hash)| {
+                    Some((logical_name.clone(), hash.as_str()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn logical_name_ext(logical_name: &str) -> Option<&str> {
+    Path::new(logical_name).extension()?.to_str()
 }
 
 // ---------------------------------------------------------------------------
@@ -1290,6 +1409,7 @@ pub fn regex_capture(pattern: &str, text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::model::AccountFile;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_dir(name: &str) -> PathBuf {
@@ -1440,5 +1560,57 @@ mod tests {
             url_decode("%E5%85%88%E7%94%9F%C3%97%E5%85%88%E7%94%9F"),
             "先生×先生"
         );
+    }
+
+    #[test]
+    fn persist_work_record_keeps_pixiv_body_images_renderable() {
+        let dir = test_dir("pixiv-body-images");
+        fs::write(
+            dir.join("database.json"),
+            r#"{
+  "pixiv_123_p0.png": "0123456789abcdef"
+}"#,
+        )
+        .unwrap();
+
+        let store = Store::open_in_memory().unwrap();
+        let record = WorkRecord {
+            site: "pixiv".to_string(),
+            work_key: "a123".to_string(),
+            title: "title".to_string(),
+            author: "author".to_string(),
+            author_id: None,
+            author_url: None,
+            r#type: "comic".to_string(),
+            serialization: "短編".to_string(),
+            caption: String::new(),
+            create_date: "2025-01-01T00:00:00Z".to_string(),
+            update_date: "2025-01-01T00:00:00Z".to_string(),
+            raw_json: json!({
+                "episodes": {
+                    "1": {
+                        "text": "[image](0123456789abcdef.png)"
+                    }
+                }
+            }),
+        };
+
+        persist_work_record(&store, &record, &dir).unwrap();
+
+        let images = store.list_images().unwrap();
+        assert!(images.iter().any(|image| {
+            image.logical_name == "0123456789abcdef.png"
+                && image.hash == "0123456789abcdef"
+                && image.ext == "png"
+                && image.kind == "image"
+        }));
+        assert!(images.iter().any(|image| {
+            image.logical_name == "pixiv_123_p0.png"
+                && image.hash == "0123456789abcdef"
+                && image.ext == "png"
+                && image.kind == "image"
+        }));
+
+        fs::remove_dir_all(dir).unwrap();
     }
 }
