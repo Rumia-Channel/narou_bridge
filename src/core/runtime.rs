@@ -33,6 +33,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info, warn};
 
 const AUTO_UPDATE_STARTUP_DELAY: Duration = Duration::from_secs(30);
+const ZIP_IMPORT_STAGING_DIR: &str = ".zip-import-staging";
 
 #[derive(Clone)]
 pub struct RuntimeState {
@@ -970,26 +971,43 @@ fn import_uploaded_zip(
     let mut archive = zip::ZipArchive::new(file)
         .with_context(|| format!("invalid zip {}", archive_path.display()))?;
     let metadata = read_zip_metadata(&mut archive)?;
+    let data_root = Path::new(data_dir);
+    let staging_root = prepare_zip_import_staging_dir(data_root, &request.request_id)?;
 
-    let payload_entries =
-        collect_zip_payload_entries(&mut archive, Path::new(data_dir), &metadata.site_name)?;
-    extract_zip_payload(&mut archive, &payload_entries)?;
-    let imported = import_site_records_from_tree(
-        store,
-        &PathBuf::from(data_dir).join(&metadata.site_name),
-        &metadata.site_name,
-    )?;
-    merge_zip_images(store, &metadata)?;
-    renderer::refresh_image_manifests(store, data_dir)?;
-    renderer::render_site_from_store(store, &metadata.site_name, data_dir, host_name)?;
+    let import_result = (|| -> Result<String> {
+        let payload_entries = collect_zip_payload_entries(&mut archive, &metadata.site_name)?;
+        extract_zip_payload(&mut archive, &payload_entries, &staging_root)?;
+        let imported = import_site_records_from_tree(
+            store,
+            &staging_root.join(&metadata.site_name),
+            &metadata.site_name,
+        )?;
+        copy_staged_zip_images(&payload_entries, &staging_root, data_root)?;
+        merge_zip_images(store, &metadata)?;
+        renderer::refresh_image_manifests(store, data_dir)?;
+        renderer::render_site_from_store(store, &metadata.site_name, data_dir, host_name)?;
 
-    Ok(format!(
-        "imported {} ({imported} works)",
-        request
-            .zip_name
-            .clone()
-            .unwrap_or_else(|| metadata.site_name.clone())
-    ))
+        Ok(format!(
+            "imported {} ({imported} works)",
+            request
+                .zip_name
+                .clone()
+                .unwrap_or_else(|| metadata.site_name.clone())
+        ))
+    })();
+
+    if let Err(err) = cleanup_zip_import_staging_dir(&staging_root) {
+        if import_result.is_ok() {
+            return Err(err);
+        }
+        warn!(
+            staging_root = %staging_root.display(),
+            error = %err,
+            "failed to clean up ZIP import staging directory"
+        );
+    }
+
+    import_result
 }
 
 fn queued_zip_path(request: &RequestData, pdf_dir: &str) -> Result<Option<PathBuf>> {
@@ -1018,7 +1036,6 @@ where
 
 fn collect_zip_payload_entries<R>(
     archive: &mut zip::ZipArchive<R>,
-    data_dir: &Path,
     site_name: &str,
 ) -> Result<Vec<ZipPayloadEntry>>
 where
@@ -1054,13 +1071,12 @@ where
             found_site_payload = true;
         }
 
-        let target = data_dir.join(&relative);
         let target_key = relative.to_string_lossy().to_string();
         if !seen_targets.insert(target_key.clone()) {
             anyhow::bail!("zip archive contains duplicate entry path: {target_key}");
         }
 
-        entries.push(ZipPayloadEntry { index, target });
+        entries.push(ZipPayloadEntry { index, relative });
     }
 
     if !found_site_payload {
@@ -1073,20 +1089,21 @@ where
 fn extract_zip_payload<R>(
     archive: &mut zip::ZipArchive<R>,
     entries: &[ZipPayloadEntry],
+    output_root: &Path,
 ) -> Result<()>
 where
     R: Read + std::io::Seek,
 {
     for entry in entries {
         let mut zip_entry = archive.by_index(entry.index)?;
-        if let Some(parent) = entry.target.parent() {
+        let target = output_root.join(&entry.relative);
+        if let Some(parent) = target.parent() {
             stdfs::create_dir_all(parent)?;
         }
-        let mut output = stdfs::File::create(&entry.target).with_context(|| {
-            format!("failed to create extracted file {}", entry.target.display())
-        })?;
+        let mut output = stdfs::File::create(&target)
+            .with_context(|| format!("failed to create extracted file {}", target.display()))?;
         std::io::copy(&mut zip_entry, &mut output)
-            .with_context(|| format!("failed to extract {}", entry.target.display()))?;
+            .with_context(|| format!("failed to extract {}", target.display()))?;
     }
     Ok(())
 }
@@ -1110,7 +1127,82 @@ fn sanitized_archive_path(name: &str) -> Result<PathBuf> {
 #[derive(Debug)]
 struct ZipPayloadEntry {
     index: usize,
-    target: PathBuf,
+    relative: PathBuf,
+}
+
+fn prepare_zip_import_staging_dir(data_dir: &Path, request_id: &str) -> Result<PathBuf> {
+    let staging_root = zip_import_staging_root(data_dir, request_id)?;
+    if staging_root.exists() {
+        stdfs::remove_dir_all(&staging_root).with_context(|| {
+            format!(
+                "failed to clear ZIP import staging directory {}",
+                staging_root.display()
+            )
+        })?;
+    }
+    stdfs::create_dir_all(&staging_root).with_context(|| {
+        format!(
+            "failed to create ZIP import staging directory {}",
+            staging_root.display()
+        )
+    })?;
+    Ok(staging_root)
+}
+
+fn zip_import_staging_root(data_dir: &Path, request_id: &str) -> Result<PathBuf> {
+    if !is_simple_path_segment(request_id) {
+        anyhow::bail!("invalid request_id for ZIP import staging path: {request_id}");
+    }
+    Ok(data_dir.join(ZIP_IMPORT_STAGING_DIR).join(request_id))
+}
+
+fn cleanup_zip_import_staging_dir(staging_root: &Path) -> Result<()> {
+    if !staging_root.exists() {
+        return Ok(());
+    }
+    stdfs::remove_dir_all(staging_root).with_context(|| {
+        format!(
+            "failed to remove ZIP import staging directory {}",
+            staging_root.display()
+        )
+    })
+}
+
+fn copy_staged_zip_images(
+    entries: &[ZipPayloadEntry],
+    staging_root: &Path,
+    data_root: &Path,
+) -> Result<()> {
+    for entry in entries {
+        let Some(root) = entry
+            .relative
+            .components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str())
+        else {
+            continue;
+        };
+        if root != "images" {
+            continue;
+        }
+
+        let source = staging_root.join(&entry.relative);
+        let target = data_root.join(&entry.relative);
+        if target.exists() {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            stdfs::create_dir_all(parent)?;
+        }
+        stdfs::copy(&source, &target).with_context(|| {
+            format!(
+                "failed to copy staged ZIP image {} to {}",
+                source.display(),
+                target.display()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn normalize_zip_metadata(mut metadata: ZipImportMetadata) -> Result<ZipImportMetadata> {
@@ -1548,6 +1640,57 @@ mod tests {
         zip::ZipArchive::new(cursor).expect("open zip")
     }
 
+    fn write_zip_file(path: &Path, entries: &[(&str, &str)]) {
+        let file = stdfs::File::create(path).expect("create zip");
+        let mut writer = zip::ZipWriter::new(file);
+        let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        for (name, contents) in entries {
+            writer.start_file(name, options).expect("start file");
+            writer.write_all(contents.as_bytes()).expect("write file");
+        }
+        writer.finish().expect("finish zip");
+    }
+
+    fn sample_zip_work_json() -> String {
+        json!({
+            "version": 0,
+            "get_date": "2026-01-01",
+            "title": "Sample",
+            "id": "1",
+            "nid": "n1",
+            "url": "https://example.com/work",
+            "author": "Author",
+            "author_id": "author-1",
+            "author_url": "https://example.com/authors/1",
+            "caption": "Caption",
+            "total_episodes": 1,
+            "all_episodes": 1,
+            "total_characters": 10,
+            "all_characters": 10,
+            "type": "novel",
+            "serialization": "短編",
+            "tags": [],
+            "all_tags": [],
+            "createDate": "2026-01-01",
+            "updateDate": "2026-01-01",
+            "episodes": {
+                "1": {
+                    "id": "ep1",
+                    "chapter": null,
+                    "title": "Episode 1",
+                    "textCount": 10,
+                    "tags": [],
+                    "introduction": "",
+                    "text": "hello",
+                    "postscript": "",
+                    "createDate": "2026-01-01",
+                    "updateDate": "2026-01-01"
+                }
+            }
+        })
+        .to_string()
+    }
+
     fn request_with_actions() -> RequestData {
         RequestData {
             request_id: "req-1".to_string(),
@@ -1739,7 +1882,7 @@ mod tests {
             ("evil/readme.txt", "nope"),
             ("narou/work/raw/raw.json", "{}"),
         ]);
-        let err = collect_zip_payload_entries(&mut archive, Path::new("data"), "narou")
+        let err = collect_zip_payload_entries(&mut archive, "narou")
             .expect_err("unexpected root should fail");
         assert!(err.to_string().contains("unexpected top-level entry"));
     }
@@ -1832,9 +1975,114 @@ mod tests {
             ("data.json", r#"{"site_name":"narou","images":{}}"#),
             ("images/cover.png", "img"),
         ]);
-        let err = collect_zip_payload_entries(&mut archive, Path::new("data"), "narou")
+        let err = collect_zip_payload_entries(&mut archive, "narou")
             .expect_err("missing site payload should fail");
         assert!(err.to_string().contains("missing the narou/ payload"));
+    }
+
+    #[test]
+    fn import_uploaded_zip_stages_validation_failures() {
+        let root = test_dir("runtime-zip-import-staging-failure");
+        let data_dir = root.join("data");
+        let pdf_dir = root.join("pdf");
+        stdfs::create_dir_all(&data_dir).unwrap();
+        stdfs::create_dir_all(&pdf_dir).unwrap();
+        let archive_path = pdf_dir.join("req-zip.zip");
+        write_zip_file(
+            &archive_path,
+            &[
+                (
+                    "data.json",
+                    r#"{"site_name":"narou","images":{"cover.png":"abc123"}}"#,
+                ),
+                ("images/abc123.png", "image"),
+                ("narou/work/raw/raw.json", r#"{"title":"broken"}"#),
+            ],
+        );
+
+        let store = Store::open_in_memory().expect("store");
+        let request = RequestData {
+            request_id: "req-zip".to_string(),
+            zip_name: Some("legacy.zip".to_string()),
+            ..RequestData::default()
+        };
+
+        let err = import_uploaded_zip(
+            &store,
+            &request,
+            data_dir.to_str().unwrap(),
+            pdf_dir.to_str().unwrap(),
+            "",
+        )
+        .expect_err("invalid payload should fail");
+
+        assert!(err.to_string().contains("invalid zip work payload"));
+        assert!(!data_dir.join("narou").exists());
+        assert!(!data_dir.join("images").join("abc123.png").exists());
+        assert!(
+            !zip_import_staging_root(&data_dir, &request.request_id)
+                .expect("staging path")
+                .exists()
+        );
+
+        stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn import_uploaded_zip_commits_staged_files_after_validation() {
+        let root = test_dir("runtime-zip-import-staging-success");
+        let data_dir = root.join("data");
+        let pdf_dir = root.join("pdf");
+        stdfs::create_dir_all(&data_dir).unwrap();
+        stdfs::create_dir_all(&pdf_dir).unwrap();
+        let archive_path = pdf_dir.join("req-zip.zip");
+        let raw_json = sample_zip_work_json();
+        write_zip_file(
+            &archive_path,
+            &[
+                (
+                    "data.json",
+                    r#"{"site_name":"narou","images":{"cover.png":"abc123"}}"#,
+                ),
+                ("images/abc123.png", "image"),
+                ("narou/work/raw/raw.json", &raw_json),
+            ],
+        );
+
+        let store = Store::open_in_memory().expect("store");
+        let request = RequestData {
+            request_id: "req-zip".to_string(),
+            zip_name: Some("legacy.zip".to_string()),
+            ..RequestData::default()
+        };
+
+        let message = import_uploaded_zip(
+            &store,
+            &request,
+            data_dir.to_str().unwrap(),
+            pdf_dir.to_str().unwrap(),
+            "",
+        )
+        .expect("valid payload should import");
+
+        assert!(message.contains("imported legacy.zip (1 works)"));
+        assert!(data_dir.join("images").join("abc123.png").exists());
+        assert!(
+            data_dir
+                .join("narou")
+                .join("work")
+                .join("raw")
+                .join("raw.json")
+                .exists()
+        );
+        assert_eq!(store.list_works(Some("narou")).unwrap().len(), 1);
+        assert!(
+            !zip_import_staging_root(&data_dir, &request.request_id)
+                .expect("staging path")
+                .exists()
+        );
+
+        stdfs::remove_dir_all(root).unwrap();
     }
 
     #[test]
