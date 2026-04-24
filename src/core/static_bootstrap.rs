@@ -13,6 +13,7 @@ pub async fn write_static_bootstrap(config: &AppConfig, sites: &[String]) -> Res
     write_root_index(config, sites).await?;
     write_reader_index(config, sites).await?;
     write_manifest(config).await?;
+    write_empty_site_indexes(config, sites).await?;
     mirror_common_assets(config).await?;
     Ok(())
 }
@@ -41,6 +42,55 @@ async fn write_reader_index(config: &AppConfig, sites: &[String]) -> Result<()> 
     let site_list_json = serde_json::to_string(sites)?;
     let html = READER_TEMPLATE.replace("{site_list_json}", &site_list_json);
     write_text_if_changed(&config.data_reader_dir().join("index.html"), &html).await
+}
+
+async fn write_empty_site_indexes(config: &AppConfig, sites: &[String]) -> Result<()> {
+    for site in sites {
+        let site_dir = config.data_dir_path().join(site);
+        fs::create_dir_all(&site_dir).await?;
+
+        // Create empty site index page that will be overwritten when data is loaded
+        let empty_index = render_empty_site_index(site);
+        write_text_if_changed(&site_dir.join("index.html"), &empty_index).await?;
+    }
+    Ok(())
+}
+
+fn render_empty_site_index(site: &str) -> String {
+    let site_escaped = escape_html(site);
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{site} index</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 0; background: #f6f7fb; color: #1f2933; }}
+    header {{ padding: 24px 20px; background: #111827; color: #fff; }}
+    main {{ max-width: 1100px; margin: 0 auto; padding: 20px; }}
+    .empty-message {{ background: #fff; border-radius: 14px; padding: 32px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
+    .empty-message h2 {{ margin-top: 0; color: #6b7280; }}
+    .empty-message p {{ color: #9ca3af; }}
+    .empty-message a {{ color: #2563eb; text-decoration: none; }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{site}</h1>
+    <p>0 works · <a href="/">home</a></p>
+  </header>
+  <main>
+    <div class="empty-message">
+      <h2>作品がまだありません</h2>
+      <p>このサイトに作品をダウンロードまたはインポートすると、ここに表示されます。</p>
+      <p><a href="/">トップページに戻る</a></p>
+    </div>
+  </main>
+</body>
+</html>"#,
+        site = site_escaped
+    )
 }
 
 async fn write_manifest(config: &AppConfig) -> Result<()> {
@@ -219,5 +269,14 @@ mod tests {
             &serde_json::to_string(&vec!["pixiv".to_string(), "narou".to_string()]).unwrap(),
         );
         assert!(html.contains(r#"const sources = ["pixiv","narou"];"#));
+    }
+
+    #[test]
+    fn empty_site_index_is_valid_html() {
+        let html = render_empty_site_index("pixiv");
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<title>pixiv index</title>"));
+        assert!(html.contains("作品がまだありません"));
+        assert!(html.contains("href=\"/\""));
     }
 }
