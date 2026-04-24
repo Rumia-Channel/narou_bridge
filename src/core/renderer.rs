@@ -126,6 +126,7 @@ pub fn render_site_from_store(
     data_dir: &str,
     host_name: &str,
 ) -> Result<()> {
+    refresh_image_manifests(store, data_dir)?;
     let works = store.list_works(Some(site))?;
     let site_dir = PathBuf::from(data_dir).join(site);
     fs::create_dir_all(&site_dir).context("failed to create site dir")?;
@@ -1094,4 +1095,116 @@ fn update_cover_json(store: &Store, site: &str, site_dir: &Path) -> Result<()> {
         serde_json::to_string_pretty(&serde_json::Value::Object(cover_map))?
     ).context("failed to write cover.json")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::model::ImageRecord;
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("test-output")
+            .join(format!("{name}-{unique}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn sample_raw_json() -> serde_json::Value {
+        json!({
+            "version": 0,
+            "get_date": "2025-01-01T00:00:00Z",
+            "title": "Example Title",
+            "id": "n123",
+            "nid": "n123",
+            "url": "https://example.invalid/n123",
+            "author": "Example Author",
+            "author_id": null,
+            "author_url": null,
+            "caption": "Example Caption",
+            "total_episodes": 1,
+            "all_episodes": 1,
+            "total_characters": 3,
+            "all_characters": 3,
+            "type": "novel",
+            "serialization": "短編",
+            "tags": [],
+            "all_tags": [],
+            "createDate": "2025-01-01T00:00:00Z",
+            "updateDate": "2025-01-01T00:00:00Z",
+            "episodes": {
+                "1": {
+                    "id": "1",
+                    "chapter": null,
+                    "title": "Episode 1",
+                    "textCount": 3,
+                    "tags": [],
+                    "introduction": "",
+                    "text": "abc",
+                    "postscript": "",
+                    "createDate": "2025-01-01T00:00:00Z",
+                    "updateDate": "2025-01-01T00:00:00Z"
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn render_site_refreshes_root_cover_manifest() {
+        let root = test_dir("renderer-cover-manifest");
+        let data_dir = root.join("data");
+        let images_dir = data_dir.join("images");
+        fs::create_dir_all(&images_dir).unwrap();
+        fs::write(images_dir.join("cover.json"), "{\n  \"stale\": \"value\"\n}").unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        store
+            .upsert_image(&ImageRecord {
+                logical_name: "pixiv_n123_cover.jpg".to_string(),
+                hash: "abc123def4567890".to_string(),
+                ext: "jpg".to_string(),
+                kind: "cover".to_string(),
+            })
+            .expect("upsert image");
+        store
+            .upsert_work(&WorkRecord {
+                site: "pixiv".to_string(),
+                work_key: "n123".to_string(),
+                title: "Example Title".to_string(),
+                author: "Example Author".to_string(),
+                author_id: None,
+                author_url: None,
+                r#type: "novel".to_string(),
+                serialization: "短編".to_string(),
+                caption: "Example Caption".to_string(),
+                create_date: "2025-01-01T00:00:00Z".to_string(),
+                update_date: "2025-01-01T00:00:00Z".to_string(),
+                raw_json: sample_raw_json(),
+            })
+            .expect("upsert work");
+
+        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "")
+            .expect("render site");
+
+        let cover: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(images_dir.join("cover.json")).expect("read cover manifest"),
+        )
+        .expect("parse cover manifest");
+        assert_eq!(
+            cover,
+            json!({
+                "pixiv_n123_cover.jpg": "abc123def4567890"
+            })
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }
