@@ -751,6 +751,7 @@ fn parse_task_input_bytes(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput
     if content_type.contains("application/json") || content_type.ends_with("+json") {
         return serde_json::from_slice(body)
             .map(normalize_task_input)
+            .map(discard_client_upload_paths)
             .map(discard_client_request_id)
             .map_err(|err| err.to_string());
     }
@@ -758,6 +759,7 @@ fn parse_task_input_bytes(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput
     if content_type.contains("application/x-www-form-urlencoded") {
         return serde_urlencoded::from_bytes(body)
             .map(normalize_task_input)
+            .map(discard_client_upload_paths)
             .map(discard_client_request_id)
             .map_err(|err| err.to_string());
     }
@@ -765,6 +767,7 @@ fn parse_task_input_bytes(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput
     serde_json::from_slice(body)
         .or_else(|_| serde_urlencoded::from_bytes(body))
         .map(normalize_task_input)
+        .map(discard_client_upload_paths)
         .map(discard_client_request_id)
         .map_err(|err| err.to_string())
 }
@@ -818,6 +821,7 @@ async fn parse_multipart_task_input(
     }
 
     input = normalize_task_input(input);
+    input = discard_client_upload_paths(input);
     input = discard_client_request_id(input);
     let request_id = random_request_id();
 
@@ -880,6 +884,11 @@ fn normalize_task_input(input: TaskInput) -> TaskInput {
 
 fn discard_client_request_id(mut input: TaskInput) -> TaskInput {
     input.request_id = None;
+    input
+}
+
+fn discard_client_upload_paths(mut input: TaskInput) -> TaskInput {
+    input.pdf_path = None;
     input
 }
 
@@ -1611,6 +1620,36 @@ mod tests {
 
         assert_eq!(input.request_id, None);
         assert_eq!(input.update.as_deref(), Some("narou"));
+    }
+
+    #[test]
+    fn parse_task_input_bytes_discards_client_supplied_pdf_path() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+        let body = Bytes::from_static(br#"{"pdf_path":"C:\\secret.pdf","pdf_name":"sample.pdf"}"#);
+
+        let input = parse_task_input_bytes(&headers, &body).expect("request should parse");
+
+        assert_eq!(input.pdf_path, None);
+        assert_eq!(input.pdf_name.as_deref(), Some("sample.pdf"));
+    }
+
+    #[test]
+    fn parse_task_input_bytes_discards_form_supplied_pdf_path() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            header::HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        let body = Bytes::from_static(b"pdf_path=C%3A%5Csecret.pdf&pdf_name=sample.pdf");
+
+        let input = parse_task_input_bytes(&headers, &body).expect("request should parse");
+
+        assert_eq!(input.pdf_path, None);
+        assert_eq!(input.pdf_name.as_deref(), Some("sample.pdf"));
     }
 
     #[test]
