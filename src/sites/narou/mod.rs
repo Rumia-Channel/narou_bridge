@@ -1,6 +1,7 @@
 use crate::core::model::WorkRecord;
 use crate::core::renderer;
 use crate::core::storage::Store;
+use crate::sites::narou::repair::repair_narou;
 use crate::sites::{Site, SiteActionContext, SiteActionResult, SiteId};
 use anyhow::{Context, Result, bail};
 use lopdf::Document;
@@ -68,8 +69,21 @@ impl Site for NarouSite {
                 Ok(message) => SiteActionResult::success(self.id(), action, message),
                 Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
             },
-            "convert" | "repair" => match import_pdf_or_render(store, context) {
+            "convert" => match import_pdf_or_render(store, context) {
                 Ok(message) => SiteActionResult::success(self.id(), action, message),
+                Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
+            },
+            "repair" => match repair_narou(
+                store,
+                &context.data_dir,
+                &context.host_name,
+                context.request.pdf_path.as_deref(),
+            ) {
+                Ok(()) => SiteActionResult::success(
+                    self.id(),
+                    action,
+                    "narou repair completed".to_string(),
+                ),
                 Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
             },
             _ => SiteActionResult::skipped(self.id(), action, "unsupported"),

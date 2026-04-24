@@ -1,6 +1,6 @@
 use crate::core::model::{EpisodeIndexEntry, SiteIndexEntry, WorkRecord};
 use crate::core::storage::Store;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -143,6 +143,67 @@ pub fn render_site_from_store(
     Ok(())
 }
 
+pub fn repair_site_from_raw(
+    store: &Store,
+    site: &str,
+    data_dir: &str,
+    host_name: &str,
+) -> Result<()> {
+    refresh_image_manifests(store, data_dir)?;
+    let site_dir = PathBuf::from(data_dir).join(site);
+    if !site_dir.exists() {
+        bail!(
+            "repair requires existing raw.json data under {}",
+            site_dir.display()
+        );
+    }
+
+    let image_assets = load_image_assets(store)?;
+    let mut rendered = Vec::new();
+
+    for entry in
+        fs::read_dir(&site_dir).with_context(|| format!("failed to read {}", site_dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let work_key = entry.file_name().to_string_lossy().to_string();
+        let raw_path = entry.path().join("raw").join("raw.json");
+        if !raw_path.exists() {
+            continue;
+        }
+
+        let raw_json: serde_json::Value = serde_json::from_reader(
+            fs::File::open(&raw_path)
+                .with_context(|| format!("failed to open {}", raw_path.display()))?,
+        )
+        .with_context(|| format!("failed to parse {}", raw_path.display()))?;
+
+        rendered.push(render_work_from_raw(
+            &site_dir,
+            site,
+            &work_key,
+            raw_json,
+            host_name,
+            &image_assets,
+            false,
+        )?);
+    }
+
+    if rendered.is_empty() {
+        bail!(
+            "repair requires at least one existing raw.json under {}",
+            site_dir.display()
+        );
+    }
+
+    write_site_index(&site_dir, site, &rendered, host_name)?;
+    update_cover_json(store, site, &site_dir)?;
+    Ok(())
+}
+
 fn load_image_assets(store: &Store) -> Result<HashMap<String, ImageAsset>> {
     let mut images = HashMap::new();
     for image in store.list_images()? {
@@ -163,22 +224,42 @@ fn render_work(
     host_name: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> Result<RenderedWork> {
-    let work_dir = site_dir.join(&work.work_key);
+    render_work_from_raw(
+        site_dir,
+        &work.site,
+        &work.work_key,
+        work.raw_json.clone(),
+        host_name,
+        images,
+        true,
+    )
+}
+
+fn render_work_from_raw(
+    site_dir: &Path,
+    site: &str,
+    work_key: &str,
+    raw_json: serde_json::Value,
+    host_name: &str,
+    images: &HashMap<String, ImageAsset>,
+    write_raw_json: bool,
+) -> Result<RenderedWork> {
+    let work_dir = site_dir.join(work_key);
     let raw_dir = work_dir.join("raw");
     let info_dir = work_dir.join("info");
     fs::create_dir_all(&raw_dir).context("failed to create raw dir")?;
     fs::create_dir_all(&info_dir).context("failed to create info dir")?;
 
-    fs::write(
-        raw_dir.join("raw.json"),
-        serde_json::to_string_pretty(&work.raw_json)?,
-    )?;
+    if write_raw_json {
+        fs::write(
+            raw_dir.join("raw.json"),
+            serde_json::to_string_pretty(&raw_json)?,
+        )?;
+    }
 
-    let raw_json = work.raw_json.clone();
     let raw_work = parse_raw_work(&raw_json)
-        .with_context(|| format!("failed to parse raw work for {}", work.work_key))?;
-    let rendered =
-        build_rendered_work(raw_work, work.site.clone(), work.work_key.clone(), raw_json);
+        .with_context(|| format!("failed to parse raw work for {work_key}"))?;
+    let rendered = build_rendered_work(raw_work, site.to_string(), work_key.to_string(), raw_json);
 
     fs::write(
         work_dir.join("index.html"),
@@ -395,7 +476,7 @@ fn render_work_index(
         reader_url = escape_html(&reader_url(host_name, site, work_key)),
         first_episode = escape_html(&first_episode)
     );
-    
+
     let body = format!(
         r#"<section class="meta-panel">
   <p class="meta">{author} · {serialization} · {episode_count} 話</p>
@@ -419,14 +500,9 @@ fn render_work_index(
         episodes = episodes
     );
 
-    let canonical_url = format_canonical_url(host_name, &format!("/{}/{}/index.html", site, work_key));
-    let og_tags = build_og_tags(
-        &page_title,
-        &work.caption,
-        "article",
-        &canonical_url,
-        "",
-    );
+    let canonical_url =
+        format_canonical_url(host_name, &format!("/{}/{}/index.html", site, work_key));
+    let og_tags = build_og_tags(&page_title, &work.caption, "article", &canonical_url, "");
 
     render_page_shell_with_ogp(&page_title, &work.title, &nav, &body, &og_tags)
 }
@@ -453,7 +529,7 @@ fn render_work_info(
         first_episode = escape_html(&first_episode),
         reader_url = escape_html(&reader_url(host_name, site, work_key))
     );
-    
+
     let body = format!(
         r#"<section class="meta-panel">
   <p class="meta">{author} · {serialization} · {work_key}</p>
@@ -494,16 +570,19 @@ fn render_work_info(
         raw_json = escape_html(&raw_json)
     );
 
-    let canonical_url = format_canonical_url(host_name, &format!("/{}/{}/info/index.html", site, work_key));
-    let og_tags = build_og_tags(
-        &page_title,
-        &work.caption,
-        "article",
-        &canonical_url,
-        "",
+    let canonical_url = format_canonical_url(
+        host_name,
+        &format!("/{}/{}/info/index.html", site, work_key),
     );
+    let og_tags = build_og_tags(&page_title, &work.caption, "article", &canonical_url, "");
 
-    render_page_shell_with_ogp(&page_title, &format!("{} / info", work.title), &nav, &body, &og_tags)
+    render_page_shell_with_ogp(
+        &page_title,
+        &format!("{} / info", work.title),
+        &nav,
+        &body,
+        &og_tags,
+    )
 }
 
 fn render_episode_page(
@@ -519,12 +598,24 @@ fn render_episode_page(
 ) -> String {
     let page_title = format!("{} - {}", episode.title, rendered.work.title);
     let nav = render_episode_nav(site, work_key, episode_key, prev, next, host_name);
-    
+
     let mut paragraph_id = 1usize;
-    let introduction_html = render_rich_text(&episode.introduction, site, work_key, images, &mut paragraph_id);
+    let introduction_html = render_rich_text(
+        &episode.introduction,
+        site,
+        work_key,
+        images,
+        &mut paragraph_id,
+    );
     let text_html = render_rich_text(&episode.text, site, work_key, images, &mut paragraph_id);
-    let postscript_html = render_rich_text(&episode.postscript, site, work_key, images, &mut paragraph_id);
-    
+    let postscript_html = render_rich_text(
+        &episode.postscript,
+        site,
+        work_key,
+        images,
+        &mut paragraph_id,
+    );
+
     let body = format!(
         r#"<section class="meta-panel">
   <p class="meta">{author} · {serialization} · {work_key}</p>
@@ -557,7 +648,10 @@ fn render_episode_page(
         postscript_html = postscript_html
     );
 
-    let canonical_url = format_canonical_url(host_name, &format!("/{}/{}/{}.html", site, work_key, episode_key));
+    let canonical_url = format_canonical_url(
+        host_name,
+        &format!("/{}/{}/{}.html", site, work_key, episode_key),
+    );
     let og_tags = build_og_tags(
         &page_title,
         &episode.introduction,
@@ -578,7 +672,13 @@ fn render_episode_summary_list(
     let mut items = String::new();
     for (episode_key, episode) in episodes {
         let mut paragraph_id = 1usize;
-        let caption = render_rich_text(&episode.introduction, site, work_key, images, &mut paragraph_id);
+        let caption = render_rich_text(
+            &episode.introduction,
+            site,
+            work_key,
+            images,
+            &mut paragraph_id,
+        );
         items.push_str(&format!(
             r#"<li>
   <a href="./{episode_key}.html">{title}</a>
@@ -720,7 +820,13 @@ fn render_rich_text(
         }
 
         if !trimmed.is_empty() && current.is_empty() && is_standalone_markup(trimmed) {
-            blocks.push(render_markup_line(trimmed, site, work_key, images, paragraph_id));
+            blocks.push(render_markup_line(
+                trimmed,
+                site,
+                work_key,
+                images,
+                paragraph_id,
+            ));
             continue;
         }
 
@@ -984,22 +1090,16 @@ fn render_page_shell_with_ogp(
     )
 }
 
-fn build_og_tags(
-    title: &str,
-    description: &str,
-    og_type: &str,
-    url: &str,
-    image: &str,
-) -> String {
+fn build_og_tags(title: &str, description: &str, og_type: &str, url: &str, image: &str) -> String {
     let mut tags = String::new();
-    
+
     if !title.is_empty() {
         tags.push_str(&format!(
             "  <meta property=\"og:title\" content=\"{}\">\n",
             escape_html_attr(title)
         ));
     }
-    
+
     if !description.is_empty() {
         tags.push_str(&format!(
             "  <meta property=\"og:description\" content=\"{}\">\n",
@@ -1010,28 +1110,28 @@ fn build_og_tags(
             escape_html_attr(description)
         ));
     }
-    
+
     if !og_type.is_empty() {
         tags.push_str(&format!(
             "  <meta property=\"og:type\" content=\"{}\">\n",
             escape_html_attr(og_type)
         ));
     }
-    
+
     if !url.is_empty() {
         tags.push_str(&format!(
             "  <meta property=\"og:url\" content=\"{}\">\n",
             escape_html_attr(url)
         ));
     }
-    
+
     if !image.is_empty() {
         tags.push_str(&format!(
             "  <meta property=\"og:image\" content=\"{}\">\n",
             escape_html_attr(image)
         ));
     }
-    
+
     tags.trim_end().to_string()
 }
 
@@ -1051,7 +1151,8 @@ fn truncate_text(text: &str, max_len: usize) -> String {
             .take(max_len)
             .collect::<String>()
             .trim_end()
-            .to_string() + "..."
+            .to_string()
+            + "..."
     }
 }
 
@@ -1064,7 +1165,11 @@ fn format_canonical_url(host_name: &str, path: &str) -> String {
     }
 }
 
-fn get_cover_image_url(_site: &str, _work_key: &str, images: &HashMap<String, ImageAsset>) -> String {
+fn get_cover_image_url(
+    _site: &str,
+    _work_key: &str,
+    images: &HashMap<String, ImageAsset>,
+) -> String {
     // Try to find a cover image
     for (logical_name, image) in images.iter() {
         if logical_name.contains("cover") || logical_name.contains("Cover") {
@@ -1074,26 +1179,28 @@ fn get_cover_image_url(_site: &str, _work_key: &str, images: &HashMap<String, Im
     String::new()
 }
 
-
 fn update_cover_json(store: &Store, site: &str, site_dir: &Path) -> Result<()> {
     // Generate cover.json containing cover images for the site
-    let images = store.list_images()?.into_iter()
+    let images = store
+        .list_images()?
+        .into_iter()
         .filter(|img| img.logical_name.contains(site) || img.kind == "cover")
         .collect::<Vec<_>>();
-    
+
     let mut cover_map = serde_json::Map::new();
     for img in images {
         if img.kind == "cover" {
             cover_map.insert(img.logical_name, serde_json::Value::String(img.hash));
         }
     }
-    
+
     let cover_dir = site_dir.join("images");
     fs::create_dir_all(&cover_dir).context("failed to create images dir")?;
     fs::write(
         cover_dir.join("cover.json"),
-        serde_json::to_string_pretty(&serde_json::Value::Object(cover_map))?
-    ).context("failed to write cover.json")?;
+        serde_json::to_string_pretty(&serde_json::Value::Object(cover_map))?,
+    )
+    .context("failed to write cover.json")?;
     Ok(())
 }
 
@@ -1163,7 +1270,11 @@ mod tests {
         let data_dir = root.join("data");
         let images_dir = data_dir.join("images");
         fs::create_dir_all(&images_dir).unwrap();
-        fs::write(images_dir.join("cover.json"), "{\n  \"stale\": \"value\"\n}").unwrap();
+        fs::write(
+            images_dir.join("cover.json"),
+            "{\n  \"stale\": \"value\"\n}",
+        )
+        .unwrap();
 
         let store = Store::open_in_memory().expect("store");
         store
@@ -1204,6 +1315,58 @@ mod tests {
                 "pixiv_n123_cover.jpg": "abc123def4567890"
             })
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn repair_site_prefers_existing_raw_json_without_rewriting_it() {
+        let root = test_dir("renderer-repair-from-raw");
+        let data_dir = root.join("data");
+        let raw_dir = data_dir.join("pixiv").join("n123").join("raw");
+        fs::create_dir_all(&raw_dir).unwrap();
+
+        let mut disk_raw = sample_raw_json();
+        disk_raw["title"] = json!("Disk Title");
+        disk_raw["caption"] = json!("Disk Caption");
+        let disk_raw_text = serde_json::to_string(&disk_raw).unwrap();
+        fs::write(raw_dir.join("raw.json"), &disk_raw_text).unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        store
+            .upsert_work(&WorkRecord {
+                site: "pixiv".to_string(),
+                work_key: "n123".to_string(),
+                title: "Database Title".to_string(),
+                author: "Database Author".to_string(),
+                author_id: None,
+                author_url: None,
+                r#type: "novel".to_string(),
+                serialization: "短編".to_string(),
+                caption: "Database Caption".to_string(),
+                create_date: "2025-01-01T00:00:00Z".to_string(),
+                update_date: "2025-01-01T00:00:00Z".to_string(),
+                raw_json: {
+                    let mut raw = sample_raw_json();
+                    raw["title"] = json!("Database Title");
+                    raw["caption"] = json!("Database Caption");
+                    raw
+                },
+            })
+            .expect("upsert work");
+
+        repair_site_from_raw(&store, "pixiv", data_dir.to_str().unwrap(), "")
+            .expect("repair site from raw");
+
+        let repaired_raw = fs::read_to_string(raw_dir.join("raw.json")).expect("read repaired raw");
+        assert_eq!(repaired_raw, disk_raw_text);
+
+        let index: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(data_dir.join("pixiv").join("index.json")).expect("read index"),
+        )
+        .expect("parse index");
+        assert_eq!(index["n123"]["title"].as_str(), Some("Disk Title"));
+        assert_eq!(index["n123"]["caption"].as_str(), Some("Disk Caption"));
 
         fs::remove_dir_all(root).unwrap();
     }
