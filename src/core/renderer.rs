@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const NOVEL_PAGE_TEMPLATE: &str = include_str!("../../templates/novel_page.html");
+
 #[derive(Debug, Clone, Deserialize)]
 struct RawWork {
     #[serde(default)]
@@ -262,16 +264,38 @@ fn render_work_from_raw(
         .with_context(|| format!("failed to parse raw work for {work_key}"))?;
     let rendered = build_rendered_work(raw_work, site.to_string(), work_key.to_string(), raw_json);
 
-    fs::write(
-        work_dir.join("index.html"),
+    let work_root_html = if rendered.work.serialization == "短編" {
+        if let Some((episode_key, episode)) = rendered.episodes.first() {
+            render_episode_page(
+                &rendered.site,
+                &rendered.work_key,
+                &rendered,
+                episode_key,
+                episode,
+                None,
+                None,
+                host_name,
+                images,
+            )
+        } else {
+            render_work_index(
+                &rendered.site,
+                &rendered.work_key,
+                &rendered,
+                host_name,
+                images,
+            )
+        }
+    } else {
         render_work_index(
             &rendered.site,
             &rendered.work_key,
             &rendered,
             host_name,
             images,
-        ),
-    )?;
+        )
+    };
+    fs::write(work_dir.join("index.html"), work_root_html)?;
     fs::write(
         info_dir.join("index.html"),
         render_work_info(
@@ -484,51 +508,23 @@ fn render_work_index(
     images: &HashMap<String, ImageAsset>,
 ) -> String {
     let work = &rendered.work;
-    let episode_count = rendered.episodes.len();
-    let episodes = render_episode_summary_list(site, work_key, &rendered.episodes, images);
-    let tags = render_tag_list(&work.all_tags);
-    let first_episode = rendered
-        .episodes
-        .first()
-        .map(|(_, episode)| format!("./{}/index.html", episode.id))
-        .unwrap_or_else(|| "./info/index.html".to_string());
-
     let page_title = format!("{} - {}", work.title, site);
     let nav = format!(
-        r#"<a href="../index.html">site index</a>
-<a href="info/index.html">info</a>
-<a href="{reader_url}">reader</a>
-<a href="{first_episode}">first episode</a>"#,
+        r#"<a href="./info/index.html" class="header-nav-link">作品情報</a><a href="{reader_url}" class="header-nav-link">簡易リーダー</a>"#,
         reader_url = escape_html(&reader_url(host_name, site, work_key)),
-        first_episode = escape_html(&first_episode)
     );
-
     let body = format!(
-        r#"<section class="meta-panel">
-  <p class="meta">{author} · {serialization} · {episode_count} 話</p>
-  <p class="meta">作者ID: {author_id}</p>
-  <p class="meta">作成: {create_date} / 更新: {update_date}</p>
-  <p class="summary">{caption}</p>
-  {tags}
-</section>
-<section class="episode-list">
-  <h2>Episodes</h2>
-  {episodes}
-</section>"#,
-        author = escape_html(&work.author),
-        serialization = escape_html(&work.serialization),
-        episode_count = episode_count,
-        author_id = escape_html(work.author_id.as_deref().unwrap_or("-")),
-        create_date = escape_html(&work.create_date),
-        update_date = escape_html(&work.update_date),
-        caption = escape_html(&work.caption),
-        tags = tags,
-        episodes = episodes
+        r#"<p class="novel_title">{title}</p>
+<div class="index_box">
+{episodes}
+</div>"#,
+        title = escape_html(&work.title),
+        episodes = render_episode_index_content(&rendered.episodes)
     );
 
     let canonical_url =
         format_canonical_url(host_name, &format!("/{}/{}/index.html", site, work_key));
-    let og_tags = build_og_tags(
+    let extra_head = build_og_tags(
         &page_title,
         &work.caption,
         "article",
@@ -536,7 +532,7 @@ fn render_work_index(
         &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
     );
 
-    render_page_shell_with_ogp(&page_title, &work.title, &nav, &body, &og_tags)
+    render_novel_page(&page_title, &extra_head, &body, "../", &work.title, &nav)
 }
 
 fn render_work_info(
@@ -547,18 +543,9 @@ fn render_work_info(
     images: &HashMap<String, ImageAsset>,
 ) -> String {
     let work = &rendered.work;
-    let first_episode = rendered
-        .episodes
-        .first()
-        .map(|(_, episode)| format!("../{}/index.html", episode.id))
-        .unwrap_or_else(|| "../index.html".to_string());
-
     let page_title = format!("{} info", work.title);
     let nav = format!(
-        r#"<a href="../index.html">back</a>
-<a href="{first_episode}">first episode</a>
-<a href="{reader_url}">reader</a>"#,
-        first_episode = escape_html(&first_episode),
+        r#"<a href="{reader_url}" class="header-nav-link">簡易リーダー</a>"#,
         reader_url = escape_html(&reader_url(host_name, site, work_key))
     );
 
@@ -568,7 +555,7 @@ fn render_work_info(
         host_name,
         &format!("/{}/{}/info/index.html", site, work_key),
     );
-    let og_tags = build_og_tags(
+    let extra_head = build_og_tags(
         &page_title,
         &work.caption,
         "article",
@@ -576,29 +563,38 @@ fn render_work_info(
         &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
     );
 
-    render_page_shell_with_ogp(
-        &page_title,
-        &format!("{} / info", work.title),
-        &nav,
-        &body,
-        &og_tags,
-    )
+    render_novel_page(&page_title, &extra_head, &body, "../", &work.title, &nav)
 }
 
 fn render_episode_page(
     site: &str,
     work_key: &str,
     rendered: &RenderedWork,
-    episode_key: &str,
+    _episode_key: &str,
     episode: &RawEpisode,
-    prev: Option<&str>,
-    next: Option<&str>,
+    _prev: Option<&str>,
+    _next: Option<&str>,
     host_name: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> String {
     let page_title = format!("{} - {}", episode.title, rendered.work.title);
-    let nav = render_episode_nav(site, work_key, &episode.id, prev, next, host_name);
-    let image_path_base = if rendered.work.serialization == "短編" {
+    let is_short_story = rendered.work.serialization == "短編";
+    let nav = if is_short_story {
+        format!(
+            r#"<a href="./info/index.html" class="header-nav-link">作品情報</a><a href="{reader_url}" class="header-nav-link">簡易リーダー</a>"#,
+            reader_url = escape_html(&reader_url(host_name, site, work_key))
+        )
+    } else {
+        format!(
+            r#"<a href="../info/index.html" class="header-nav-link">作品情報</a><a href="{reader_url}" class="header-nav-link">簡易リーダー</a>"#,
+            reader_url = escape_html(&format!(
+                "{}&eid={}",
+                reader_url(host_name, site, work_key),
+                escape_html_attr(&episode.id)
+            ))
+        )
+    };
+    let image_path_base = if is_short_story {
         "../../images"
     } else {
         "../../../images"
@@ -646,166 +642,129 @@ fn render_episode_page(
     };
 
     let body = format!(
-        r#"<section class="meta-panel">
-  <p class="meta">{author} · {serialization} · {work_key}</p>
-  <p class="meta">episode {episode_key} / id: {episode_id}</p>
-  <p class="meta">文字数: {text_count} / chapter: {chapter}</p>
-  <p class="meta">作成: {create_date} / 更新: {update_date}</p>
-  {tags}
-</section>
-<article class="episode">
-  <h2>{title}</h2>
-  {introduction_block}
-  <div class="episode-block text">{text_html}</div>
-  {postscript_block}
-</article>"#,
-        author = escape_html(&rendered.work.author),
-        serialization = escape_html(&rendered.work.serialization),
-        work_key = escape_html(work_key),
-        episode_key = escape_html(episode_key),
-        episode_id = escape_html(&episode.id),
-        chapter = escape_html(episode.chapter.as_deref().unwrap_or("-")),
-        create_date = escape_html(&episode.create_date),
-        update_date = escape_html(&episode.update_date),
-        text_count = episode.text_count,
-        tags = render_tag_list(&episode.tags),
-        title = escape_html(&episode.title),
-        introduction_block = introduction_block,
+        r#"{body_title}
+{introduction_block}
+<div class="js-novel-text p-novel__text">{text_html}</div>
+{postscript_block}
+<script src="/script/image.js"></script>"#,
+        body_title = if is_short_story {
+            format!(
+                r#"<p class="novel_title">{}</p>"#,
+                escape_html(&rendered.work.title)
+            )
+        } else {
+            format!(
+                r#"<p class="novel_subtitle">{}</p>"#,
+                escape_html(&episode.title)
+            )
+        },
+        introduction_block = if introduction_block.is_empty() {
+            String::new()
+        } else {
+            introduction_block.replace(
+                r#"<div class="episode-block introduction">"#,
+                r#"<div class="js-novel-text p-novel__text p-novel__text--preface">"#,
+            )
+        },
         text_html = text_html,
-        postscript_block = postscript_block
+        postscript_block = if postscript_block.is_empty() {
+            String::new()
+        } else {
+            postscript_block.replace(
+                r#"<div class="episode-block postscript">"#,
+                r#"<div class="js-novel-text p-novel__text p-novel__text--afterword">"#,
+            )
+        }
     );
 
-    let canonical_url = format_canonical_url(
-        host_name,
-        &format!("/{}/{}/{}/index.html", site, work_key, episode.id),
+    let canonical_url = if is_short_story {
+        format_canonical_url(host_name, &format!("/{}/{}/index.html", site, work_key))
+    } else {
+        format_canonical_url(
+            host_name,
+            &format!("/{}/{}/{}/index.html", site, work_key, episode.id),
+        )
+    };
+    let extra_head = format!(
+        "{}\n<style>\n            img {{ display: block; }}\n        </style>",
+        build_og_tags(
+            &page_title,
+            &episode.introduction,
+            "article",
+            &canonical_url,
+            &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
+        )
     );
-    let og_tags = build_og_tags(
+
+    render_novel_page(
         &page_title,
-        &episode.introduction,
-        "article",
-        &canonical_url,
-        &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
-    );
-
-    render_page_shell_with_ogp(&page_title, &episode.title, &nav, &body, &og_tags)
+        &extra_head,
+        &body,
+        if is_short_story { "../" } else { "../" },
+        if is_short_story {
+            &rendered.work.title
+        } else {
+            &episode.title
+        },
+        &nav,
+    )
 }
 
-fn render_episode_summary_list(
-    site: &str,
-    work_key: &str,
-    episodes: &[(String, RawEpisode)],
-    images: &HashMap<String, ImageAsset>,
-) -> String {
-    let mut items = String::new();
-    for (_episode_key, episode) in episodes {
-        let mut paragraph_id = 1usize;
-        let caption = render_rich_text(
-            &episode.introduction,
-            site,
-            work_key,
-            images,
-            "../../images",
-            "p",
-            &mut paragraph_id,
-        );
-        items.push_str(&format!(
-            r#"<li>
-  <a href="./{episode_id}/index.html">{title}</a>
-  <span class="meta">[{episode_id}] {update_date}</span>
-  <div class="summary">{caption}</div>
-</li>"#,
-            title = escape_html(&episode.title),
+fn render_episode_index_content(episodes: &[(String, RawEpisode)]) -> String {
+    let mut items = Vec::new();
+    let mut current_chapter: Option<&str> = None;
+
+    items.push(r#"<div class="p-eplist">"#.to_string());
+    for (_, episode) in episodes {
+        let chapter = episode.chapter.as_deref();
+        if chapter != current_chapter {
+            current_chapter = chapter;
+            if let Some(chapter) = chapter.filter(|chapter| !chapter.is_empty()) {
+                items.push(format!(
+                    r#"<div class="p-eplist__chapter-title">{}</div>"#,
+                    escape_html(chapter)
+                ));
+            }
+        }
+
+        let create_date = format_date_jp_or_default(&episode.create_date, "%Y/%m/%d %H:%M");
+        let update_date = format_date_jp_or_default(&episode.update_date, "%Y/%m/%d %H:%M");
+        items.push(format!(
+            r#"<div class="p-eplist__sublist">
+<a href="./{episode_id}/index.html" class="p-eplist__subtitle">
+{title}
+</a>
+<div class="p-eplist__update">
+{create_date}
+<span title="{update_date} 改稿">（<u>改</u>）</span>
+</div>
+</div>"#,
             episode_id = escape_html(&episode.id),
-            update_date = escape_html(&episode.update_date),
-            caption = caption
+            title = escape_html(&episode.title),
+            create_date = escape_html(&create_date),
+            update_date = escape_html(&update_date),
         ));
     }
+    items.push("</div>".to_string());
 
-    format!(r#"<ol class="episode-summary">{items}</ol>"#)
+    items.join("\n")
 }
 
-fn render_episode_nav(
-    site: &str,
-    work_key: &str,
-    episode_key: &str,
-    prev: Option<&str>,
-    next: Option<&str>,
-    host_name: &str,
-) -> String {
-    let mut links = Vec::new();
-    links.push(format!(r#"<a href="../index.html">index</a>"#));
-    links.push(format!(r#"<a href="../info/index.html">info</a>"#));
-    links.push(format!(
-        r#"<a href="{reader_url}">reader</a>"#,
-        reader_url = escape_html(&reader_url(host_name, site, work_key))
-    ));
-    if let Some(prev) = prev {
-        links.push(format!(r#"<a href="../{prev}/index.html">prev</a>"#));
-    }
-    if let Some(next) = next {
-        links.push(format!(r#"<a href="../{next}/index.html">next</a>"#));
-    }
-    links.push(format!(
-        r#"<span class="episode-key">{}</span>"#,
-        escape_html(episode_key)
-    ));
-    links.join(" ")
-}
-
-fn render_page_shell(
+fn render_novel_page(
     title: &str,
+    extra_head: &str,
+    body_content: &str,
+    back_url: &str,
     header_title: &str,
     nav_links: &str,
-    body: &str,
-    extra_head: &str,
 ) -> String {
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 0; background: #f6f7fb; color: #1f2933; line-height: 1.75; }}
-    header {{ position: sticky; top: 0; background: #111827; color: #fff; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.12); }}
-    header h1 {{ margin: 0 0 8px; font-size: 1.1rem; }}
-    header nav {{ display: flex; flex-wrap: wrap; gap: 10px; font-size: .92rem; }}
-    header a {{ color: #dbeafe; text-decoration: none; }}
-    main {{ max-width: 920px; margin: 0 auto; padding: 20px; }}
-    .meta-panel, .episode, .episode-list, .raw-json {{ background: #fff; border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-    .meta {{ margin: 0 0 8px; color: #6b7280; font-size: .92rem; }}
-    .summary {{ margin: 0 0 10px; white-space: pre-wrap; }}
-    .episode-block {{ margin-top: 14px; }}
-    .episode-block > :first-child {{ margin-top: 0; }}
-    .episode-text, .episode-block.text {{ white-space: pre-wrap; }}
-    pre {{ white-space: pre-wrap; overflow-x: auto; }}
-    .tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }}
-    .tag {{ background: #e5eefc; color: #1d4ed8; border-radius: 999px; padding: 2px 10px; font-size: .82rem; }}
-    .episode-summary {{ margin: 0; padding-left: 1.4rem; }}
-    .episode-summary li {{ margin: 0 0 12px; }}
-    .episode-summary .summary {{ color: #4b5563; }}
-    img {{ max-width: 100%; height: auto; }}
-    figure {{ margin: 0; }}
-    hr.page-break {{ border: 0; border-top: 1px solid #d1d5db; margin: 1.5rem 0; }}
-    ruby rt {{ font-size: .7em; }}
-  </style>
-  {extra_head}
-</head>
-<body>
-  <header>
-    <h1>{header_title}</h1>
-    <nav>{nav_links}</nav>
-  </header>
-  <main>{body}</main>
-</body>
-</html>"#,
-        title = escape_html(title),
-        header_title = escape_html(header_title),
-        nav_links = nav_links,
-        body = body,
-        extra_head = extra_head
-    )
+    NOVEL_PAGE_TEMPLATE
+        .replace("{title}", &escape_html(title))
+        .replace("{extra_head}", extra_head)
+        .replace("{body}", body_content)
+        .replace("{back_url}", &escape_html(back_url))
+        .replace("{header_title}", &escape_html(header_title))
+        .replace("{nav_links}", nav_links)
 }
 
 fn render_tag_list(tags: &[String]) -> String {
@@ -1107,6 +1066,15 @@ fn format_date_jp(iso_date: &str, format: &str) -> String {
     DateTime::parse_from_rfc3339(iso_date)
         .map(|date| date.with_timezone(&Utc).format(format).to_string())
         .unwrap_or_default()
+}
+
+fn format_date_jp_or_default(iso_date: &str, format: &str) -> String {
+    let formatted = format_date_jp(iso_date, format);
+    if formatted.is_empty() {
+        iso_date.to_string()
+    } else {
+        formatted
+    }
 }
 
 fn render_info_content(rendered: &RenderedWork, _work_key: &str) -> String {
@@ -1665,8 +1633,40 @@ mod tests {
         assert!(!html.contains(r#"<p class="summary">導入文</p>"#));
         assert!(
             html.contains(
-                r#"<div class="episode-block introduction"><p id="Lp1">導入文</p></div>"#
+                r#"<div class="js-novel-text p-novel__text p-novel__text--preface"><p id="Lp1">導入文</p></div>"#
             )
         );
+    }
+
+    #[test]
+    fn render_work_index_groups_episodes_by_chapter_title() {
+        let mut raw = sample_raw_json();
+        raw["serialization"] = json!("連載中");
+        raw["total_episodes"] = json!(2);
+        raw["all_episodes"] = json!(2);
+        raw["episodes"]["1"]["chapter"] = json!("第一章");
+        raw["episodes"]["2"] = json!({
+            "id": "2",
+            "chapter": "第二章",
+            "title": "Episode 2",
+            "textCount": 3,
+            "tags": [],
+            "introduction": "",
+            "text": "def",
+            "postscript": "",
+            "createDate": "2025-01-02T00:00:00Z",
+            "updateDate": "2025-01-02T00:00:00Z"
+        });
+        let rendered = build_rendered_work(
+            parse_raw_work(&raw).expect("parse raw"),
+            "narou".to_string(),
+            "n123".to_string(),
+            raw,
+        );
+
+        let html = render_work_index("narou", "n123", &rendered, "", &HashMap::new());
+
+        assert!(html.contains(r#"<div class="p-eplist__chapter-title">第一章</div>"#));
+        assert!(html.contains(r#"<div class="p-eplist__chapter-title">第二章</div>"#));
     }
 }
