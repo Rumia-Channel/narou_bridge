@@ -40,6 +40,7 @@ fn test_config(root: &Path) -> AppConfig {
         archive_dir: root.join("archive").to_string_lossy().to_string(),
         bind_addr: "127.0.0.1:0".to_string(),
         host_name: "http://127.0.0.1:0".to_string(),
+        img_url: String::new(),
         auto_update: false,
         auto_update_interval: 0,
         legacy_root: Some(legacy_root.to_string_lossy().to_string()),
@@ -117,6 +118,54 @@ fn sample_work_record() -> WorkRecord {
         update_date: "2025-01-02T00:00:00Z".to_string(),
         raw_json,
     }
+}
+
+fn write_legacy_data_root(data_root: &Path) {
+    std::fs::create_dir_all(data_root.join("pixiv").join("n123").join("raw"))
+        .expect("create work raw dir");
+    std::fs::create_dir_all(data_root.join("images")).expect("create images dir");
+    std::fs::create_dir_all(data_root.join("pixiv").join("snapshots").join("illust_ids"))
+        .expect("create snapshots dir");
+
+    let raw = serde_json::to_vec_pretty(&sample_work_record().raw_json).expect("raw json");
+    std::fs::write(
+        data_root
+            .join("pixiv")
+            .join("n123")
+            .join("raw")
+            .join("raw.json"),
+        raw,
+    )
+    .expect("write raw json");
+    std::fs::write(
+        data_root.join("images").join("database.json"),
+        br#"{"pixiv_n123_cover.jpg":"deadbeefcafebabe"}"#,
+    )
+    .expect("write database json");
+    std::fs::write(
+        data_root.join("images").join("cover.json"),
+        br#"{"pixiv_n123_cover.jpg":"deadbeefcafebabe"}"#,
+    )
+    .expect("write cover json");
+    std::fs::write(
+        data_root.join("images").join("deadbeefcafebabe.jpg"),
+        b"jpg",
+    )
+    .expect("write image file");
+    std::fs::write(
+        data_root.join("pixiv").join("user.json"),
+        br#"{"version":3,"12345":{"novel":"enable","comic":"enable","illust_ids_snapshot_hash":"abc"}}"#,
+    )
+    .expect("write user json");
+    std::fs::write(
+        data_root
+            .join("pixiv")
+            .join("snapshots")
+            .join("illust_ids")
+            .join("12345.json"),
+        br#"["10","20"]"#,
+    )
+    .expect("write snapshot json");
 }
 
 #[tokio::test]
@@ -319,4 +368,79 @@ async fn db_backed_json_routes_respond_without_persisted_json_files() {
             .join("raw.json")
             .exists()
     );
+}
+
+#[tokio::test]
+async fn build_runtime_state_bootstraps_empty_db_from_external_data_dir() {
+    let root = test_root("e2e-http-external-data");
+    let external_data_root = root.join("external-data");
+    write_legacy_data_root(&external_data_root);
+
+    let mut config = test_config(&root);
+    config.data_dir = external_data_root.to_string_lossy().to_string();
+    config.db_path = external_data_root
+        .join("runtime.sqlite3")
+        .to_string_lossy()
+        .to_string();
+
+    let state = build_runtime_state(
+        config.clone(),
+        Store::open(config.db_path_buf()).expect("open store"),
+        build_registry(),
+    )
+    .await
+    .expect("build runtime state");
+
+    {
+        let store = state.store.lock().await;
+        assert_eq!(
+            store
+                .get_work("pixiv", "n123")
+                .expect("get work")
+                .map(|work| work.title),
+            Some("DB-backed work".to_string())
+        );
+        assert_eq!(
+            store
+                .get_image("pixiv_n123_cover.jpg")
+                .expect("get image")
+                .map(|image| image.hash),
+            Some("deadbeefcafebabe".to_string())
+        );
+        assert_eq!(
+            store
+                .list_site_document_records("pixiv", Some("tracked_users/"))
+                .expect("list tracked users")
+                .len(),
+            2
+        );
+    }
+
+    let app = build_app(state);
+    let index_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/index.json")
+                .body(Body::empty())
+                .expect("index request"),
+        )
+        .await
+        .expect("index response");
+    assert_eq!(index_response.status(), StatusCode::OK);
+    let index_json = response_json(index_response).await;
+    assert_eq!(index_json["n123"]["title"].as_str(), Some("DB-backed work"));
+
+    let raw_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/n123/raw/raw.json")
+                .body(Body::empty())
+                .expect("raw request"),
+        )
+        .await
+        .expect("raw response");
+    assert_eq!(raw_response.status(), StatusCode::OK);
+    let raw_json = response_json(raw_response).await;
+    assert_eq!(raw_json["title"].as_str(), Some("DB-backed work"));
 }

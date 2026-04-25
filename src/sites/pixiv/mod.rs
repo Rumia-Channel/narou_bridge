@@ -131,6 +131,7 @@ impl Site for PixivSite {
                     &context.data_dir,
                     &context.cookie_dir,
                     &context.host_name,
+                    &context.img_url,
                 ) {
                     Ok(message) => SiteActionResult::success(self.id(), action, message),
                     Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
@@ -141,26 +142,41 @@ impl Site for PixivSite {
                 &context.data_dir,
                 &context.cookie_dir,
                 &context.host_name,
+                &context.img_url,
             ) {
                 Ok(message) => SiteActionResult::success(self.id(), action, message),
                 Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
             },
-            "convert" => match convert_pixiv(store, &context.data_dir, &context.host_name) {
-                Ok(_) => SiteActionResult::success(
-                    self.id(),
-                    action,
-                    "pixiv convert completed".to_string(),
-                ),
-                Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
-            },
-            "repair" => match repair_pixiv(store, &context.data_dir, &context.host_name) {
-                Ok(_) => SiteActionResult::success(
-                    self.id(),
-                    action,
-                    "pixiv repair completed".to_string(),
-                ),
-                Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
-            },
+            "convert" => {
+                match convert_pixiv(
+                    store,
+                    &context.data_dir,
+                    &context.host_name,
+                    &context.img_url,
+                ) {
+                    Ok(_) => SiteActionResult::success(
+                        self.id(),
+                        action,
+                        "pixiv convert completed".to_string(),
+                    ),
+                    Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
+                }
+            }
+            "repair" => {
+                match repair_pixiv(
+                    store,
+                    &context.data_dir,
+                    &context.host_name,
+                    &context.img_url,
+                ) {
+                    Ok(_) => SiteActionResult::success(
+                        self.id(),
+                        action,
+                        "pixiv repair completed".to_string(),
+                    ),
+                    Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
+                }
+            }
             "login" => {
                 SiteActionResult::skipped(self.id(), action, "login moved to separate helper")
             }
@@ -182,6 +198,7 @@ fn pixiv_download(
     data_dir: &str,
     cookie_dir: &str,
     host_name: &str,
+    img_url: &str,
 ) -> Result<String> {
     let img_path = PathBuf::from(data_dir).join("images");
     fs::create_dir_all(&img_path)?;
@@ -255,7 +272,14 @@ fn pixiv_download(
         }
     };
 
-    renderer::render_site_from_store(store, "pixiv", data_dir, host_name, target_work.as_deref())?;
+    renderer::render_site_from_store(
+        store,
+        "pixiv",
+        data_dir,
+        host_name,
+        img_url,
+        target_work.as_deref(),
+    )?;
     if let Some(err) = deferred_error {
         return Err(err);
     }
@@ -583,7 +607,12 @@ fn parse_markup_image_name(logical_name: &str) -> Option<(String, String)> {
     let path = Path::new(logical_name);
     let ext = path.extension()?.to_str()?.to_string();
     let hash = path.file_stem()?.to_str()?.to_string();
-    if hash.len() != 16 || !hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+    if hash.len() < 10
+        || !hash
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        || hash.chars().all(|ch| ch.is_ascii_alphabetic())
+    {
         return None;
     }
     Some((hash, ext))

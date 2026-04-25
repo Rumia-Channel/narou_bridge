@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub archive_dir: String,
     pub bind_addr: String,
     pub host_name: String,
+    pub img_url: String,
     pub auto_update: bool,
     pub auto_update_interval: u64,
     pub legacy_root: Option<String>,

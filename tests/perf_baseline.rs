@@ -104,6 +104,7 @@ fn perf_baseline_render_site() {
         "pixiv",
         data_dir.to_str().unwrap(),
         "http://127.0.0.1:0",
+        "",
         None,
     )
     .expect("render site");

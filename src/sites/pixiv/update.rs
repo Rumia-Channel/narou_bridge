@@ -20,6 +20,7 @@ pub fn pixiv_update(
     data_dir: &str,
     cookie_dir: &str,
     host_name: &str,
+    img_url: &str,
 ) -> Result<String> {
     let img_path = PathBuf::from(data_dir).join("images");
     fs::create_dir_all(&img_path)?;
@@ -28,7 +29,7 @@ pub fn pixiv_update(
 
     let tracked_users = super::tracked_user_ids(store, &folder_path)?;
     if tracked_users.is_empty() {
-        renderer::render_site_from_store(store, "pixiv", data_dir, host_name, None)?;
+        renderer::render_site_from_store(store, "pixiv", data_dir, host_name, img_url, None)?;
         return Ok(
             "pixiv update rendered existing works; no tracked users in user.json".to_string(),
         );
@@ -44,6 +45,7 @@ pub fn pixiv_update(
             &img_path,
             data_dir,
             host_name,
+            img_url,
         );
     }
 
@@ -69,6 +71,7 @@ pub fn pixiv_update(
             &img_path,
             data_dir,
             host_name,
+            img_url,
         ) {
             Ok(message) => {
                 persist_active_candidate(store, cookie_dir, candidate)?;
@@ -102,6 +105,7 @@ fn run_pixiv_update_with_client(
     img_path: &Path,
     data_dir: &str,
     host_name: &str,
+    img_url: &str,
 ) -> Result<String> {
     let mut updated_users = 0usize;
     let mut downloaded_works = 0usize;
@@ -135,7 +139,7 @@ fn run_pixiv_update_with_client(
         }
     }
 
-    renderer::render_site_from_store(store, "pixiv", data_dir, host_name, None)?;
+    renderer::render_site_from_store(store, "pixiv", data_dir, host_name, img_url, None)?;
 
     if !failures.is_empty() {
         return Err(anyhow::anyhow!(

@@ -311,6 +311,7 @@ mod tests {
             archive_dir: root.join("archive").to_string_lossy().into_owned(),
             bind_addr: "127.0.0.1:8080".to_string(),
             host_name: "http://localhost:8080".to_string(),
+            img_url: String::new(),
             auto_update: false,
             auto_update_interval: 0,
             legacy_root: None,

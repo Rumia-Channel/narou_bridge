@@ -57,6 +57,11 @@ fn build_app_config(repo_root: &Path, document: &IniDocument) -> AppConfig {
     let queue_dir = resolve_runtime_dir(repo_root, document.get("setting", "queue"), "queue");
     let pdf_dir = resolve_runtime_dir(repo_root, document.get("setting", "pdf"), "pdf");
     let log_dir = resolve_runtime_dir(repo_root, document.get("setting", "log"), "log");
+    let img_url = document
+        .get("server", "img_url")
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
 
     let port = parse_port(document.get("server", "port"), 8080);
     let bind_addr = derive_bind_addr(document.get("server", "domain"), port);
@@ -81,6 +86,7 @@ fn build_app_config(repo_root: &Path, document: &IniDocument) -> AppConfig {
         archive_dir: repo_root.join("archive").to_string_lossy().to_string(),
         bind_addr,
         host_name,
+        img_url,
         auto_update: parse_bool(document.get("setting", "auto_update")),
         auto_update_interval: parse_u64(document.get("setting", "auto_update_interval"), 43_200),
         legacy_root: Some(repo_root.join("sample").to_string_lossy().to_string()),
@@ -88,31 +94,16 @@ fn build_app_config(repo_root: &Path, document: &IniDocument) -> AppConfig {
 }
 
 fn resolve_runtime_dir(repo_root: &Path, raw_value: Option<&str>, child_name: &str) -> PathBuf {
-    let base_dir = raw_value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                repo_root.join(path)
-            }
-        })
-        .unwrap_or_else(|| repo_root.to_path_buf());
-
-    if path_ends_with(&base_dir, child_name) {
-        base_dir
+    if let Some(value) = raw_value.map(str::trim).filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(value);
+        if path.is_absolute() {
+            path
+        } else {
+            repo_root.join(path)
+        }
     } else {
-        base_dir.join(child_name)
+        repo_root.join(child_name)
     }
-}
-
-fn path_ends_with(path: &Path, child_name: &str) -> bool {
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .map(|value| value.eq_ignore_ascii_case(child_name))
-        .unwrap_or(false)
 }
 
 fn parse_bool(value: Option<&str>) -> bool {
@@ -340,15 +331,74 @@ use_proxy=0
         assert_eq!(config.data_dir, root.join("data").to_string_lossy());
         assert_eq!(
             config.cookie_dir,
-            root.join(r"D:\runtime").join("cookie").to_string_lossy()
+            Path::new(r"D:\runtime").to_string_lossy()
         );
         assert_eq!(config.bind_addr, "127.0.0.1:9000");
         assert_eq!(config.host_name, "http://localhost:9000");
+        assert_eq!(config.img_url, "");
         assert!(config.auto_update);
         assert_eq!(config.auto_update_interval, 600);
         assert_eq!(
             config.legacy_root,
             Some(root.join("sample").to_string_lossy().into_owned())
         );
+    }
+
+    #[test]
+    fn build_config_preserves_absolute_external_data_dir() {
+        let root = Path::new(r"C:\repo");
+        let document = IniDocument::parse(
+            r#"
+[setting]
+data=C:\Users\user\Documents\Webnovel\narou_bridge
+cookie=C:\Users\user\Documents\Webnovel\cookie
+queue=C:\Users\user\Documents\Webnovel\queue
+pdf=C:\Users\user\Documents\Webnovel\pdf
+log=C:\Users\user\Documents\Webnovel\log
+
+[server]
+domain=localhost
+port=8080
+"#,
+        )
+        .expect("ini parsing should succeed");
+
+        let config = build_app_config(root, &document);
+        assert_eq!(
+            config.data_dir,
+            Path::new(r"C:\Users\user\Documents\Webnovel\narou_bridge").to_string_lossy()
+        );
+        assert_eq!(
+            config.db_path,
+            Path::new(r"C:\Users\user\Documents\Webnovel\narou_bridge")
+                .join("runtime.sqlite3")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            config.cookie_dir,
+            Path::new(r"C:\Users\user\Documents\Webnovel\cookie").to_string_lossy()
+        );
+        assert_eq!(
+            config.queue_dir,
+            Path::new(r"C:\Users\user\Documents\Webnovel\queue").to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn build_config_preserves_img_url_override() {
+        let root = Path::new(r"C:\repo");
+        let document = IniDocument::parse(
+            r#"
+[server]
+domain=example.invalid
+port=8080
+img_url=https://cdn.example.invalid/novels/
+"#,
+        )
+        .expect("ini parsing should succeed");
+
+        let config = build_app_config(root, &document);
+        assert_eq!(config.host_name, "http://example.invalid:8080");
+        assert_eq!(config.img_url, "https://cdn.example.invalid/novels/");
     }
 }

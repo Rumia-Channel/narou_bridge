@@ -16,6 +16,7 @@ pub enum SiteId {
 #[derive(Debug, Clone)]
 pub struct SiteActionContext {
     pub host_name: String,
+    pub img_url: String,
     pub data_dir: String,
     pub cookie_dir: String,
     pub queue_dir: String,

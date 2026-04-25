@@ -139,8 +139,69 @@ pub async fn build_runtime_state(
 async fn prepare_runtime_state(state: &RuntimeState) -> Result<()> {
     ensure_runtime_dirs(&state.config).await?;
     write_static_bootstrap(&state.config, &state.registry.site_names()).await?;
+    bootstrap_store_from_existing_data(state).await?;
     recover_queued_runtime_state(state).await?;
     sync_queue_state(state).await?;
+    Ok(())
+}
+
+async fn bootstrap_store_from_existing_data(state: &RuntimeState) -> Result<()> {
+    let data_root = state.config.data_dir_path();
+    let site_names = state.registry.site_names();
+
+    let store = state.store.lock().await;
+    let mut imported_works = 0usize;
+    let mut imported_images = 0usize;
+    let mut imported_pixiv_docs = 0usize;
+
+    if store.list_works(None)?.is_empty() {
+        for site_name in &site_names {
+            imported_works += import_existing_site_records_from_tree(
+                &store,
+                &data_root.join(site_name),
+                site_name,
+            )?;
+        }
+    }
+
+    if store.list_images()?.is_empty() {
+        imported_images = import_existing_image_records(&store, &data_root.join("images"))?;
+    }
+
+    if store
+        .list_site_document_records(
+            crate::sites::pixiv::PIXIV_SITE_DOCUMENT_SCOPE,
+            Some("tracked_users/"),
+        )?
+        .is_empty()
+    {
+        let pixiv_dir = data_root.join("pixiv");
+        if pixiv_dir.exists() {
+            let tracked_users = crate::sites::pixiv::tracked_user_ids(&store, &pixiv_dir)?;
+            for user_id in &tracked_users {
+                let _ = crate::sites::pixiv::load_illust_snapshot(&store, &pixiv_dir, user_id)?;
+            }
+            imported_pixiv_docs = store
+                .list_site_document_records(
+                    crate::sites::pixiv::PIXIV_SITE_DOCUMENT_SCOPE,
+                    Some("tracked_users/"),
+                )?
+                .len();
+        }
+    }
+
+    drop(store);
+
+    if imported_works > 0 || imported_images > 0 || imported_pixiv_docs > 0 {
+        info!(
+            works = imported_works,
+            images = imported_images,
+            pixiv_site_documents = imported_pixiv_docs,
+            data_root = %data_root.display(),
+            "bootstrapped sqlite from existing data directory"
+        );
+    }
+
     Ok(())
 }
 
@@ -808,6 +869,7 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
             &state.config.data_dir,
             &state.config.pdf_dir,
             &state.config.host_name,
+            &state.config.img_url,
         )?;
         let _ = store.mark_task_status(task_id, TaskStatus::Succeeded, None, &now_string());
         return Ok(());
@@ -815,6 +877,7 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
 
     let context = crate::sites::SiteActionContext {
         host_name: state.config.host_name.clone(),
+        img_url: state.config.img_url.clone(),
         data_dir: state.config.data_dir.clone(),
         cookie_dir: state.config.cookie_dir.clone(),
         queue_dir: state.config.queue_dir.clone(),
@@ -1237,6 +1300,7 @@ fn import_uploaded_zip(
     data_dir: &str,
     pdf_dir: &str,
     host_name: &str,
+    img_url: &str,
 ) -> Result<String> {
     let archive_path =
         queued_zip_path(request, pdf_dir)?.context("queued ZIP upload is missing from pdf/")?;
@@ -1266,7 +1330,14 @@ fn import_uploaded_zip(
         copy_staged_zip_images(&payload_entries, staging_root, data_root)?;
         merge_zip_images(store, &metadata)?;
         renderer::refresh_image_manifests(store, data_dir)?;
-        renderer::render_site_from_store(store, &metadata.site_name, data_dir, host_name, None)?;
+        renderer::render_site_from_store(
+            store,
+            &metadata.site_name,
+            data_dir,
+            host_name,
+            img_url,
+            None,
+        )?;
 
         Ok(format!(
             "imported {} ({imported} works)",
@@ -1621,6 +1692,121 @@ fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str
     Ok(count)
 }
 
+fn import_existing_site_records_from_tree(
+    store: &Store,
+    site_dir: &Path,
+    site_name: &str,
+) -> Result<usize> {
+    if !site_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut imported = 0usize;
+    for entry in stdfs::read_dir(site_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let work_key = entry.file_name().to_string_lossy().to_string();
+        let raw_path = entry.path().join("raw").join("raw.json");
+        let alt_path = entry.path().join("data.json");
+        let payload_path = if raw_path.exists() {
+            raw_path
+        } else if alt_path.exists() {
+            alt_path
+        } else {
+            continue;
+        };
+
+        let raw_json: Value = serde_json::from_reader(
+            stdfs::File::open(&payload_path)
+                .with_context(|| format!("failed to open {}", payload_path.display()))?,
+        )
+        .with_context(|| format!("failed to parse {}", payload_path.display()))?;
+        let record = work_record_from_json(site_name, &work_key, raw_json)?;
+        store.upsert_work(&record)?;
+        imported += 1;
+    }
+
+    Ok(imported)
+}
+
+fn import_existing_image_records(store: &Store, images_dir: &Path) -> Result<usize> {
+    if !images_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut records = BTreeMap::<String, ImageRecord>::new();
+    let database_path = images_dir.join("database.json");
+    if database_path.exists() {
+        let database: Value = serde_json::from_reader(
+            stdfs::File::open(&database_path)
+                .with_context(|| format!("failed to open {}", database_path.display()))?,
+        )
+        .with_context(|| format!("failed to parse {}", database_path.display()))?;
+        if let Some(map) = database.as_object() {
+            for (logical_name, hash_value) in map {
+                let Some(hash) = hash_value.as_str() else {
+                    continue;
+                };
+                let Some(ext) = Path::new(logical_name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                else {
+                    continue;
+                };
+                records.insert(
+                    logical_name.clone(),
+                    ImageRecord {
+                        logical_name: logical_name.clone(),
+                        hash: hash.to_string(),
+                        ext: ext.to_string(),
+                        kind: "image".to_string(),
+                    },
+                );
+            }
+        }
+    }
+
+    let cover_path = images_dir.join("cover.json");
+    if cover_path.exists() {
+        let cover: Value = serde_json::from_reader(
+            stdfs::File::open(&cover_path)
+                .with_context(|| format!("failed to open {}", cover_path.display()))?,
+        )
+        .with_context(|| format!("failed to parse {}", cover_path.display()))?;
+        if let Some(map) = cover.as_object() {
+            for (logical_name, hash_value) in map {
+                let Some(hash) = hash_value.as_str() else {
+                    continue;
+                };
+                let Some(ext) = Path::new(logical_name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                else {
+                    continue;
+                };
+                records.insert(
+                    logical_name.clone(),
+                    ImageRecord {
+                        logical_name: logical_name.clone(),
+                        hash: hash.to_string(),
+                        ext: ext.to_string(),
+                        kind: "cover".to_string(),
+                    },
+                );
+            }
+        }
+    }
+
+    let imported = records.len();
+    for record in records.values() {
+        store.upsert_image(record)?;
+    }
+    Ok(imported)
+}
+
 fn work_record_from_json(site: &str, work_key: &str, raw_json: Value) -> Result<WorkRecord> {
     let payload: ZipWorkPayload =
         serde_json::from_value(raw_json.clone()).context("invalid zip work payload")?;
@@ -1929,6 +2115,7 @@ mod tests {
             archive_dir: root.join("archive").to_string_lossy().to_string(),
             bind_addr: "127.0.0.1:0".to_string(),
             host_name: "http://127.0.0.1:0".to_string(),
+            img_url: String::new(),
             auto_update: false,
             auto_update_interval: 0,
             legacy_root: None,
@@ -2484,6 +2671,7 @@ mod tests {
             data_dir.to_str().unwrap(),
             pdf_dir.to_str().unwrap(),
             "",
+            "",
         )
         .expect_err("invalid payload should fail");
 
@@ -2528,6 +2716,7 @@ mod tests {
             &request,
             data_dir.to_str().unwrap(),
             pdf_dir.to_str().unwrap(),
+            "",
             "",
         )
         .expect("valid payload should import");
@@ -2752,6 +2941,7 @@ mod tests {
             archive_dir: root.join("archive").to_string_lossy().to_string(),
             bind_addr: "127.0.0.1:0".to_string(),
             host_name: String::new(),
+            img_url: String::new(),
             auto_update: false,
             auto_update_interval: 0,
             legacy_root: None,

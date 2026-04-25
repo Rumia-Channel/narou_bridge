@@ -91,6 +91,7 @@ impl Site for NarouSite {
                 store,
                 &context.data_dir,
                 &context.host_name,
+                &context.img_url,
                 context.request.pdf_path.as_deref(),
             ) {
                 Ok(()) => SiteActionResult::success(
@@ -125,6 +126,7 @@ fn narou_download(
             &context.data_dir,
             &context.pdf_dir,
             &context.host_name,
+            &context.img_url,
         )?;
         return Ok(NarouDownloadOutcome::Imported(format!(
             "imported {}",
@@ -174,11 +176,19 @@ fn import_pdf_or_render(store: &mut Store, context: &SiteActionContext) -> Resul
             &context.data_dir,
             &context.pdf_dir,
             &context.host_name,
+            &context.img_url,
         )?;
         return Ok(format!("imported {}", imported.work_key));
     }
 
-    renderer::render_site_from_store(store, "narou", &context.data_dir, &context.host_name, None)?;
+    renderer::render_site_from_store(
+        store,
+        "narou",
+        &context.data_dir,
+        &context.host_name,
+        &context.img_url,
+        None,
+    )?;
     Ok(format!(
         "narou {} completed",
         if request.chapter.is_some() {
@@ -196,6 +206,7 @@ fn import_pdf_file(
     data_dir: &str,
     pdf_dir: &str,
     host_name: &str,
+    img_url: &str,
 ) -> Result<WorkRecord> {
     let author_id = request.author_id.clone();
     let author_url = request.author_url.clone();
@@ -282,7 +293,14 @@ fn import_pdf_file(
 
     store.upsert_work(&record)?;
     save_pdf_copy(pdf_path, pdf_dir, &work_key)?;
-    renderer::render_site_from_store(store, "narou", data_dir, host_name, Some(&work_key))?;
+    renderer::render_site_from_store(
+        store,
+        "narou",
+        data_dir,
+        host_name,
+        img_url,
+        Some(&work_key),
+    )?;
     Ok(record)
 }
 
@@ -1126,6 +1144,7 @@ mod tests {
         };
         let context = SiteActionContext {
             host_name: String::new(),
+            img_url: String::new(),
             data_dir: data_dir.to_string_lossy().to_string(),
             cookie_dir: String::new(),
             queue_dir: String::new(),
@@ -1214,6 +1233,7 @@ mod tests {
     fn test_context(request: crate::core::model::RequestData, root: &str) -> SiteActionContext {
         SiteActionContext {
             host_name: String::new(),
+            img_url: String::new(),
             data_dir: format!("{root}\\data"),
             cookie_dir: format!("{root}\\cookie"),
             queue_dir: format!("{root}\\queue"),

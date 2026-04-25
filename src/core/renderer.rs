@@ -250,6 +250,7 @@ pub fn render_site_from_store(
     site: &str,
     data_dir: &str,
     host_name: &str,
+    img_url: &str,
     target_work: Option<&str>,
 ) -> Result<()> {
     refresh_image_manifests(store, data_dir)?;
@@ -267,7 +268,13 @@ pub fn render_site_from_store(
             .unwrap_or(true)
         {
             target_found = true;
-            rendered.push(render_work(&site_dir, &work, host_name, &image_assets)?);
+            rendered.push(render_work(
+                &site_dir,
+                &work,
+                host_name,
+                img_url,
+                &image_assets,
+            )?);
         } else {
             rendered.push(rendered_work_from_record(&work)?);
         }
@@ -279,7 +286,14 @@ pub fn render_site_from_store(
         }
     }
 
-    write_site_index(&site_dir, site, &rendered, host_name, &image_assets)
+    write_site_index(
+        &site_dir,
+        site,
+        &rendered,
+        host_name,
+        img_url,
+        &image_assets,
+    )
 }
 
 pub fn repair_site_from_raw(
@@ -287,6 +301,7 @@ pub fn repair_site_from_raw(
     site: &str,
     data_dir: &str,
     host_name: &str,
+    img_url: &str,
 ) -> Result<()> {
     refresh_image_manifests(store, data_dir)?;
     let site_dir = PathBuf::from(data_dir).join(site);
@@ -303,10 +318,23 @@ pub fn repair_site_from_raw(
     }
 
     for work in works {
-        rendered.push(render_work(&site_dir, &work, host_name, &image_assets)?);
+        rendered.push(render_work(
+            &site_dir,
+            &work,
+            host_name,
+            img_url,
+            &image_assets,
+        )?);
     }
 
-    write_site_index(&site_dir, site, &rendered, host_name, &image_assets)
+    write_site_index(
+        &site_dir,
+        site,
+        &rendered,
+        host_name,
+        img_url,
+        &image_assets,
+    )
 }
 
 fn load_image_assets(store: &Store) -> Result<HashMap<String, ImageAsset>> {
@@ -327,6 +355,7 @@ fn render_work(
     site_dir: &Path,
     work: &WorkRecord,
     host_name: &str,
+    img_url: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> Result<RenderedWork> {
     render_work_from_raw(
@@ -335,6 +364,7 @@ fn render_work(
         &work.work_key,
         work.raw_json.clone(),
         host_name,
+        img_url,
         images,
     )
 }
@@ -356,6 +386,7 @@ fn render_work_from_raw(
     work_key: &str,
     raw_json: serde_json::Value,
     host_name: &str,
+    img_url: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> Result<RenderedWork> {
     let work_dir = site_dir.join(work_key);
@@ -377,6 +408,7 @@ fn render_work_from_raw(
                 None,
                 None,
                 host_name,
+                img_url,
                 images,
             )
         } else {
@@ -385,6 +417,7 @@ fn render_work_from_raw(
                 &rendered.work_key,
                 &rendered,
                 host_name,
+                img_url,
                 images,
             )
         }
@@ -394,6 +427,7 @@ fn render_work_from_raw(
             &rendered.work_key,
             &rendered,
             host_name,
+            img_url,
             images,
         )
     };
@@ -405,6 +439,7 @@ fn render_work_from_raw(
             &rendered.work_key,
             &rendered,
             host_name,
+            img_url,
             images,
         ),
     )?;
@@ -435,6 +470,7 @@ fn render_work_from_raw(
                 prev,
                 next,
                 host_name,
+                img_url,
                 images,
             ),
         )?;
@@ -493,11 +529,12 @@ fn write_site_index(
     site: &str,
     works: &[RenderedWork],
     host_name: &str,
+    img_url: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> Result<()> {
     atomic_write(
         &site_dir.join("index.html"),
-        render_site_index(site, works, host_name, images),
+        render_site_index(site, works, host_name, img_url, images),
     )?;
     Ok(())
 }
@@ -641,6 +678,7 @@ fn render_site_index(
     site: &str,
     _works: &[RenderedWork],
     _host_name: &str,
+    _img_url: &str,
     _images: &HashMap<String, ImageAsset>,
 ) -> String {
     SITE_INDEX_TEMPLATE.replace("{site_name}", &escape_html(site))
@@ -651,6 +689,7 @@ fn render_work_index(
     work_key: &str,
     rendered: &RenderedWork,
     host_name: &str,
+    img_url: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> String {
     let work = &rendered.work;
@@ -675,7 +714,7 @@ fn render_work_index(
         &work.caption,
         "article",
         &canonical_url,
-        &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
+        &cover_image_url(host_name, img_url, site, work_key, images),
     );
 
     render_novel_page(&page_title, &extra_head, &body, "../", &work.title, &nav)
@@ -686,6 +725,7 @@ fn render_work_info(
     work_key: &str,
     rendered: &RenderedWork,
     host_name: &str,
+    img_url: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> String {
     let work = &rendered.work;
@@ -706,7 +746,7 @@ fn render_work_info(
         &work.caption,
         "article",
         &canonical_url,
-        &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
+        &cover_image_url(host_name, img_url, site, work_key, images),
     );
 
     render_novel_page(&page_title, &extra_head, &body, "../", &work.title, &nav)
@@ -721,6 +761,7 @@ fn render_episode_page(
     _prev: Option<&str>,
     _next: Option<&str>,
     host_name: &str,
+    img_url: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> String {
     let page_title = format!("{} - {}", episode.title, rendered.work.title);
@@ -740,11 +781,7 @@ fn render_episode_page(
             ))
         )
     };
-    let image_path_base = if is_short_story {
-        "../../images"
-    } else {
-        "../../../images"
-    };
+    let image_path_base = inline_image_base(img_url, is_short_story);
 
     let mut preface_paragraph_id = 1usize;
     let introduction_html = render_rich_text(
@@ -752,7 +789,7 @@ fn render_episode_page(
         site,
         work_key,
         images,
-        image_path_base,
+        image_path_base.as_ref(),
         "Lp",
         &mut preface_paragraph_id,
     );
@@ -762,7 +799,7 @@ fn render_episode_page(
         site,
         work_key,
         images,
-        image_path_base,
+        image_path_base.as_ref(),
         "L",
         &mut body_paragraph_id,
     );
@@ -772,7 +809,7 @@ fn render_episode_page(
         site,
         work_key,
         images,
-        image_path_base,
+        image_path_base.as_ref(),
         "La",
         &mut postscript_paragraph_id,
     );
@@ -838,7 +875,7 @@ fn render_episode_page(
             &episode.introduction,
             "article",
             &canonical_url,
-            &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
+            &cover_image_url(host_name, img_url, site, work_key, images),
         )
     );
 
@@ -1157,7 +1194,12 @@ fn split_hashed_name(name: &str) -> Option<(&str, &str)> {
     if stem.is_empty() || ext.is_empty() {
         return None;
     }
-    if !stem.chars().all(|c| c.is_ascii_hexdigit()) {
+    if stem.len() < 10
+        || !stem
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        || stem.chars().all(|c| c.is_ascii_alphabetic())
+    {
         return None;
     }
     if !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -1358,21 +1400,57 @@ fn format_optional_url(host_name: &str, path: &str) -> String {
     }
 }
 
-fn get_cover_image_url(site: &str, work_key: &str, images: &HashMap<String, ImageAsset>) -> String {
+fn inline_image_base<'a>(img_url: &'a str, is_short_story: bool) -> std::borrow::Cow<'a, str> {
+    let img_url = img_url.trim();
+    if img_url.is_empty() {
+        if is_short_story {
+            std::borrow::Cow::Borrowed("../../images")
+        } else {
+            std::borrow::Cow::Borrowed("../../../images")
+        }
+    } else {
+        std::borrow::Cow::Owned(img_url.trim_end_matches('/').to_string())
+    }
+}
+
+fn cover_image_url(
+    host_name: &str,
+    img_url: &str,
+    site: &str,
+    work_key: &str,
+    images: &HashMap<String, ImageAsset>,
+) -> String {
+    let Some(file_name) = get_cover_image_file_name(site, work_key, images) else {
+        return String::new();
+    };
+
+    let img_url = img_url.trim();
+    if img_url.is_empty() {
+        format_optional_url(host_name, &format!("/images/{file_name}"))
+    } else {
+        format!("{}/{}", img_url.trim_end_matches('/'), file_name)
+    }
+}
+
+fn get_cover_image_file_name(
+    site: &str,
+    work_key: &str,
+    images: &HashMap<String, ImageAsset>,
+) -> Option<String> {
     let preferred_prefix = format!("{site}_{work_key}");
     for (logical_name, image) in images.iter() {
         if logical_name.contains(&preferred_prefix)
             && (logical_name.contains("cover") || logical_name.contains("Cover"))
         {
-            return format!("/images/{}.{}", image.hash, image.ext);
+            return Some(format!("{}.{}", image.hash, image.ext));
         }
     }
     for (logical_name, image) in images.iter() {
         if logical_name.contains("cover") || logical_name.contains("Cover") {
-            return format!("/images/{}.{}", image.hash, image.ext);
+            return Some(format!("{}.{}", image.hash, image.ext));
         }
     }
-    String::new()
+    None
 }
 
 #[cfg(test)]
@@ -1466,7 +1544,7 @@ mod tests {
             })
             .expect("upsert work");
 
-        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", None)
+        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", "", None)
             .expect("render site");
 
         let (_, cover) = build_image_manifest_jsons(&store).expect("build cover manifest");
@@ -1560,7 +1638,7 @@ mod tests {
             })
             .expect("upsert work");
 
-        repair_site_from_raw(&store, "pixiv", data_dir.to_str().unwrap(), "")
+        repair_site_from_raw(&store, "pixiv", data_dir.to_str().unwrap(), "", "")
             .expect("repair site from store");
 
         let repaired_raw = fs::read_to_string(raw_dir.join("raw.json")).expect("read repaired raw");
@@ -1635,7 +1713,7 @@ mod tests {
             })
             .expect("upsert work b");
 
-        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", None)
+        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", "", None)
             .expect("initial full render");
 
         let untouched_html_path = data_dir.join("pixiv").join("n456").join("index.html");
@@ -1668,6 +1746,7 @@ mod tests {
             &store,
             "pixiv",
             data_dir.to_str().unwrap(),
+            "",
             "",
             Some("n123"),
         )
@@ -1725,6 +1804,24 @@ mod tests {
     }
 
     #[test]
+    fn render_image_resolves_base64url_style_hashed_filename() {
+        let mut images = HashMap::new();
+        images.insert(
+            "pixiv_n123_page1.jpg".to_string(),
+            ImageAsset {
+                hash: "QDuicAbcdef_123-XYZ".to_string(),
+                ext: "jpg".to_string(),
+            },
+        );
+
+        let html = render_image("QDuicAbcdef_123-XYZ.jpg", &images, "../../images");
+        assert_eq!(
+            html,
+            r#"<img src="../../images/QDuicAbcdef_123-XYZ.jpg" alt="">"#
+        );
+    }
+
+    #[test]
     fn render_image_falls_back_for_unknown_name() {
         let images: HashMap<String, ImageAsset> = HashMap::new();
         let html = render_image("not-an-image", &images, "../../images");
@@ -1753,7 +1850,7 @@ mod tests {
             raw,
         );
 
-        let html = render_work_info("narou", "n123", &rendered, "", &HashMap::new());
+        let html = render_work_info("narou", "n123", &rendered, "", "", &HashMap::new());
 
         assert!(html.contains("<table>"));
         assert!(html.contains("あらすじ"));
@@ -1784,6 +1881,7 @@ mod tests {
             "n123",
             &rendered,
             "https://example.invalid",
+            "",
             &images,
         );
 
@@ -1792,6 +1890,38 @@ mod tests {
         ));
         assert!(html.contains(
             r#"<meta property="og:image" content="https://example.invalid/images/coverhash.jpg">"#
+        ));
+    }
+
+    #[test]
+    fn render_work_index_uses_img_url_override_for_og_image() {
+        let raw = sample_raw_json();
+        let rendered = build_rendered_work(
+            parse_raw_work(&raw).expect("parse raw"),
+            "narou".to_string(),
+            "n123".to_string(),
+            raw,
+        );
+        let mut images = HashMap::new();
+        images.insert(
+            "narou_n123_cover.jpg".to_string(),
+            ImageAsset {
+                hash: "coverhash".to_string(),
+                ext: "jpg".to_string(),
+            },
+        );
+
+        let html = render_work_index(
+            "narou",
+            "n123",
+            &rendered,
+            "https://example.invalid",
+            "https://cdn.example.invalid/novels/",
+            &images,
+        );
+
+        assert!(html.contains(
+            r#"<meta property="og:image" content="https://cdn.example.invalid/novels/coverhash.jpg">"#
         ));
     }
 
@@ -1815,6 +1945,7 @@ mod tests {
             episode,
             None,
             None,
+            "",
             "",
             &HashMap::new(),
         );
@@ -1853,7 +1984,7 @@ mod tests {
             raw,
         );
 
-        let html = render_work_index("narou", "n123", &rendered, "", &HashMap::new());
+        let html = render_work_index("narou", "n123", &rendered, "", "", &HashMap::new());
 
         assert!(html.contains(r#"<div class="p-eplist__chapter-title">第一章</div>"#));
         assert!(html.contains(r#"<div class="p-eplist__chapter-title">第二章</div>"#));
