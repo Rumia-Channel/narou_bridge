@@ -143,11 +143,10 @@ fn migrate_tasks(store: &Store, root: &Path) -> Result<usize> {
 }
 
 fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
-    let root = root.join("data");
-    if !root.exists() {
-        tracing::warn!("legacy works directory not found: {}", root.display());
+    let Some(root) = legacy_data_dir(root) else {
+        tracing::warn!("legacy works directory not found under {}", root.display());
         return Ok(0);
-    }
+    };
     let mut count = 0;
     for site_dir in fs::read_dir(root)? {
         let site_dir = site_dir?;
@@ -155,14 +154,7 @@ fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
             continue;
         }
         let site_name = site_dir.file_name().to_string_lossy().to_string();
-        if site_name == "cookie"
-            || site_name == "queue"
-            || site_name == "pdf"
-            || site_name == "log"
-            || site_name == "setting"
-            || site_name == "target"
-            || site_name == "archive"
-        {
+        if is_legacy_runtime_dir(&site_name) {
             continue;
         }
         for work_dir in fs::read_dir(site_dir.path())? {
@@ -270,7 +262,9 @@ fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
 
 fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
     let mut count = 0;
-    let image_dir = root.join("data").join("images");
+    let Some(image_dir) = legacy_data_dir(root).map(|path| path.join("images")) else {
+        return Ok(0);
+    };
     let db_path = image_dir.join("database.json");
     if db_path.exists() {
         let db_json: Value = load_json_or_default(&db_path)?;
@@ -568,17 +562,40 @@ fn detect_param(req: &RequestData) -> String {
 }
 
 fn legacy_pixiv_dir(root: &Path) -> Option<PathBuf> {
-    let data_path = root.join("data").join("pixiv");
-    if data_path.exists() {
-        return Some(data_path);
+    let pixiv_dir = legacy_data_dir(root)?.join("pixiv");
+    pixiv_dir.exists().then_some(pixiv_dir)
+}
+
+fn legacy_data_dir(root: &Path) -> Option<PathBuf> {
+    let canonical = root.join("data");
+    if canonical.exists() {
+        return Some(canonical);
     }
 
-    let direct_path = root.join("pixiv");
-    if direct_path.exists() {
-        return Some(direct_path);
-    }
+    let has_direct_data_markers = [
+        "pixiv", "narou", "images", "reader", "css", "script", "icon",
+    ]
+    .iter()
+    .any(|name| root.join(name).exists());
+    has_direct_data_markers.then(|| root.to_path_buf())
+}
 
-    None
+fn is_legacy_runtime_dir(name: &str) -> bool {
+    matches!(
+        name,
+        "cookie"
+            | "queue"
+            | "pdf"
+            | "log"
+            | "setting"
+            | "target"
+            | "archive"
+            | "images"
+            | "reader"
+            | "css"
+            | "script"
+            | "icon"
+    )
 }
 
 fn normalize_pixiv_tracked_user_entry(value: &Value) -> Value {
@@ -754,6 +771,39 @@ mod tests {
     }
 
     #[test]
+    fn migrate_works_accepts_direct_data_root() {
+        let root = test_dir("migration-direct-data-root-works");
+        let raw_dir = root.join("pixiv").join("n123").join("raw");
+        fs::create_dir_all(root.join("images")).unwrap();
+        fs::create_dir_all(&raw_dir).unwrap();
+        fs::create_dir_all(root.join("reader")).unwrap();
+        fs::write(
+            raw_dir.join("raw.json"),
+            serde_json::to_string_pretty(&json!({
+                "title": "Direct Root Work",
+                "author": "Example Author",
+                "type": "novel",
+                "serialization": "連載中",
+                "caption": "caption",
+                "createDate": "2025-01-01T00:00:00Z",
+                "updateDate": "2025-01-02T00:00:00Z"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        let migrated = migrate_works(&store, &root).expect("migrate works");
+
+        assert_eq!(migrated, 1);
+        let works = store.list_works(Some("pixiv")).expect("list works");
+        assert_eq!(works.len(), 1);
+        assert_eq!(works[0].title, "Direct Root Work");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn archive_legacy_files_skips_identical_reruns() {
         let root = test_dir("migration-archive-rerun");
         let archive_root = root.join("archive");
@@ -838,6 +888,31 @@ mod tests {
                 .map(|items| { items.iter().filter_map(Value::as_str).collect::<Vec<_>>() }),
             Some(vec!["10", "20", "30"])
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrate_images_accepts_direct_data_root() {
+        let root = test_dir("migration-direct-data-root-images");
+        let image_dir = root.join("images");
+        fs::create_dir_all(image_dir.join("png")).unwrap();
+        fs::write(
+            image_dir.join("database.json"),
+            br#"{"cover.jpg":"hash43"}"#,
+        )
+        .unwrap();
+        fs::write(image_dir.join("cover.json"), br#"{"cover.jpg":"hash43"}"#).unwrap();
+        fs::write(image_dir.join("png").join("abc.png"), b"png").unwrap();
+        fs::create_dir_all(root.join("pixiv")).unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        let migrated = migrate_images(&store, &root).expect("migrate images");
+
+        assert_eq!(migrated, 3);
+        let images = store.list_images().expect("list images");
+        assert!(images.iter().any(|image| image.logical_name == "cover.jpg"));
+        assert!(images.iter().any(|image| image.logical_name == "abc.png"));
 
         fs::remove_dir_all(root).unwrap();
     }
