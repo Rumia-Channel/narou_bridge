@@ -1,7 +1,6 @@
 use crate::core::account::{
     rewrite_cookie_site_mirror as rewrite_cookie_site_mirror_impl, validate_account_file,
 };
-use crate::core::atomic_io::atomic_write;
 use crate::core::migration::{MigrationPlan, migrate_legacy_tree};
 use crate::core::model::{
     AccountFile, AccountRecord, AppConfig, ImageRecord, RequestData, TaskRecord, TaskStatus,
@@ -164,6 +163,7 @@ pub fn build_app(state: RuntimeState) -> Router {
         .route("/images/database.json", get(image_database_json))
         .route("/images/cover.json", get(image_cover_json))
         .route("/{site}/index.json", get(site_index_json))
+        .route("/{site}/{work}/raw/raw.json", get(work_raw_json))
         .route(
             "/api/account",
             get(list_accounts_query)
@@ -242,6 +242,25 @@ async fn image_cover_json(State(state): State<RuntimeState>) -> Response {
     let store = state.store.lock().await;
     match renderer::build_image_manifest_jsons(&store) {
         Ok((_, cover)) => create_json_response(StatusCode::OK, &cover),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn work_raw_json(
+    State(state): State<RuntimeState>,
+    AxumPath((site, work)): AxumPath<(String, String)>,
+) -> Response {
+    if !state.registry.site_names().iter().any(|name| name == &site) {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let store = state.store.lock().await;
+    match store.get_work(&site, &work) {
+        Ok(Some(work_record)) => create_json_response(StatusCode::OK, &work_record.raw_json),
+        Ok(None) => create_error(
+            StatusCode::NOT_FOUND,
+            format!("work not found: {site}/{work}"),
+        ),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
@@ -551,7 +570,7 @@ async fn enqueue_task_record(
 
     if matches!(outcome, EnqueueTaskOutcome::Enqueued) {
         if let Err(err) = sync_queue_state(state).await {
-            warn!(request_id = %request_id, error = %err, "failed to persist queue/task.json after enqueue");
+            warn!(request_id = %request_id, error = %err, "failed to sync queue state after enqueue");
         }
         state.worker_notify.notify_one();
     }
@@ -1807,16 +1826,10 @@ async fn recover_queued_runtime_state(state: &RuntimeState) -> Result<()> {
 }
 
 async fn sync_queue_state(state: &RuntimeState) -> Result<()> {
-    let task_state = {
+    let _ = {
         let store = state.store.lock().await;
         store.task_state()?
     };
-    let payload = serde_json::to_vec_pretty(&task_state)?;
-    let queue_task_json_path = state.config.queue_task_json_path();
-    tokio::task::spawn_blocking(move || atomic_write(&queue_task_json_path, payload))
-        .await
-        .context("failed to join queue/task.json atomic write")?
-        .context("failed to write queue/task.json")?;
     Ok(())
 }
 
@@ -1837,7 +1850,7 @@ async fn worker_loop(state: RuntimeState) {
         };
 
         if let Err(err) = sync_queue_state(&state).await {
-            error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to persist queue/task.json for running task");
+            error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to sync queue state for running task");
         }
 
         if let Err(err) = execute_queued_task(&state, task.id, &task).await {
@@ -1854,7 +1867,7 @@ async fn worker_loop(state: RuntimeState) {
         }
 
         if let Err(err) = sync_queue_state(&state).await {
-            error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to persist queue/task.json after task completion");
+            error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to sync queue state after task completion");
         }
 
         cleanup_uploaded_files_for_request(&state.config, &task.request);
@@ -2292,7 +2305,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_cookie_site_mirror_tracks_db_accounts_and_active_login() {
+    fn rewrite_cookie_site_mirror_is_noop_for_db_only_runtime() {
         let root = test_dir("runtime-account-mirror");
         let cookie_root = root.join("cookie");
         let site_dir = cookie_root.join("pixiv");
@@ -2310,18 +2323,16 @@ mod tests {
 
         rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
 
-        assert!(!site_dir.join("stale.json").exists());
-        assert!(site_dir.join("alpha.json").exists());
-        assert!(site_dir.join("beta.json").exists());
-        let active_named = stdfs::read_to_string(site_dir.join("beta.json")).unwrap();
-        let active_login = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
-        assert_eq!(active_named, active_login);
+        assert!(site_dir.join("stale.json").exists());
+        assert!(!site_dir.join("alpha.json").exists());
+        assert!(!site_dir.join("beta.json").exists());
+        assert!(!site_dir.join("login.json").exists());
 
         stdfs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn rewrite_cookie_site_mirror_removes_deleted_accounts_after_writing_replacements() {
+    fn rewrite_cookie_site_mirror_leaves_existing_files_untouched() {
         let root = test_dir("runtime-account-mirror-replace");
         let cookie_root = root.join("cookie");
         let site_dir = cookie_root.join("pixiv");
@@ -2346,13 +2357,11 @@ mod tests {
 
         rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
 
-        assert!(!site_dir.join("alpha.json").exists());
-        assert!(!site_dir.join("stale.json").exists());
-        assert!(site_dir.join("beta.json").exists());
-        let active_named = stdfs::read_to_string(site_dir.join("beta.json")).unwrap();
+        assert!(site_dir.join("alpha.json").exists());
+        assert!(site_dir.join("stale.json").exists());
+        assert!(!site_dir.join("beta.json").exists());
         let active_login = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
-        assert_eq!(active_named, active_login);
-        assert!(active_login.contains("\"beta\""));
+        assert!(active_login.contains("old-login"));
 
         stdfs::remove_dir_all(root).unwrap();
     }

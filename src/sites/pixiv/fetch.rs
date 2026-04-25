@@ -1,13 +1,9 @@
-use crate::core::account::load_account_file;
 use crate::core::model::AccountFile;
 use crate::core::storage::Store;
 use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde_json::Value;
-use std::collections::HashSet;
-use std::fs;
-use std::path::PathBuf;
 use std::time::Duration;
 use tracing::info;
 
@@ -16,8 +12,8 @@ const DEFAULT_UA: &str =
 const SLEEP_MS: u64 = 500;
 
 /// Build an HTTP client with optional Pixiv account cookies
-pub fn build_client(store: &Store, cookie_dir: &str) -> Result<Client> {
-    let account = resolve_active_pixiv_account(store, cookie_dir);
+pub fn build_client(store: &Store, _cookie_dir: &str) -> Result<Client> {
+    let account = resolve_active_pixiv_account(store);
     build_client_for_account(
         account.as_ref().map(|(account, _)| account),
         account.as_ref().map(|(_, source)| source.as_str()),
@@ -67,32 +63,24 @@ pub struct PixivAccountCandidate {
     pub backed_by_store: bool,
 }
 
-pub fn resolve_active_pixiv_account(
-    store: &Store,
-    cookie_dir: &str,
-) -> Option<(AccountFile, String)> {
+pub fn resolve_active_pixiv_account(store: &Store) -> Option<(AccountFile, String)> {
     if let Ok(Some(account)) = store.get_active_account("pixiv") {
         return Some((
             account.account,
             format!("sqlite accounts table (pixiv/{})", account.name),
         ));
     }
-
-    let login_path = PathBuf::from(cookie_dir).join("pixiv").join("login.json");
-    let account = load_account_file(&login_path).ok()?;
-    Some((account, login_path.display().to_string()))
+    None
 }
 
 pub fn resolve_pixiv_account_candidates(
     store: &Store,
-    cookie_dir: &str,
+    _cookie_dir: &str,
 ) -> Vec<PixivAccountCandidate> {
     let mut candidates = Vec::new();
-    let mut seen_names = HashSet::new();
 
     if let Ok(accounts) = store.list_accounts("pixiv") {
         for account in accounts {
-            seen_names.insert(account.name.clone());
             candidates.push(PixivAccountCandidate {
                 name: account.name.clone(),
                 account: account.account,
@@ -101,65 +89,6 @@ pub fn resolve_pixiv_account_candidates(
             });
         }
     }
-    let has_store_accounts = !candidates.is_empty();
-
-    let site_dir = PathBuf::from(cookie_dir).join("pixiv");
-    let mut file_paths = match fs::read_dir(&site_dir) {
-        Ok(entries) => entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-            .collect::<Vec<_>>(),
-        Err(_) => return candidates,
-    };
-    file_paths.sort_by(|left, right| {
-        let left_name = left
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        let right_name = right
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if left_name == "login.json" {
-            return std::cmp::Ordering::Less;
-        }
-        if right_name == "login.json" {
-            return std::cmp::Ordering::Greater;
-        }
-        left_name.cmp(right_name)
-    });
-
-    for path in file_paths {
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_string();
-        if has_store_accounts && file_name == "login.json" {
-            continue;
-        }
-        let candidate_name = if file_name == "login.json" {
-            "login".to_string()
-        } else {
-            path.file_stem()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default()
-                .to_string()
-        };
-        if candidate_name.is_empty() || !seen_names.insert(candidate_name.clone()) {
-            continue;
-        }
-        if let Ok(account) = load_account_file(&path) {
-            candidates.push(PixivAccountCandidate {
-                name: candidate_name,
-                account,
-                source: path.display().to_string(),
-                backed_by_store: false,
-            });
-        }
-    }
-
     candidates
 }
 

@@ -1,4 +1,3 @@
-use crate::core::atomic_io::atomic_write;
 use crate::core::model::{ImageRecord, WorkRecord};
 use crate::core::renderer;
 use crate::core::storage::Store;
@@ -195,7 +194,7 @@ fn pixiv_download(
     let (message, deferred_error, target_work) = match target {
         PixivUrlTarget::Novel(id) => {
             info!("Pixiv download: novel id={id}");
-            let record = download_novel(&client, &id, &folder_path, &img_path)?;
+            let record = download_novel(&client, &id, &folder_path, &img_path, store)?;
             persist_work_record(store, &record, &img_path)?;
             (
                 format!("stored {}", record.work_key),
@@ -205,7 +204,7 @@ fn pixiv_download(
         }
         PixivUrlTarget::Series(id) => {
             info!("Pixiv download: novel series id={id}");
-            let record = download_series(&client, &id, &folder_path, &img_path)?;
+            let record = download_series(&client, &id, &folder_path, &img_path, store)?;
             persist_work_record(store, &record, &img_path)?;
             (
                 format!("stored {}", record.work_key),
@@ -215,7 +214,7 @@ fn pixiv_download(
         }
         PixivUrlTarget::Art(id) => {
             info!("Pixiv download: artwork id={id}");
-            let record = download_art(&client, &id, &folder_path, &img_path)?;
+            let record = download_art(&client, &id, &folder_path, &img_path, store)?;
             persist_work_record(store, &record, &img_path)?;
             (
                 format!("stored {}", record.work_key),
@@ -225,7 +224,7 @@ fn pixiv_download(
         }
         PixivUrlTarget::Comic(id) => {
             info!("Pixiv download: comic series id={id}");
-            let record = download_comic(&client, &id, &folder_path, &img_path)?;
+            let record = download_comic(&client, &id, &folder_path, &img_path, store)?;
             persist_work_record(store, &record, &img_path)?;
             (
                 format!("stored {}", record.work_key),
@@ -306,7 +305,7 @@ pub fn persist_work_record(store: &Store, record: &WorkRecord, img_path: &Path) 
     persist_body_image_records(store, &record.raw_json, img_path)?;
 
     let cover_logical = format!("pixiv_{}_cover", record.work_key);
-    if let Some(hash) = find_image_by_logical_prefix(img_path, &cover_logical) {
+    if let Some(hash) = find_image_by_logical_prefix(store, img_path, &cover_logical) {
         let ext = hash.rsplit('.').next().unwrap_or("jpg").to_string();
         store.upsert_image(&ImageRecord {
             logical_name: format!("{cover_logical}.{ext}"),
@@ -495,14 +494,14 @@ fn raw_metric(raw_json: &Value, key: &str) -> Option<i64> {
     raw_json.get(key).and_then(Value::as_i64)
 }
 
-fn persist_body_image_records(store: &Store, raw_json: &Value, img_path: &Path) -> Result<()> {
+fn persist_body_image_records(store: &Store, raw_json: &Value, _img_path: &Path) -> Result<()> {
     let mut markup_images = BTreeSet::new();
     collect_markup_image_names(raw_json, &mut markup_images);
     if markup_images.is_empty() {
         return Ok(());
     }
 
-    let legacy_database = load_image_database(img_path);
+    let existing_images = store.list_images()?;
     let mut image_records = BTreeMap::new();
 
     for logical_name in markup_images {
@@ -519,12 +518,12 @@ fn persist_body_image_records(store: &Store, raw_json: &Value, img_path: &Path) 
                 kind: "image".to_string(),
             });
 
-        for (legacy_logical_name, legacy_hash) in &legacy_database {
-            if legacy_hash == &hash && logical_name_ext(legacy_logical_name) == Some(ext.as_str()) {
+        for existing_image in &existing_images {
+            if existing_image.hash == hash && existing_image.ext == ext {
                 image_records
-                    .entry(legacy_logical_name.clone())
+                    .entry(existing_image.logical_name.clone())
                     .or_insert_with(|| ImageRecord {
-                        logical_name: legacy_logical_name.clone(),
+                        logical_name: existing_image.logical_name.clone(),
                         hash: hash.clone(),
                         ext: ext.clone(),
                         kind: "image".to_string(),
@@ -590,29 +589,6 @@ fn parse_markup_image_name(logical_name: &str) -> Option<(String, String)> {
     Some((hash, ext))
 }
 
-fn load_image_database(img_path: &Path) -> BTreeMap<String, String> {
-    let db_path = img_path.join("database.json");
-    let content = match fs::read_to_string(&db_path) {
-        Ok(content) => content,
-        Err(_) => return BTreeMap::new(),
-    };
-    let value: Value = serde_json::from_str(&content).unwrap_or_else(|_| json!({}));
-    value
-        .as_object()
-        .map(|map| {
-            map.iter()
-                .filter_map(|(logical_name, hash)| {
-                    Some((logical_name.clone(), hash.as_str()?.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn logical_name_ext(logical_name: &str) -> Option<&str> {
-    Path::new(logical_name).extension()?.to_str()
-}
-
 // ---------------------------------------------------------------------------
 // User config paths
 // ---------------------------------------------------------------------------
@@ -660,11 +636,6 @@ fn load_legacy_user_config_document(folder_path: &Path) -> Result<Map<String, Va
     Ok(document)
 }
 
-fn save_user_config_document(folder_path: &Path, document: &Map<String, Value>) -> Result<()> {
-    let path = user_config_path(folder_path);
-    save_json_pretty(&path, &Value::Object(document.clone()))
-}
-
 fn tracked_user_entry_from_value(value: Value) -> PixivTrackedUserEntry {
     serde_json::from_value(value).unwrap_or_default()
 }
@@ -704,13 +675,8 @@ fn list_tracked_user_entries(
     Ok(entries)
 }
 
-fn sync_tracked_user_config_mirror(store: &Store, folder_path: &Path) -> Result<()> {
-    let mut document = Map::new();
-    document.insert("version".to_string(), json!(USER_CONFIG_VERSION));
-    for (user_id, entry) in list_tracked_user_entries(store, folder_path)? {
-        document.insert(user_id, serde_json::to_value(entry)?);
-    }
-    save_user_config_document(folder_path, &document)
+fn sync_tracked_user_config_mirror(_store: &Store, _folder_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn import_legacy_tracked_user_documents(store: &Store, folder_path: &Path) -> Result<usize> {
@@ -855,11 +821,10 @@ pub fn load_illust_snapshot(
 
 pub fn save_illust_snapshot(
     store: &Store,
-    folder_path: &Path,
+    _folder_path: &Path,
     user_id: &str,
     ids: &BTreeSet<String>,
 ) -> Result<String> {
-    let path = snapshot_path(folder_path, user_id);
     let values = ids.iter().cloned().collect::<Vec<_>>();
     store.upsert_site_document(
         PIXIV_SITE_DOCUMENT_SCOPE,
@@ -869,7 +834,6 @@ pub fn save_illust_snapshot(
         },
         &now_string(),
     )?;
-    save_json_pretty(&path, &json!(values))?;
     Ok(hash_ids(values.iter().map(String::as_str)))
 }
 
@@ -889,12 +853,6 @@ pub fn hash_ids<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
 // ---------------------------------------------------------------------------
 // JSON serialization helpers
 // ---------------------------------------------------------------------------
-
-fn save_json_pretty(path: &Path, value: &Value) -> Result<()> {
-    let payload = serde_json::to_vec_pretty(value)?;
-    atomic_write(path, payload)?;
-    Ok(())
-}
 
 fn file_modified_string(path: &Path) -> Option<String> {
     let modified = fs::metadata(path).ok()?.modified().ok()?;
@@ -1237,6 +1195,7 @@ pub fn format_image_links(
     json_data: &Value,
     client: &reqwest::blocking::Client,
     img_path: &Path,
+    store: &Store,
 ) -> String {
     let mut text = text.to_string();
 
@@ -1285,12 +1244,12 @@ pub fn format_image_links(
             let img_name = format!("pixiv_{art_id}_p{idx}{ext}");
 
             // Check if already downloaded
-            let saved = check_image_file(img_path, &img_name);
+            let saved = check_image_file(store, img_path, &img_name);
             let saved = if saved.is_none() {
                 // Download
                 match download_image(client, url) {
                     Some(data) => {
-                        let hash = save_image_hashed(img_path, &data, &img_name);
+                        let hash = save_image_hashed(store, img_path, &data, &img_name, "image");
                         Some(format!("{hash}{ext}"))
                     }
                     None => None,
@@ -1328,11 +1287,11 @@ pub fn format_image_links(
             let img_name = format!("pixiv_{content_id}_{inner_id}{ext}");
 
             sleep();
-            let saved = check_image_file(img_path, &img_name);
+            let saved = check_image_file(store, img_path, &img_name);
             let saved = if saved.is_none() {
                 match download_image(client, url) {
                     Some(data) => {
-                        let hash = save_image_hashed(img_path, &data, &img_name);
+                        let hash = save_image_hashed(store, img_path, &data, &img_name, "image");
                         Some(format!("{hash}{ext}"))
                     }
                     None => None,
@@ -1362,6 +1321,7 @@ pub fn download_cover(
     url: Option<&str>,
     img_path: &Path,
     ncode: &str,
+    store: &Store,
 ) {
     let url = match url {
         Some(u) if !u.is_empty() => u,
@@ -1372,7 +1332,7 @@ pub fn download_cover(
     let logical_name = format!("pixiv_{ncode}_cover{ext}");
 
     // Already downloaded?
-    if check_image_file(img_path, &logical_name).is_some() {
+    if check_image_file(store, img_path, &logical_name).is_some() {
         return;
     }
 
@@ -1398,9 +1358,7 @@ pub fn download_cover(
             Some(data) => {
                 let cand_ext = url_ext(cand);
                 let cover_name = format!("pixiv_{ncode}_cover{cand_ext}");
-                let hash = save_image_hashed(img_path, &data, &cover_name);
-                // Also write to cover.json
-                update_cover_json(img_path, &cover_name, &hash);
+                let hash = save_image_hashed(store, img_path, &data, &cover_name, "cover");
                 info!("  Cover saved: {hash}{cand_ext}");
                 return;
             }
@@ -1415,24 +1373,19 @@ pub fn download_cover(
 // Image filesystem helpers
 // ---------------------------------------------------------------------------
 
-pub fn check_image_file(img_path: &Path, logical_name: &str) -> Option<String> {
-    let db_path = img_path.join("database.json");
-    if !db_path.exists() {
-        return None;
-    }
-    let content = fs::read_to_string(&db_path).ok()?;
-    let db: Value = serde_json::from_str(&content).ok()?;
-    let hash = db.get(logical_name)?.as_str()?;
-    let ext = logical_name.rsplit('.').next().unwrap_or("jpg");
-    let full = format!("{hash}.{ext}");
-    if img_path.join(&full).exists() {
-        Some(full)
-    } else {
-        None
-    }
+pub fn check_image_file(store: &Store, img_path: &Path, logical_name: &str) -> Option<String> {
+    let image = store.get_image(logical_name).ok()??;
+    let full = format!("{}.{}", image.hash, image.ext);
+    img_path.join(&full).exists().then_some(full)
 }
 
-pub fn save_image_hashed(img_path: &Path, data: &[u8], logical_name: &str) -> String {
+pub fn save_image_hashed(
+    store: &Store,
+    img_path: &Path,
+    data: &[u8],
+    logical_name: &str,
+    kind: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     let result = hasher.finalize();
@@ -1450,69 +1403,26 @@ pub fn save_image_hashed(img_path: &Path, data: &[u8], logical_name: &str) -> St
         warn!("Failed to save image {}: {e}", file_path.display());
     }
 
-    // Update database.json
-    let db_path = img_path.join("database.json");
-    let mut db: Value = if db_path.exists() {
-        fs::read_to_string(&db_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| json!({}))
-    } else {
-        json!({})
-    };
-    if let Some(map) = db.as_object_mut() {
-        map.insert(logical_name.to_string(), json!(hash_short));
-    }
-    if let Ok(payload) = serde_json::to_vec_pretty(&db) {
-        if let Err(err) = atomic_write(&db_path, payload) {
-            warn!(
-                "Failed to update image database {}: {err}",
-                db_path.display()
-            );
-        }
+    if let Err(err) = store.upsert_image(&ImageRecord {
+        logical_name: logical_name.to_string(),
+        hash: hash_short.to_string(),
+        ext: ext.to_string(),
+        kind: kind.to_string(),
+    }) {
+        warn!("Failed to upsert image {logical_name}: {err}");
     }
 
     hash_short.to_string()
 }
 
-pub fn update_cover_json(img_path: &Path, logical_name: &str, hash: &str) {
-    let cover_path = img_path.join("cover.json");
-    let mut cover: Value = if cover_path.exists() {
-        fs::read_to_string(&cover_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| json!({}))
-    } else {
-        json!({})
-    };
-    if let Some(map) = cover.as_object_mut() {
-        map.insert(logical_name.to_string(), json!(hash));
-    }
-    if let Ok(payload) = serde_json::to_vec_pretty(&cover) {
-        if let Err(err) = atomic_write(&cover_path, payload) {
-            warn!(
-                "Failed to update cover database {}: {err}",
-                cover_path.display()
-            );
-        }
-    }
-}
-
-pub fn find_image_by_logical_prefix(img_path: &Path, prefix: &str) -> Option<String> {
-    let db_path = img_path.join("database.json");
-    if !db_path.exists() {
-        return None;
-    }
-    let content = fs::read_to_string(&db_path).ok()?;
-    let db: Value = serde_json::from_str(&content).ok()?;
-    let map = db.as_object()?;
-    for (key, hash) in map {
-        if key.starts_with(prefix) {
-            let ext = key.rsplit('.').next().unwrap_or("jpg");
-            return Some(format!("{}.{ext}", hash.as_str().unwrap_or("")));
-        }
-    }
-    None
+pub fn find_image_by_logical_prefix(
+    store: &Store,
+    img_path: &Path,
+    prefix: &str,
+) -> Option<String> {
+    let image = store.find_image_by_logical_prefix(prefix).ok()??;
+    let full = format!("{}.{}", image.hash, image.ext);
+    img_path.join(&full).exists().then_some(full)
 }
 
 // ---------------------------------------------------------------------------
@@ -1673,20 +1583,15 @@ mod tests {
 
         assert_eq!(entry.novel, "enable");
         assert_eq!(entry.comic, "enable");
-
-        let stored: Value =
-            serde_json::from_str(&fs::read_to_string(dir.join("user.json")).unwrap()).unwrap();
+        let stored = store
+            .get_site_document_record(PIXIV_SITE_DOCUMENT_SCOPE, &tracked_user_config_key("12345"))
+            .unwrap()
+            .expect("tracked user in store");
         assert_eq!(
-            stored.get("version").and_then(Value::as_i64),
-            Some(USER_CONFIG_VERSION)
-        );
-        assert_eq!(
-            stored
-                .get("12345")
-                .and_then(|value| value.get("novel"))
-                .and_then(Value::as_str),
+            stored.document.get("novel").and_then(Value::as_str),
             Some("enable")
         );
+        assert!(!dir.join("user.json").exists());
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -1720,12 +1625,13 @@ mod tests {
 
         let tracked = tracked_user_ids(&store, &dir).unwrap();
         assert_eq!(tracked, vec!["12345".to_string()]);
+        assert!(!snapshot_path(&dir, "12345").exists());
 
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn resolve_active_pixiv_account_prefers_sqlite_before_login_json() {
+    fn resolve_active_pixiv_account_uses_sqlite_only() {
         let root = test_dir("pixiv-active-account");
         let cookie_root = root.join("cookie");
         let pixiv_cookie_dir = cookie_root.join("pixiv");
@@ -1757,8 +1663,7 @@ mod tests {
             })
             .unwrap();
 
-        let (account, source) =
-            fetch::resolve_active_pixiv_account(&store, &cookie_root.to_string_lossy()).unwrap();
+        let (account, source) = fetch::resolve_active_pixiv_account(&store).unwrap();
         assert_eq!(
             account.cookies.get("session").and_then(Value::as_str),
             Some("db")
@@ -1784,15 +1689,15 @@ mod tests {
     #[test]
     fn persist_work_record_keeps_pixiv_body_images_renderable() {
         let dir = test_dir("pixiv-body-images");
-        fs::write(
-            dir.join("database.json"),
-            r#"{
-  "pixiv_123_p0.png": "0123456789abcdef"
-}"#,
-        )
-        .unwrap();
-
         let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_image(&ImageRecord {
+                logical_name: "pixiv_123_p0.png".to_string(),
+                hash: "0123456789abcdef".to_string(),
+                ext: "png".to_string(),
+                kind: "image".to_string(),
+            })
+            .unwrap();
         let record = WorkRecord {
             site: "pixiv".to_string(),
             work_key: "a123".to_string(),

@@ -1,11 +1,9 @@
-use crate::core::atomic_io::atomic_write;
 use crate::core::model::{AccountFile, AccountRecord};
 use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde::Deserialize;
 use serde::de::{self, Deserializer};
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -46,52 +44,18 @@ pub fn validate_account_file(site: &str, account: &AccountFile) -> Result<()> {
 }
 
 pub fn rewrite_cookie_site_mirror(
-    cookie_root: &Path,
-    site: &str,
-    accounts: &[AccountRecord],
+    _cookie_root: &Path,
+    _site: &str,
+    _accounts: &[AccountRecord],
 ) -> Result<()> {
-    let dir = cookie_root.join(site);
-    fs::create_dir_all(&dir)?;
-    let mut desired_files = BTreeMap::new();
-    for account in accounts {
-        let json = serde_json::to_vec_pretty(&account.account)?;
-        desired_files.insert(account_file_name(&account.name), json.clone());
-        if account.active {
-            desired_files.insert("login.json".to_string(), json);
-        }
-    }
-
-    let existing_json_files = fs::read_dir(&dir)?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let path = entry.path();
-            (entry.file_type().ok()?.is_file()
-                && path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-            .then(|| entry.file_name().to_string_lossy().to_string())
-        })
-        .collect::<HashSet<_>>();
-
-    for (file_name, payload) in &desired_files {
-        atomic_write(&dir.join(file_name), payload.as_slice())?;
-    }
-
-    let desired_names = desired_files.keys().cloned().collect::<HashSet<_>>();
-    for stale_file in existing_json_files.difference(&desired_names) {
-        fs::remove_file(dir.join(stale_file))?;
-    }
-
     Ok(())
 }
 
 pub fn write_login_account_mirror(
-    cookie_root: &Path,
-    site: &str,
-    account: &AccountFile,
+    _cookie_root: &Path,
+    _site: &str,
+    _account: &AccountFile,
 ) -> Result<()> {
-    let dir = cookie_root.join(site);
-    fs::create_dir_all(&dir)?;
-    let payload = serde_json::to_vec_pretty(account)?;
-    atomic_write(&dir.join("login.json"), payload.as_slice())?;
     Ok(())
 }
 
@@ -182,10 +146,6 @@ fn json_type_name(value: &Value) -> &'static str {
         Value::Array(_) => "array",
         Value::Object(_) => "object",
     }
-}
-
-fn account_file_name(name: &str) -> String {
-    format!("{name}.json")
 }
 
 #[cfg(test)]

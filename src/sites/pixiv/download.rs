@@ -25,6 +25,7 @@ pub fn download_novel(
     novel_id: &str,
     folder_path: &Path,
     img_path: &Path,
+    store: &Store,
 ) -> Result<WorkRecord> {
     let body = fetch_body_json(
         client,
@@ -41,7 +42,7 @@ pub fn download_novel(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let text = format_novel_text(&raw_text, novel_id, &body, client, img_path);
+    let text = format_novel_text(&raw_text, novel_id, &body, client, img_path, store);
 
     // Cover
     download_cover(
@@ -49,6 +50,7 @@ pub fn download_novel(
         body.get("coverUrl").and_then(Value::as_str),
         img_path,
         &work_key,
+        store,
     );
 
     // Tags
@@ -128,6 +130,7 @@ pub fn download_series(
     series_id: &str,
     folder_path: &Path,
     img_path: &Path,
+    store: &Store,
 ) -> Result<WorkRecord> {
     let body = fetch_body_json(
         client,
@@ -151,7 +154,7 @@ pub fn download_series(
         .and_then(|v| v.get("urls"))
         .and_then(|v| v.get("original"))
         .and_then(Value::as_str);
-    download_cover(client, cover_url, img_path, &work_key);
+    download_cover(client, cover_url, img_path, &work_key, store);
 
     // Series-level tags
     let mut series_tags = extract_flat_tags(&body, "tags");
@@ -204,11 +207,12 @@ pub fn download_series(
             ep_json.get("coverUrl").and_then(Value::as_str),
             img_path,
             &format!("pixiv_s{series_id}_{ep_id}"),
+            store,
         );
 
         // Text
         let raw_text = ep_json.get("content").and_then(Value::as_str).unwrap_or("");
-        let text = format_novel_text(raw_text, &ep_id, &ep_json, client, img_path);
+        let text = format_novel_text(raw_text, &ep_id, &ep_json, client, img_path, store);
 
         // Tags
         let mut ep_tags = extract_tag_names_nested(&ep_json, &["tags", "tags"]);
@@ -323,6 +327,7 @@ pub fn download_art(
     art_id: &str,
     folder_path: &Path,
     img_path: &Path,
+    store: &Store,
 ) -> Result<WorkRecord> {
     let body = fetch_body_json(
         client,
@@ -359,14 +364,14 @@ pub fn download_art(
     }
 
     // Download images referenced in text
-    art_text = format_image_links(&art_text, art_id, &body, client, img_path);
+    art_text = format_image_links(&art_text, art_id, &body, client, img_path, store);
 
     // Cover
     let cover_url = body
         .get("urls")
         .and_then(|v| v.get("original"))
         .and_then(Value::as_str);
-    download_cover(client, cover_url, img_path, &work_key);
+    download_cover(client, cover_url, img_path, &work_key, store);
 
     // Tags
     let mut tags = extract_tag_names_nested(&body, &["tags", "tags"]);
@@ -444,6 +449,7 @@ pub fn download_comic(
     comic_id: &str,
     folder_path: &Path,
     img_path: &Path,
+    store: &Store,
 ) -> Result<WorkRecord> {
     let work_key = format!("c{comic_id}");
     let comic_dir = folder_path.join(&work_key);
@@ -562,6 +568,7 @@ pub fn download_comic(
         series_info.get("url").and_then(Value::as_str),
         img_path,
         &work_key,
+        store,
     );
 
     // Author from meta or user
@@ -623,7 +630,7 @@ pub fn download_comic(
         }
 
         // Download images
-        text = format_image_links(&text, illust_id, &ep_data, client, img_path);
+        text = format_image_links(&text, illust_id, &ep_data, client, img_path, store);
 
         // Episode cover
         let ep_cover_url = ep_data
@@ -635,6 +642,7 @@ pub fn download_comic(
             ep_cover_url,
             img_path,
             &format!("pixiv_c{comic_id}_{illust_id}"),
+            store,
         );
 
         // Tags
@@ -809,7 +817,7 @@ pub fn download_user(
 
     if action_enabled(&user_conf, "novel") {
         for series_id in &novel_series {
-            match download_series(client, series_id, folder_path, img_path) {
+            match download_series(client, series_id, folder_path, img_path, store) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
@@ -821,7 +829,7 @@ pub fn download_user(
             }
         }
         for novel_id in &novels {
-            match download_novel(client, novel_id, folder_path, img_path) {
+            match download_novel(client, novel_id, folder_path, img_path, store) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
@@ -834,7 +842,7 @@ pub fn download_user(
 
     if action_enabled(&user_conf, "comic") {
         for series_id in &comic_series {
-            match download_comic(client, series_id, folder_path, img_path) {
+            match download_comic(client, series_id, folder_path, img_path, store) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
@@ -865,7 +873,7 @@ pub fn download_user(
         // Failed fetches must stay out of the snapshot so later updates retry them.
         let mut successful_art_ids = BTreeSet::new();
         for art_id in &new_art_ids {
-            match download_art(client, art_id, folder_path, img_path) {
+            match download_art(client, art_id, folder_path, img_path, store) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
@@ -975,9 +983,10 @@ fn format_novel_text(
     json_data: &Value,
     client: &Client,
     img_path: &Path,
+    store: &Store,
 ) -> String {
     let mut text = text.replace("\r\n", "\n");
-    text = format_image_links(&text, novel_id, json_data, client, img_path);
+    text = format_image_links(&text, novel_id, json_data, client, img_path, store);
     text = format_ruby(&text);
     text = remove_chapter_tag(&text);
     text = format_jumpuri(&text);

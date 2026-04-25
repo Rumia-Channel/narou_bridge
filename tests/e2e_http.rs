@@ -150,6 +150,7 @@ async fn key_http_endpoints_respond_in_process() {
             .and_then(Value::as_str)
             .is_some_and(|request_id| !request_id.is_empty())
     );
+    assert!(!root.join("queue").join("task.json").exists());
 
     let migrate_query = serde_urlencoded::to_string([(
         "source_root",
@@ -280,6 +281,7 @@ async fn db_backed_json_routes_respond_without_persisted_json_files() {
     );
 
     let database_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/images/database.json")
@@ -293,5 +295,28 @@ async fn db_backed_json_routes_respond_without_persisted_json_files() {
     assert_eq!(
         database_json["pixiv_n123_cover.jpg"].as_str(),
         Some("deadbeefcafebabe")
+    );
+
+    let raw_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/n123/raw/raw.json")
+                .body(Body::empty())
+                .expect("raw request"),
+        )
+        .await
+        .expect("raw response");
+    assert_eq!(raw_response.status(), StatusCode::OK);
+    assert!(raw_response.headers().contains_key(ETAG));
+    let raw_json = response_json(raw_response).await;
+    assert_eq!(raw_json["title"].as_str(), Some("DB-backed work"));
+    assert!(
+        !root
+            .join("data")
+            .join("pixiv")
+            .join("n123")
+            .join("raw")
+            .join("raw.json")
+            .exists()
     );
 }

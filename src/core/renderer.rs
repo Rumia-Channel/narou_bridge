@@ -103,17 +103,7 @@ struct RenderedWork {
 pub fn refresh_image_manifests(store: &Store, data_dir: &str) -> Result<()> {
     let image_dir = PathBuf::from(data_dir).join("images");
     fs::create_dir_all(&image_dir).context("failed to create image dir")?;
-
-    let (database, cover) = build_image_manifest_jsons(store)?;
-
-    atomic_write(
-        &image_dir.join("database.json"),
-        serde_json::to_string_pretty(&database)?,
-    )?;
-    atomic_write(
-        &image_dir.join("cover.json"),
-        serde_json::to_string_pretty(&cover)?,
-    )?;
+    let _ = build_image_manifest_jsons(store)?;
     Ok(())
 }
 
@@ -300,52 +290,20 @@ pub fn repair_site_from_raw(
 ) -> Result<()> {
     refresh_image_manifests(store, data_dir)?;
     let site_dir = PathBuf::from(data_dir).join(site);
-    if !site_dir.exists() {
-        bail!(
-            "repair requires existing raw.json data under {}",
-            site_dir.display()
-        );
-    }
-
     let image_assets = load_image_assets(store)?;
-    let mut rendered = Vec::new();
+    fs::create_dir_all(&site_dir).context("failed to create site dir")?;
+    let works = store.list_works(Some(site))?;
+    let mut rendered = Vec::with_capacity(works.len());
 
-    for entry in
-        fs::read_dir(&site_dir).with_context(|| format!("failed to read {}", site_dir.display()))?
-    {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-
-        let work_key = entry.file_name().to_string_lossy().to_string();
-        let raw_path = entry.path().join("raw").join("raw.json");
-        if !raw_path.exists() {
-            continue;
-        }
-
-        let raw_json: serde_json::Value = serde_json::from_reader(
-            fs::File::open(&raw_path)
-                .with_context(|| format!("failed to open {}", raw_path.display()))?,
-        )
-        .with_context(|| format!("failed to parse {}", raw_path.display()))?;
-
-        rendered.push(render_work_from_raw(
-            &site_dir,
-            site,
-            &work_key,
-            raw_json,
-            host_name,
-            &image_assets,
-            false,
-        )?);
+    if works.is_empty() {
+        bail!(
+            "repair requires at least one work in sqlite for site {}",
+            site
+        );
     }
 
-    if rendered.is_empty() {
-        bail!(
-            "repair requires at least one existing raw.json under {}",
-            site_dir.display()
-        );
+    for work in works {
+        rendered.push(render_work(&site_dir, &work, host_name, &image_assets)?);
     }
 
     write_site_index(&site_dir, site, &rendered, host_name, &image_assets)
@@ -378,7 +336,6 @@ fn render_work(
         work.raw_json.clone(),
         host_name,
         images,
-        true,
     )
 }
 
@@ -400,20 +357,10 @@ fn render_work_from_raw(
     raw_json: serde_json::Value,
     host_name: &str,
     images: &HashMap<String, ImageAsset>,
-    write_raw_json: bool,
 ) -> Result<RenderedWork> {
     let work_dir = site_dir.join(work_key);
-    let raw_dir = work_dir.join("raw");
     let info_dir = work_dir.join("info");
-    fs::create_dir_all(&raw_dir).context("failed to create raw dir")?;
     fs::create_dir_all(&info_dir).context("failed to create info dir")?;
-
-    if write_raw_json {
-        atomic_write(
-            &raw_dir.join("raw.json"),
-            serde_json::to_string_pretty(&raw_json)?,
-        )?;
-    }
 
     let raw_work = parse_raw_work(&raw_json)
         .with_context(|| format!("failed to parse raw work for {work_key}"))?;
@@ -1492,13 +1439,6 @@ mod tests {
     fn render_site_refreshes_root_cover_manifest() {
         let root = test_dir("renderer-cover-manifest");
         let data_dir = root.join("data");
-        let images_dir = data_dir.join("images");
-        fs::create_dir_all(&images_dir).unwrap();
-        fs::write(
-            images_dir.join("cover.json"),
-            "{\n  \"stale\": \"value\"\n}",
-        )
-        .unwrap();
 
         let store = Store::open_in_memory().expect("store");
         store
@@ -1529,10 +1469,7 @@ mod tests {
         render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", None)
             .expect("render site");
 
-        let cover: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(images_dir.join("cover.json")).expect("read cover manifest"),
-        )
-        .expect("parse cover manifest");
+        let (_, cover) = build_image_manifest_jsons(&store).expect("build cover manifest");
         assert_eq!(
             cover,
             json!({
@@ -1547,8 +1484,6 @@ mod tests {
     fn refresh_image_manifests_adds_narou_cover_alias_from_raw_markup() {
         let root = test_dir("renderer-narou-cover-alias");
         let data_dir = root.join("data");
-        let images_dir = data_dir.join("images");
-        fs::create_dir_all(&images_dir).unwrap();
 
         let store = Store::open_in_memory().expect("store");
         store
@@ -1580,10 +1515,7 @@ mod tests {
 
         refresh_image_manifests(&store, data_dir.to_str().unwrap()).expect("refresh manifests");
 
-        let cover: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(images_dir.join("cover.json")).expect("read cover manifest"),
-        )
-        .expect("parse cover manifest");
+        let (_, cover) = build_image_manifest_jsons(&store).expect("build cover manifest");
         assert_eq!(
             cover["narou_n123_cover.png"].as_str(),
             Some("feedfacecafebeef")
@@ -1593,8 +1525,8 @@ mod tests {
     }
 
     #[test]
-    fn repair_site_prefers_existing_raw_json_without_rewriting_it() {
-        let root = test_dir("renderer-repair-from-raw");
+    fn repair_site_uses_database_raw_json_without_rewriting_disk_raw() {
+        let root = test_dir("renderer-repair-from-store");
         let data_dir = root.join("data");
         let raw_dir = data_dir.join("pixiv").join("n123").join("raw");
         fs::create_dir_all(&raw_dir).unwrap();
@@ -1629,7 +1561,7 @@ mod tests {
             .expect("upsert work");
 
         repair_site_from_raw(&store, "pixiv", data_dir.to_str().unwrap(), "")
-            .expect("repair site from raw");
+            .expect("repair site from store");
 
         let repaired_raw = fs::read_to_string(raw_dir.join("raw.json")).expect("read repaired raw");
         assert_eq!(repaired_raw, disk_raw_text);
@@ -1645,8 +1577,8 @@ mod tests {
                 .join("index.html"),
         )
         .expect("read repaired info html");
-        assert!(repaired_html.contains("Disk Title"));
-        assert!(repaired_info.contains("Disk Caption"));
+        assert!(repaired_html.contains("Database Title"));
+        assert!(repaired_info.contains("Database Caption"));
 
         fs::remove_dir_all(root).unwrap();
     }

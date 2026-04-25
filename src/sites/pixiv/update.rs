@@ -1,4 +1,3 @@
-use crate::core::account::{rewrite_cookie_site_mirror, write_login_account_mirror};
 use crate::core::auto_updater::AccountRotation;
 use crate::core::renderer;
 use crate::core::storage::Store;
@@ -152,21 +151,13 @@ fn run_pixiv_update_with_client(
 
 fn persist_active_candidate(
     store: &Store,
-    cookie_dir: &str,
+    _cookie_dir: &str,
     candidate: &PixivAccountCandidate,
 ) -> Result<()> {
-    let cookie_root = Path::new(cookie_dir);
-    if candidate.backed_by_store {
-        let updated_at = Utc::now().to_rfc3339();
-        if store
-            .set_active_account("pixiv", &candidate.name, &updated_at)?
-            .is_some()
-        {
-            let accounts = store.list_accounts("pixiv")?;
-            rewrite_cookie_site_mirror(cookie_root, "pixiv", &accounts)?;
-            return Ok(());
-        }
+    if !candidate.backed_by_store {
+        return Ok(());
     }
-
-    write_login_account_mirror(cookie_root, "pixiv", &candidate.account)
+    let updated_at = Utc::now().to_rfc3339();
+    let _ = store.set_active_account("pixiv", &candidate.name, &updated_at)?;
+    Ok(())
 }

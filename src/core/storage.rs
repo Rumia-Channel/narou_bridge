@@ -650,6 +650,41 @@ impl Store {
         })
     }
 
+    pub fn get_work(&self, site: &str, work_key: &str) -> Result<Option<WorkRecord>> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                r#"SELECT site, work_key, title, author, author_id, author_url, type, serialization, caption, create_date, update_date, raw_json
+                   FROM works WHERE site = ?1 AND work_key = ?2"#,
+                params![site, work_key],
+                |row| {
+                    let raw_json: String = row.get(11)?;
+                    Ok(WorkRecord {
+                        site: row.get(0)?,
+                        work_key: row.get(1)?,
+                        title: row.get(2)?,
+                        author: row.get(3)?,
+                        author_id: row.get(4)?,
+                        author_url: row.get(5)?,
+                        r#type: row.get(6)?,
+                        serialization: row.get(7)?,
+                        caption: row.get(8)?,
+                        create_date: row.get(9)?,
+                        update_date: row.get(10)?,
+                        raw_json: serde_json::from_str(&raw_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                11,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+    }
+
     pub fn upsert_image(&self, image: &ImageRecord) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute(
@@ -683,6 +718,49 @@ impl Store {
                 images.push(row?);
             }
             Ok(images)
+        })
+    }
+
+    pub fn get_image(&self, logical_name: &str) -> Result<Option<ImageRecord>> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                r#"SELECT logical_name, hash, ext, kind
+                   FROM images WHERE logical_name = ?1"#,
+                params![logical_name],
+                |row| {
+                    Ok(ImageRecord {
+                        logical_name: row.get(0)?,
+                        hash: row.get(1)?,
+                        ext: row.get(2)?,
+                        kind: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+    }
+
+    pub fn find_image_by_logical_prefix(&self, prefix: &str) -> Result<Option<ImageRecord>> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                r#"SELECT logical_name, hash, ext, kind
+                   FROM images
+                   WHERE logical_name LIKE ?1
+                   ORDER BY logical_name
+                   LIMIT 1"#,
+                params![format!("{prefix}%")],
+                |row| {
+                    Ok(ImageRecord {
+                        logical_name: row.get(0)?,
+                        hash: row.get(1)?,
+                        ext: row.get(2)?,
+                        kind: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
         })
     }
 
