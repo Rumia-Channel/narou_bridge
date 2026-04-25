@@ -277,14 +277,20 @@ fn render_work_from_raw(
     )?;
 
     for (index, (episode_key, episode)) in rendered.episodes.iter().enumerate() {
-        let prev = index
-            .checked_sub(1)
-            .and_then(|idx| rendered.episodes.get(idx).map(|(key, _)| key.as_str()));
+        let prev = index.checked_sub(1).and_then(|idx| {
+            rendered
+                .episodes
+                .get(idx)
+                .map(|(_, episode)| episode.id.as_str())
+        });
         let next = rendered
             .episodes
             .get(index + 1)
-            .map(|(key, _)| key.as_str());
-        let episode_path = work_dir.join(format!("{episode_key}.html"));
+            .map(|(_, episode)| episode.id.as_str());
+        let episode_path = work_dir.join(&episode.id).join("index.html");
+        if let Some(parent) = episode_path.parent() {
+            fs::create_dir_all(parent).context("failed to create episode dir")?;
+        }
         fs::write(
             episode_path,
             render_episode_page(
@@ -464,7 +470,7 @@ fn render_work_index(
     let first_episode = rendered
         .episodes
         .first()
-        .map(|(key, _)| format!("./{key}.html"))
+        .map(|(_, episode)| format!("./{}/index.html", episode.id))
         .unwrap_or_else(|| "./info/index.html".to_string());
 
     let page_title = format!("{} - {}", work.title, site);
@@ -518,13 +524,13 @@ fn render_work_info(
     let first_episode = rendered
         .episodes
         .first()
-        .map(|(key, _)| format!("../{key}.html"))
+        .map(|(_, episode)| format!("../{}/index.html", episode.id))
         .unwrap_or_else(|| "../index.html".to_string());
 
     let page_title = format!("{} info", work.title);
     let nav = format!(
         r#"<a href="../index.html">back</a>
-<a href="../{first_episode}">first episode</a>
+<a href="{first_episode}">first episode</a>
 <a href="{reader_url}">reader</a>"#,
         first_episode = escape_html(&first_episode),
         reader_url = escape_html(&reader_url(host_name, site, work_key))
@@ -597,7 +603,12 @@ fn render_episode_page(
     images: &HashMap<String, ImageAsset>,
 ) -> String {
     let page_title = format!("{} - {}", episode.title, rendered.work.title);
-    let nav = render_episode_nav(site, work_key, episode_key, prev, next, host_name);
+    let nav = render_episode_nav(site, work_key, &episode.id, prev, next, host_name);
+    let image_path_base = if rendered.work.serialization == "短編" {
+        "../../images"
+    } else {
+        "../../../images"
+    };
 
     let mut preface_paragraph_id = 1usize;
     let introduction_html = render_rich_text(
@@ -605,6 +616,7 @@ fn render_episode_page(
         site,
         work_key,
         images,
+        image_path_base,
         "Lp",
         &mut preface_paragraph_id,
     );
@@ -614,6 +626,7 @@ fn render_episode_page(
         site,
         work_key,
         images,
+        image_path_base,
         "L",
         &mut body_paragraph_id,
     );
@@ -623,6 +636,7 @@ fn render_episode_page(
         site,
         work_key,
         images,
+        image_path_base,
         "La",
         &mut postscript_paragraph_id,
     );
@@ -661,7 +675,7 @@ fn render_episode_page(
 
     let canonical_url = format_canonical_url(
         host_name,
-        &format!("/{}/{}/{}.html", site, work_key, episode_key),
+        &format!("/{}/{}/{}/index.html", site, work_key, episode.id),
     );
     let og_tags = build_og_tags(
         &page_title,
@@ -681,23 +695,23 @@ fn render_episode_summary_list(
     images: &HashMap<String, ImageAsset>,
 ) -> String {
     let mut items = String::new();
-    for (episode_key, episode) in episodes {
+    for (_episode_key, episode) in episodes {
         let mut paragraph_id = 1usize;
         let caption = render_rich_text(
             &episode.introduction,
             site,
             work_key,
             images,
+            "../../images",
             "p",
             &mut paragraph_id,
         );
         items.push_str(&format!(
             r#"<li>
-  <a href="./{episode_key}.html">{title}</a>
+  <a href="./{episode_id}/index.html">{title}</a>
   <span class="meta">[{episode_id}] {update_date}</span>
   <div class="summary">{caption}</div>
 </li>"#,
-            episode_key = escape_html(episode_key),
             title = escape_html(&episode.title),
             episode_id = escape_html(&episode.id),
             update_date = escape_html(&episode.update_date),
@@ -717,17 +731,17 @@ fn render_episode_nav(
     host_name: &str,
 ) -> String {
     let mut links = Vec::new();
-    links.push(format!(r#"<a href="./index.html">index</a>"#));
-    links.push(format!(r#"<a href="./info/index.html">info</a>"#));
+    links.push(format!(r#"<a href="../index.html">index</a>"#));
+    links.push(format!(r#"<a href="../info/index.html">info</a>"#));
     links.push(format!(
         r#"<a href="{reader_url}">reader</a>"#,
         reader_url = escape_html(&reader_url(host_name, site, work_key))
     ));
     if let Some(prev) = prev {
-        links.push(format!(r#"<a href="./{prev}.html">prev</a>"#));
+        links.push(format!(r#"<a href="../{prev}/index.html">prev</a>"#));
     }
     if let Some(next) = next {
-        links.push(format!(r#"<a href="./{next}.html">next</a>"#));
+        links.push(format!(r#"<a href="../{next}/index.html">next</a>"#));
     }
     links.push(format!(
         r#"<span class="episode-key">{}</span>"#,
@@ -809,6 +823,7 @@ fn render_rich_text(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    image_path_base: &str,
     id_prefix: &str,
     paragraph_id: &mut usize,
 ) -> String {
@@ -824,6 +839,7 @@ fn render_rich_text(
                     site,
                     work_key,
                     images,
+                    image_path_base,
                     id_prefix,
                     paragraph_id,
                 ));
@@ -839,6 +855,7 @@ fn render_rich_text(
                 site,
                 work_key,
                 images,
+                image_path_base,
                 id_prefix,
                 paragraph_id,
             ));
@@ -854,6 +871,7 @@ fn render_rich_text(
             site,
             work_key,
             images,
+            image_path_base,
             id_prefix,
             paragraph_id,
         ));
@@ -867,6 +885,7 @@ fn render_text_block(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    image_path_base: &str,
     id_prefix: &str,
     paragraph_id: &mut usize,
 ) -> String {
@@ -878,7 +897,7 @@ fn render_text_block(
         } else {
             format!(
                 r#"<p id="{id_prefix}{paragraph_id}">{}</p>"#,
-                render_inline_markup(line, site, work_key, images)
+                render_inline_markup(line, site, work_key, images, image_path_base)
             )
         };
         paragraphs.push(html);
@@ -892,6 +911,7 @@ fn render_markup_line(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    image_path_base: &str,
     id_prefix: &str,
     paragraph_id: &mut usize,
 ) -> String {
@@ -901,7 +921,7 @@ fn render_markup_line(
     {
         let result = format!(
             r#"<p id="{id_prefix}{paragraph_id}">{}</p>"#,
-            render_image(inner, images)
+            render_image(inner, images, image_path_base)
         );
         *paragraph_id += 1;
         return result;
@@ -926,16 +946,15 @@ fn render_markup_line(
         .and_then(|s| s.strip_suffix(']'))
     {
         let result = format!(
-            r#"<p id="{id_prefix}{paragraph_id}"><a href="./{}.html">episode {}</a></p>"#,
-            escape_html(target),
-            escape_html(target)
+            "<p id=\"{id_prefix}{paragraph_id}\"><a href=\"#L{target}\">{target}</a></p>",
+            target = escape_html(target)
         );
         *paragraph_id += 1;
         return result;
     }
     let result = format!(
         r#"<p id="{id_prefix}{paragraph_id}">{}</p>"#,
-        render_inline_markup(line, site, work_key, images)
+        render_inline_markup(line, site, work_key, images, image_path_base)
     );
     *paragraph_id += 1;
     result
@@ -946,6 +965,7 @@ fn render_inline_markup(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    image_path_base: &str,
 ) -> String {
     let mut out = String::new();
     let mut remainder = text;
@@ -954,7 +974,7 @@ fn render_inline_markup(
         if let Some(rest) = remainder.strip_prefix("[image](") {
             if let Some(end) = rest.find(')') {
                 let logical = &rest[..end];
-                out.push_str(&render_image(logical, images));
+                out.push_str(&render_image(logical, images, image_path_base));
                 remainder = &rest[end + 1..];
                 continue;
             }
@@ -981,7 +1001,7 @@ fn render_inline_markup(
             if let Some(end) = rest.find(']') {
                 let target = &rest[..end];
                 out.push_str(&format!(
-                    r#"<a href="./{target}.html">episode {target}</a>"#,
+                    "<a href=\"#L{target}\">{target}</a>",
                     target = escape_html(target)
                 ));
                 remainder = &rest[end + 1..];
@@ -1000,10 +1020,15 @@ fn render_inline_markup(
     out
 }
 
-fn render_image(logical_name: &str, images: &HashMap<String, ImageAsset>) -> String {
+fn render_image(
+    logical_name: &str,
+    images: &HashMap<String, ImageAsset>,
+    image_path_base: &str,
+) -> String {
     if let Some(image) = images.get(logical_name) {
         return format!(
-            r#"<figure><img src="../../images/{}.{}" alt="{}"></figure>"#,
+            r#"<img src="{}/{}.{}" alt="{}">"#,
+            escape_html(image_path_base),
             escape_html(&image.hash),
             escape_html(&image.ext),
             escape_html(logical_name)
@@ -1020,7 +1045,8 @@ fn render_image(logical_name: &str, images: &HashMap<String, ImageAsset>) -> Str
             .any(|asset| asset.hash == stem && asset.ext == ext);
         if matches_known_asset {
             return format!(
-                r#"<figure><img src="../../images/{}" alt=""></figure>"#,
+                r#"<img src="{}/{}" alt="">"#,
+                escape_html(image_path_base),
                 escape_html(logical_name)
             );
         }
@@ -1434,10 +1460,10 @@ mod tests {
             },
         );
 
-        let html = render_image("pixiv_n123_cover.jpg", &images);
+        let html = render_image("pixiv_n123_cover.jpg", &images, "../../images");
         assert_eq!(
             html,
-            r#"<figure><img src="../../images/abc1234567.jpg" alt="pixiv_n123_cover.jpg"></figure>"#
+            r#"<img src="../../images/abc1234567.jpg" alt="pixiv_n123_cover.jpg">"#
         );
     }
 
@@ -1452,17 +1478,14 @@ mod tests {
             },
         );
 
-        let html = render_image("abc1234567.jpg", &images);
-        assert_eq!(
-            html,
-            r#"<figure><img src="../../images/abc1234567.jpg" alt=""></figure>"#
-        );
+        let html = render_image("abc1234567.jpg", &images, "../../images");
+        assert_eq!(html, r#"<img src="../../images/abc1234567.jpg" alt="">"#);
     }
 
     #[test]
     fn render_image_falls_back_for_unknown_name() {
         let images: HashMap<String, ImageAsset> = HashMap::new();
-        let html = render_image("not-an-image", &images);
+        let html = render_image("not-an-image", &images, "../../images");
         assert_eq!(html, "<p><code>not-an-image</code></p>");
     }
 }
