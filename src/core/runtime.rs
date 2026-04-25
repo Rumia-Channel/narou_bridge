@@ -9,7 +9,7 @@ use crate::core::storage::Store;
 use crate::sites::SiteRegistry;
 use anyhow::{Context, Result};
 use axum::Router;
-use axum::extract::{FromRequest, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, FromRequest, Query, Request, State};
 use axum::http::header;
 use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::middleware::map_response;
@@ -34,6 +34,8 @@ use tracing::{error, info, warn};
 
 const AUTO_UPDATE_STARTUP_DELAY: Duration = Duration::from_secs(30);
 const ZIP_IMPORT_STAGING_DIR: &str = ".zip-import-staging";
+const JSON_FORM_BODY_LIMIT_BYTES: usize = 1024 * 1024;
+const MULTIPART_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct RuntimeState {
@@ -110,34 +112,7 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
         tokio::spawn(auto_update_loop(state.clone()));
     }
 
-    let data_dir = state.config.data_dir_path();
-    let static_files = ServeDir::new(&data_dir).append_index_html_on_directories(true);
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/api/tasks", get(list_tasks))
-        .route("/api/works", get(list_works_query))
-        .route(
-            "/api/account",
-            get(list_accounts_query)
-                .post(upload_account_query)
-                .delete(delete_account_query),
-        )
-        .route("/api/account/switch", post(switch_account_query))
-        .route("/api/account/rename", post(rename_account_query))
-        .route("/api/", post(handle_post))
-        .route("/api/migrate", post(migrate))
-        .route_service("/", ServeFile::new(data_dir.join("index.html")))
-        .route_service(
-            "/reader",
-            ServeFile::new(data_dir.join("reader").join("index.html")),
-        )
-        .route_service(
-            "/reader/",
-            ServeFile::new(data_dir.join("reader").join("index.html")),
-        )
-        .fallback_service(static_files)
-        .layer(map_response(ensure_html_utf8_charset))
-        .with_state(state.clone());
+    let app = build_app(state.clone());
 
     let addr: SocketAddr = state
         .config
@@ -153,6 +128,42 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
     );
     axum::serve(listener, app).await.context("server failed")?;
     Ok(())
+}
+
+fn build_app(state: RuntimeState) -> Router {
+    let data_dir = state.config.data_dir_path();
+    let static_files = ServeDir::new(&data_dir).append_index_html_on_directories(true);
+
+    Router::new()
+        .route("/health", get(health))
+        .route("/api/tasks", get(list_tasks))
+        .route("/api/works", get(list_works_query))
+        .route(
+            "/api/account",
+            get(list_accounts_query)
+                .post(upload_account_query)
+                .delete(delete_account_query),
+        )
+        .route("/api/account/switch", post(switch_account_query))
+        .route("/api/account/rename", post(rename_account_query))
+        .route(
+            "/api/",
+            post(handle_post).layer(DefaultBodyLimit::max(MULTIPART_BODY_LIMIT_BYTES)),
+        )
+        .route("/api/migrate", post(migrate))
+        .route_service("/", ServeFile::new(data_dir.join("index.html")))
+        .route_service(
+            "/reader",
+            ServeFile::new(data_dir.join("reader").join("index.html")),
+        )
+        .route_service(
+            "/reader/",
+            ServeFile::new(data_dir.join("reader").join("index.html")),
+        )
+        .fallback_service(static_files)
+        .layer(DefaultBodyLimit::max(JSON_FORM_BODY_LIMIT_BYTES))
+        .layer(map_response(ensure_html_utf8_charset))
+        .with_state(state)
 }
 
 async fn health() -> Json<Value> {
@@ -835,7 +846,19 @@ async fn parse_task_input(state: &RuntimeState, request: Request) -> Result<Task
         .await
         .map_err(|err| err.to_string())?
         .to_bytes();
+    validate_non_multipart_body_size(&collected)?;
     parse_task_input_bytes(&parts.headers, &collected)
+}
+
+fn validate_non_multipart_body_size(body: &Bytes) -> Result<(), String> {
+    if body.len() > JSON_FORM_BODY_LIMIT_BYTES {
+        Err(format!(
+            "request body exceeds {} bytes",
+            JSON_FORM_BODY_LIMIT_BYTES
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_task_input_bytes(headers: &HeaderMap, body: &Bytes) -> Result<TaskInput, String> {
@@ -1691,6 +1714,7 @@ async fn claim_next_task(state: &RuntimeState) -> Result<Option<TaskRecord>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
     use std::collections::BTreeMap;
     use std::io::{Cursor, Write};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1745,6 +1769,23 @@ mod tests {
             writer.write_all(contents.as_bytes()).expect("write file");
         }
         writer.finish().expect("finish zip");
+    }
+
+    fn multipart_payload(
+        boundary: &str,
+        field_name: &str,
+        file_name: &str,
+        data: &[u8],
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        write!(
+            body,
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{field_name}\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .expect("write multipart headers");
+        body.extend_from_slice(data);
+        write!(body, "\r\n--{boundary}--\r\n").expect("write multipart trailer");
+        body
     }
 
     fn sample_zip_work_json() -> String {
@@ -1889,6 +1930,49 @@ mod tests {
 
         assert_eq!(input.pdf_path, None);
         assert_eq!(input.pdf_name.as_deref(), Some("sample.pdf"));
+    }
+
+    #[test]
+    fn validate_non_multipart_body_size_rejects_large_json_and_form_payloads() {
+        let oversized = Bytes::from(vec![b'a'; JSON_FORM_BODY_LIMIT_BYTES + 1]);
+        let err = validate_non_multipart_body_size(&oversized)
+            .expect_err("oversized non-multipart payload should fail");
+        assert!(err.contains("request body exceeds"));
+    }
+
+    #[tokio::test]
+    async fn parse_multipart_task_input_accepts_pdf_larger_than_one_mebibyte() {
+        let root = test_dir("runtime-large-multipart-pdf");
+        let config = AppConfig {
+            pdf_dir: root.join("pdf").to_string_lossy().to_string(),
+            ..AppConfig::default()
+        };
+        let boundary = "boundary";
+        let pdf_bytes = vec![b'x'; JSON_FORM_BODY_LIMIT_BYTES + 4096];
+        let body = multipart_payload(boundary, "pdf", "large.pdf", &pdf_bytes);
+        let request = Request::builder()
+            .header(
+                CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .expect("request");
+        let multipart = Multipart::from_request(request, &())
+            .await
+            .expect("multipart");
+
+        let input = parse_multipart_task_input(&config, multipart)
+            .await
+            .expect("multipart payload should parse");
+
+        let pdf_path = PathBuf::from(input.pdf_path.expect("persisted pdf path"));
+        assert!(pdf_path.exists());
+        assert_eq!(
+            stdfs::metadata(&pdf_path).unwrap().len(),
+            pdf_bytes.len() as u64
+        );
+
+        stdfs::remove_dir_all(root).unwrap();
     }
 
     #[test]
