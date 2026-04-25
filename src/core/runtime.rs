@@ -27,13 +27,13 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tempfile::TempDir;
 use tokio::fs;
 use tokio::sync::{Mutex, Notify};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info, warn};
 
 const AUTO_UPDATE_STARTUP_DELAY: Duration = Duration::from_secs(30);
-const ZIP_IMPORT_STAGING_DIR: &str = ".zip-import-staging";
 const JSON_FORM_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const MULTIPART_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
@@ -1091,17 +1091,24 @@ fn import_uploaded_zip(
         .with_context(|| format!("invalid zip {}", archive_path.display()))?;
     let metadata = read_zip_metadata(&mut archive)?;
     let data_root = Path::new(data_dir);
-    let staging_root = prepare_zip_import_staging_dir(data_root, &request.request_id)?;
+    let staging_dir = prepare_zip_import_staging_dir(&request.request_id)?;
+    let staging_root = staging_dir.path();
 
-    let import_result = (|| -> Result<String> {
+    (|| -> Result<String> {
         let payload_entries = collect_zip_payload_entries(&mut archive, &metadata.site_name)?;
-        extract_zip_payload(&mut archive, &payload_entries, &staging_root)?;
+        extract_zip_payload(&mut archive, &payload_entries, staging_root)?;
         let imported = import_site_records_from_tree(
             store,
             &staging_root.join(&metadata.site_name),
             &metadata.site_name,
         )?;
-        copy_staged_zip_images(&payload_entries, &staging_root, data_root)?;
+        copy_staged_site_payload(
+            &payload_entries,
+            staging_root,
+            data_root,
+            &metadata.site_name,
+        )?;
+        copy_staged_zip_images(&payload_entries, staging_root, data_root)?;
         merge_zip_images(store, &metadata)?;
         renderer::refresh_image_manifests(store, data_dir)?;
         renderer::render_site_from_store(store, &metadata.site_name, data_dir, host_name)?;
@@ -1113,20 +1120,7 @@ fn import_uploaded_zip(
                 .clone()
                 .unwrap_or_else(|| metadata.site_name.clone())
         ))
-    })();
-
-    if let Err(err) = cleanup_zip_import_staging_dir(&staging_root) {
-        if import_result.is_ok() {
-            return Err(err);
-        }
-        warn!(
-            staging_root = %staging_root.display(),
-            error = %err,
-            "failed to clean up ZIP import staging directory"
-        );
-    }
-
-    import_result
+    })()
 }
 
 fn queued_zip_path(request: &RequestData, pdf_dir: &str) -> Result<Option<PathBuf>> {
@@ -1249,42 +1243,51 @@ struct ZipPayloadEntry {
     relative: PathBuf,
 }
 
-fn prepare_zip_import_staging_dir(data_dir: &Path, request_id: &str) -> Result<PathBuf> {
-    let staging_root = zip_import_staging_root(data_dir, request_id)?;
-    if staging_root.exists() {
-        stdfs::remove_dir_all(&staging_root).with_context(|| {
-            format!(
-                "failed to clear ZIP import staging directory {}",
-                staging_root.display()
-            )
-        })?;
-    }
-    stdfs::create_dir_all(&staging_root).with_context(|| {
-        format!(
-            "failed to create ZIP import staging directory {}",
-            staging_root.display()
-        )
-    })?;
-    Ok(staging_root)
-}
-
-fn zip_import_staging_root(data_dir: &Path, request_id: &str) -> Result<PathBuf> {
+fn prepare_zip_import_staging_dir(request_id: &str) -> Result<TempDir> {
     if !is_simple_path_segment(request_id) {
         anyhow::bail!("invalid request_id for ZIP import staging path: {request_id}");
     }
-    Ok(data_dir.join(ZIP_IMPORT_STAGING_DIR).join(request_id))
+    tempfile::Builder::new()
+        .prefix(&format!("narou-zip-import-{request_id}-"))
+        .tempdir()
+        .with_context(|| {
+            format!("failed to create ZIP import staging directory for request {request_id}")
+        })
 }
 
-fn cleanup_zip_import_staging_dir(staging_root: &Path) -> Result<()> {
-    if !staging_root.exists() {
-        return Ok(());
+fn copy_staged_site_payload(
+    entries: &[ZipPayloadEntry],
+    staging_root: &Path,
+    data_root: &Path,
+    site_name: &str,
+) -> Result<()> {
+    for entry in entries {
+        let Some(root) = entry
+            .relative
+            .components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str())
+        else {
+            continue;
+        };
+        if root != site_name {
+            continue;
+        }
+
+        let source = staging_root.join(&entry.relative);
+        let target = data_root.join(&entry.relative);
+        if let Some(parent) = target.parent() {
+            stdfs::create_dir_all(parent)?;
+        }
+        stdfs::copy(&source, &target).with_context(|| {
+            format!(
+                "failed to copy staged ZIP payload {} to {}",
+                source.display(),
+                target.display()
+            )
+        })?;
     }
-    stdfs::remove_dir_all(staging_root).with_context(|| {
-        format!(
-            "failed to remove ZIP import staging directory {}",
-            staging_root.display()
-        )
-    })
+    Ok(())
 }
 
 fn copy_staged_zip_images(
@@ -2199,11 +2202,7 @@ mod tests {
         assert!(err.to_string().contains("invalid zip work payload"));
         assert!(!data_dir.join("narou").exists());
         assert!(!data_dir.join("images").join("abc123.png").exists());
-        assert!(
-            !zip_import_staging_root(&data_dir, &request.request_id)
-                .expect("staging path")
-                .exists()
-        );
+        assert!(!data_dir.join(".zip-import-staging").exists());
 
         stdfs::remove_dir_all(root).unwrap();
     }
@@ -2256,13 +2255,23 @@ mod tests {
                 .exists()
         );
         assert_eq!(store.list_works(Some("narou")).unwrap().len(), 1);
-        assert!(
-            !zip_import_staging_root(&data_dir, &request.request_id)
-                .expect("staging path")
-                .exists()
-        );
+        assert!(!data_dir.join(".zip-import-staging").exists());
 
         stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prepare_zip_import_staging_dir_uses_temp_dir_and_cleans_on_drop() {
+        let temp_root = std::env::temp_dir();
+        let staging_path = {
+            let staging = prepare_zip_import_staging_dir("req-zip").expect("staging dir");
+            let path = staging.path().to_path_buf();
+            assert!(path.starts_with(&temp_root));
+            assert!(path.exists());
+            path
+        };
+
+        assert!(!staging_path.exists());
     }
 
     #[test]
