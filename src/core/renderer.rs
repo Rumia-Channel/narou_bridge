@@ -277,9 +277,7 @@ pub fn render_site_from_store(
         }
     }
 
-    write_site_index(&site_dir, site, &rendered, host_name, &image_assets)?;
-    update_cover_json(store, site, &site_dir)?;
-    Ok(())
+    write_site_index(&site_dir, site, &rendered, host_name, &image_assets)
 }
 
 pub fn repair_site_from_raw(
@@ -338,9 +336,7 @@ pub fn repair_site_from_raw(
         );
     }
 
-    write_site_index(&site_dir, site, &rendered, host_name, &image_assets)?;
-    update_cover_json(store, site, &site_dir)?;
-    Ok(())
+    write_site_index(&site_dir, site, &rendered, host_name, &image_assets)
 }
 
 fn load_image_assets(store: &Store) -> Result<HashMap<String, ImageAsset>> {
@@ -1412,31 +1408,6 @@ fn get_cover_image_url(site: &str, work_key: &str, images: &HashMap<String, Imag
         }
     }
     String::new()
-}
-
-fn update_cover_json(store: &Store, site: &str, site_dir: &Path) -> Result<()> {
-    // Generate cover.json containing cover images for the site
-    let images = store
-        .list_images()?
-        .into_iter()
-        .filter(|img| img.logical_name.contains(site) || img.kind == "cover")
-        .collect::<Vec<_>>();
-
-    let mut cover_map = serde_json::Map::new();
-    for img in images {
-        if img.kind == "cover" {
-            cover_map.insert(img.logical_name, serde_json::Value::String(img.hash));
-        }
-    }
-
-    let cover_dir = site_dir.join("images");
-    fs::create_dir_all(&cover_dir).context("failed to create images dir")?;
-    atomic_write(
-        &cover_dir.join("cover.json"),
-        serde_json::to_string_pretty(&serde_json::Value::Object(cover_map))?,
-    )
-    .context("failed to write cover.json")?;
-    Ok(())
 }
 
 #[cfg(test)]
