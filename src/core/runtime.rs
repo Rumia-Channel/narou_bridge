@@ -1779,6 +1779,8 @@ async fn worker_loop(state: RuntimeState) {
         if let Err(err) = sync_queue_state(&state).await {
             error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to persist queue/task.json after task completion");
         }
+
+        cleanup_uploaded_files_for_request(&state.config, &task.request);
     }
 }
 
@@ -2094,6 +2096,33 @@ mod tests {
             .expect_err("path traversal request_id should fail");
 
         assert!(err.contains("invalid request_id"));
+        stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cleanup_uploaded_files_for_request_removes_pdf_and_zip_uploads() {
+        let root = test_dir("runtime-upload-cleanup");
+        let pdf_dir = root.join("pdf");
+        stdfs::create_dir_all(&pdf_dir).unwrap();
+        let config = AppConfig {
+            pdf_dir: pdf_dir.to_string_lossy().to_string(),
+            ..AppConfig::default()
+        };
+        let request = RequestData {
+            request_id: "req-clean".to_string(),
+            pdf_path: Some(pdf_dir.join("req-clean.pdf").to_string_lossy().to_string()),
+            zip_name: Some("upload.zip".to_string()),
+            ..RequestData::default()
+        };
+        let pdf_path = queued_upload_path(&pdf_dir, &request.request_id, "pdf").unwrap();
+        let zip_path = queued_upload_path(&pdf_dir, &request.request_id, "zip").unwrap();
+        stdfs::write(&pdf_path, b"pdf").unwrap();
+        stdfs::write(&zip_path, b"zip").unwrap();
+
+        cleanup_uploaded_files_for_request(&config, &request);
+
+        assert!(!pdf_path.exists());
+        assert!(!zip_path.exists());
         stdfs::remove_dir_all(root).unwrap();
     }
 
