@@ -301,6 +301,182 @@ pub fn persist_work_record(store: &Store, record: &WorkRecord, img_path: &Path) 
     Ok(())
 }
 
+pub fn persist_work_record_for_update(
+    store: &Store,
+    record: &WorkRecord,
+    img_path: &Path,
+) -> Result<bool> {
+    let existing = store
+        .list_works(Some(&record.site))?
+        .into_iter()
+        .find(|work| work.work_key == record.work_key);
+
+    match prepare_update_work_record(existing.as_ref(), record) {
+        UpdateWorkDecision::Store(record) => {
+            persist_work_record(store, &record, img_path)?;
+            Ok(true)
+        }
+        UpdateWorkDecision::Skip(reason) => {
+            warn!("{reason}");
+            Ok(false)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum UpdateWorkDecision {
+    Store(WorkRecord),
+    Skip(String),
+}
+
+fn prepare_update_work_record(
+    existing: Option<&WorkRecord>,
+    incoming: &WorkRecord,
+) -> UpdateWorkDecision {
+    if let Some(existing) = existing {
+        for metric in ["total_episodes", "total_characters"] {
+            if let Some(reason) = update_drop_reason(existing, incoming, metric) {
+                return UpdateWorkDecision::Skip(reason);
+            }
+        }
+    }
+
+    let incoming_episode_count = work_episode_count(incoming);
+    if incoming_episode_count == 0 {
+        return existing
+            .and_then(|existing| merge_work_records(existing, incoming))
+            .map(UpdateWorkDecision::Store)
+            .unwrap_or_else(|| {
+                UpdateWorkDecision::Skip(format!(
+                    "Skipping Pixiv update for {} because the fetched record has no episodes",
+                    incoming.work_key
+                ))
+            });
+    }
+
+    if let Some(existing) = existing {
+        if work_episode_count(existing) > incoming_episode_count {
+            return merge_work_records(existing, incoming)
+                .map(UpdateWorkDecision::Store)
+                .unwrap_or_else(|| {
+                    UpdateWorkDecision::Skip(format!(
+                        "Skipping Pixiv update for {} because the fetched record shrank from {} to {} episodes and could not be merged",
+                        incoming.work_key,
+                        work_episode_count(existing),
+                        incoming_episode_count
+                    ))
+                });
+        }
+    }
+
+    UpdateWorkDecision::Store(incoming.clone())
+}
+
+fn update_drop_reason(
+    existing: &WorkRecord,
+    incoming: &WorkRecord,
+    metric: &str,
+) -> Option<String> {
+    let previous = raw_metric(&existing.raw_json, metric)?;
+    let current = raw_metric(&incoming.raw_json, metric)?;
+    (previous > 0 && current >= 0 && current * 2 < previous).then(|| {
+        format!(
+            "Skipping Pixiv update for {} because {metric} dropped from {previous} to {current}",
+            incoming.work_key
+        )
+    })
+}
+
+fn merge_work_records(existing: &WorkRecord, incoming: &WorkRecord) -> Option<WorkRecord> {
+    let existing_episodes = raw_episode_map(&existing.raw_json)?.clone();
+    let incoming_episodes = raw_episode_map(&incoming.raw_json)?;
+
+    let mut merged_raw = existing.raw_json.as_object()?.clone();
+    if let Some(incoming_raw) = incoming.raw_json.as_object() {
+        for (key, value) in incoming_raw {
+            if key != "episodes" {
+                merged_raw.insert(key.clone(), value.clone());
+            }
+        }
+    } else {
+        return None;
+    }
+
+    let mut merged_episodes = existing_episodes;
+    for (key, value) in incoming_episodes {
+        merged_episodes.insert(key.clone(), value.clone());
+    }
+
+    let merged_episode_count = merged_episodes.len() as i64;
+    let total_episodes = raw_metric(&existing.raw_json, "total_episodes")
+        .unwrap_or(work_episode_count(existing) as i64)
+        .max(
+            raw_metric(&incoming.raw_json, "total_episodes")
+                .unwrap_or(work_episode_count(incoming) as i64),
+        )
+        .max(merged_episode_count);
+    let all_episodes = raw_metric(&existing.raw_json, "all_episodes")
+        .unwrap_or(total_episodes)
+        .max(raw_metric(&incoming.raw_json, "all_episodes").unwrap_or(total_episodes))
+        .max(total_episodes);
+    let total_characters = raw_metric(&existing.raw_json, "total_characters")
+        .unwrap_or(0)
+        .max(raw_metric(&incoming.raw_json, "total_characters").unwrap_or(0));
+    let all_characters = raw_metric(&existing.raw_json, "all_characters")
+        .unwrap_or(total_characters)
+        .max(raw_metric(&incoming.raw_json, "all_characters").unwrap_or(total_characters))
+        .max(total_characters);
+
+    merged_raw.insert("episodes".to_string(), Value::Object(merged_episodes));
+    merged_raw.insert("total_episodes".to_string(), json!(total_episodes));
+    merged_raw.insert("all_episodes".to_string(), json!(all_episodes));
+    merged_raw.insert("total_characters".to_string(), json!(total_characters));
+    merged_raw.insert("all_characters".to_string(), json!(all_characters));
+
+    let mut merged = incoming.clone();
+    if merged.title.is_empty() {
+        merged.title = existing.title.clone();
+    }
+    if merged.author.is_empty() {
+        merged.author = existing.author.clone();
+    }
+    if merged.author_id.is_none() {
+        merged.author_id = existing.author_id.clone();
+    }
+    if merged.author_url.is_none() {
+        merged.author_url = existing.author_url.clone();
+    }
+    if merged.r#type.is_empty() {
+        merged.r#type = existing.r#type.clone();
+    }
+    if merged.serialization.is_empty() {
+        merged.serialization = existing.serialization.clone();
+    }
+    if merged.caption.is_empty() {
+        merged.caption = existing.caption.clone();
+    }
+    if merged.create_date.is_empty() {
+        merged.create_date = existing.create_date.clone();
+    }
+    if merged.update_date.is_empty() {
+        merged.update_date = existing.update_date.clone();
+    }
+    merged.raw_json = Value::Object(merged_raw);
+    Some(merged)
+}
+
+fn raw_episode_map(raw_json: &Value) -> Option<&Map<String, Value>> {
+    raw_json.get("episodes").and_then(Value::as_object)
+}
+
+fn work_episode_count(record: &WorkRecord) -> usize {
+    raw_episode_map(&record.raw_json).map(Map::len).unwrap_or(0)
+}
+
+fn raw_metric(raw_json: &Value, key: &str) -> Option<i64> {
+    raw_json.get(key).and_then(Value::as_i64)
+}
+
 fn persist_body_image_records(store: &Store, raw_json: &Value, img_path: &Path) -> Result<()> {
     let mut markup_images = BTreeSet::new();
     collect_markup_image_names(raw_json, &mut markup_images);
@@ -1651,5 +1827,114 @@ mod tests {
             page.entries[0].get("workId").and_then(Value::as_str),
             Some("100")
         );
+    }
+
+    #[test]
+    fn prepare_update_work_record_merges_missing_existing_episodes() {
+        let existing = WorkRecord {
+            site: "pixiv".to_string(),
+            work_key: "c123".to_string(),
+            title: "old".to_string(),
+            author: "author".to_string(),
+            author_id: Some("1".to_string()),
+            author_url: Some("https://www.pixiv.net/users/1".to_string()),
+            r#type: "comic".to_string(),
+            serialization: "連載中".to_string(),
+            caption: "old caption".to_string(),
+            create_date: "2025-01-01T00:00:00Z".to_string(),
+            update_date: "2025-01-02T00:00:00Z".to_string(),
+            raw_json: json!({
+                "total_episodes": 3,
+                "all_episodes": 3,
+                "total_characters": 300,
+                "all_characters": 300,
+                "episodes": {
+                    "1": {"id": "ep1"},
+                    "2": {"id": "ep2"},
+                    "3": {"id": "ep3"}
+                }
+            }),
+        };
+        let incoming = WorkRecord {
+            raw_json: json!({
+                "total_episodes": 2,
+                "all_episodes": 2,
+                "total_characters": 280,
+                "all_characters": 280,
+                "episodes": {
+                    "1": {"id": "ep1-new"},
+                    "2": {"id": "ep2-new"}
+                }
+            }),
+            update_date: "2025-01-03T00:00:00Z".to_string(),
+            ..existing.clone()
+        };
+
+        let UpdateWorkDecision::Store(merged) =
+            prepare_update_work_record(Some(&existing), &incoming)
+        else {
+            panic!("expected merged update to be stored");
+        };
+
+        assert_eq!(work_episode_count(&merged), 3);
+        assert_eq!(
+            merged
+                .raw_json
+                .get("episodes")
+                .and_then(Value::as_object)
+                .and_then(|episodes| episodes.get("3"))
+                .and_then(|episode| episode.get("id"))
+                .and_then(Value::as_str),
+            Some("ep3")
+        );
+        assert_eq!(
+            merged
+                .raw_json
+                .get("total_episodes")
+                .and_then(Value::as_i64),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn prepare_update_work_record_skips_large_metric_drop() {
+        let existing = WorkRecord {
+            site: "pixiv".to_string(),
+            work_key: "n123".to_string(),
+            title: "old".to_string(),
+            author: "author".to_string(),
+            author_id: None,
+            author_url: None,
+            r#type: "novel".to_string(),
+            serialization: "連載中".to_string(),
+            caption: String::new(),
+            create_date: "2025-01-01T00:00:00Z".to_string(),
+            update_date: "2025-01-02T00:00:00Z".to_string(),
+            raw_json: json!({
+                "total_episodes": 10,
+                "total_characters": 1000,
+                "episodes": {
+                    "1": {"id": "ep1"}
+                }
+            }),
+        };
+        let incoming = WorkRecord {
+            raw_json: json!({
+                "total_episodes": 4,
+                "total_characters": 400,
+                "episodes": {
+                    "1": {"id": "ep1"}
+                }
+            }),
+            ..existing.clone()
+        };
+
+        let UpdateWorkDecision::Skip(reason) =
+            prepare_update_work_record(Some(&existing), &incoming)
+        else {
+            panic!("expected update with large drop to be skipped");
+        };
+
+        assert!(reason.contains("total_episodes"));
     }
 }

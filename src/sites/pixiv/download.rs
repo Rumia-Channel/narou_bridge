@@ -15,8 +15,8 @@ use super::{
     extract_profile_ids, extract_tag_names_from_translation, extract_tag_names_nested,
     find_key_recursively, format_image_links, format_jump_url, format_jumpuri, format_ruby,
     format_survey, html_breaks_to_newlines, int_field, load_illust_snapshot, persist_work_record,
-    regex_capture, remove_chapter_tag, save_illust_snapshot, sort_episodes_by_create_date,
-    str_field, url_decode, value_to_string,
+    persist_work_record_for_update, regex_capture, remove_chapter_tag, save_illust_snapshot,
+    sort_episodes_by_create_date, str_field, url_decode, value_to_string,
 };
 
 /// Download a single novel work
@@ -734,6 +734,14 @@ pub fn download_user(
     update: bool,
 ) -> Result<super::UserDownloadSummary> {
     let user_conf = ensure_tracked_user(store, folder_path, user_id)?;
+    let persist_record = |store: &Store, record: &WorkRecord, img_path: &Path| -> Result<bool> {
+        if update {
+            persist_work_record_for_update(store, record, img_path)
+        } else {
+            persist_work_record(store, record, img_path)?;
+            Ok(true)
+        }
+    };
     let profile_all = fetch_body_json(
         client,
         &format!("https://www.pixiv.net/ajax/user/{user_id}/profile/all"),
@@ -803,8 +811,9 @@ pub fn download_user(
         for series_id in &novel_series {
             match download_series(client, series_id, folder_path, img_path) {
                 Ok(record) => {
-                    persist_work_record(store, &record, img_path)?;
-                    summary.downloaded_works += 1;
+                    if persist_record(store, &record, img_path)? {
+                        summary.downloaded_works += 1;
+                    }
                 }
                 Err(err) => summary
                     .failures
@@ -814,8 +823,9 @@ pub fn download_user(
         for novel_id in &novels {
             match download_novel(client, novel_id, folder_path, img_path) {
                 Ok(record) => {
-                    persist_work_record(store, &record, img_path)?;
-                    summary.downloaded_works += 1;
+                    if persist_record(store, &record, img_path)? {
+                        summary.downloaded_works += 1;
+                    }
                 }
                 Err(err) => summary.failures.push(format!("novel {novel_id}: {err}")),
             }
@@ -826,8 +836,9 @@ pub fn download_user(
         for series_id in &comic_series {
             match download_comic(client, series_id, folder_path, img_path) {
                 Ok(record) => {
-                    persist_work_record(store, &record, img_path)?;
-                    summary.downloaded_works += 1;
+                    if persist_record(store, &record, img_path)? {
+                        summary.downloaded_works += 1;
+                    }
                 }
                 Err(err) => summary
                     .failures
@@ -853,8 +864,9 @@ pub fn download_user(
         for art_id in &new_art_ids {
             match download_art(client, art_id, folder_path, img_path) {
                 Ok(record) => {
-                    persist_work_record(store, &record, img_path)?;
-                    summary.downloaded_works += 1;
+                    if persist_record(store, &record, img_path)? {
+                        summary.downloaded_works += 1;
+                    }
                 }
                 Err(err) => summary.failures.push(format!("artwork {art_id}: {err}")),
             }
