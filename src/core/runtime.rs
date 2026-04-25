@@ -1838,13 +1838,20 @@ struct ZipWorkPayload {
     #[serde(default, rename = "get_date")]
     get_date: String,
     title: String,
+    #[serde(deserialize_with = "crate::core::de_util::de_string_or_num")]
     id: String,
     nid: String,
     url: String,
     author: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::core::de_util::de_opt_string_or_num"
+    )]
     author_id: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::core::de_util::de_opt_string_or_num"
+    )]
     author_url: Option<String>,
     caption: String,
     #[serde(default, rename = "total_episodes")]
@@ -1873,8 +1880,12 @@ struct ZipWorkPayload {
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct ZipEpisodePayload {
+    #[serde(deserialize_with = "crate::core::de_util::de_string_or_num")]
     id: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::core::de_util::de_opt_string_or_num"
+    )]
     chapter: Option<String>,
     title: String,
     #[serde(rename = "textCount")]

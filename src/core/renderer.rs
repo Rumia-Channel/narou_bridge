@@ -20,7 +20,7 @@ struct RawWork {
     get_date: String,
     #[serde(default)]
     title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::core::de_util::de_string_or_num")]
     id: String,
     #[serde(default)]
     nid: String,
@@ -28,9 +28,15 @@ struct RawWork {
     url: String,
     #[serde(default)]
     author: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::core::de_util::de_opt_string_or_num"
+    )]
     author_id: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::core::de_util::de_opt_string_or_num"
+    )]
     author_url: Option<String>,
     #[serde(default)]
     caption: String,
@@ -61,9 +67,12 @@ struct RawWork {
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 struct RawEpisode {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::core::de_util::de_string_or_num")]
     id: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::core::de_util::de_opt_string_or_num"
+    )]
     chapter: Option<String>,
     #[serde(default)]
     title: String,

@@ -2,6 +2,7 @@ pub mod account;
 pub mod atomic_io;
 pub mod auto_updater;
 pub mod bootstrap;
+pub mod de_util;
 pub mod migration;
 pub mod model;
 pub mod registry;
