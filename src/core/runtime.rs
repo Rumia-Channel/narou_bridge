@@ -745,12 +745,29 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
         request: task.request.clone(),
     };
 
-    let results = state
-        .registry
-        .dispatch(&task.action, &task.param, &context, &mut store);
+    let targets = resolve_dispatch_targets_or_err(&state.registry, &task.action, &task.param)?;
+    let results = targets
+        .into_iter()
+        .map(|site| site.execute(&task.action, &task.param, &context, &mut store))
+        .collect::<Vec<_>>();
     let (status, error) = summarize_site_results(&results);
     let _ = store.mark_task_status(task_id, status, error, &now_string());
     Ok(())
+}
+
+fn resolve_dispatch_targets_or_err<'a>(
+    registry: &'a SiteRegistry,
+    action: &str,
+    value: &str,
+) -> Result<Vec<&'a dyn crate::sites::Site>> {
+    let targets = registry.resolve_targets(action, value);
+    if targets.is_empty() {
+        if action == "download" {
+            anyhow::bail!("no site matched download URL: {value}");
+        }
+        anyhow::bail!("unknown site target for {action}: {value}");
+    }
+    Ok(targets)
 }
 
 fn summarize_site_results(
@@ -2199,6 +2216,27 @@ mod tests {
         let error = error.expect("partial failure should keep an error summary");
         assert!(error.contains("failed sites: pixiv (update) pixiv login expired"));
         assert!(error.contains("succeeded sites: narou (update) narou update completed"));
+    }
+
+    #[test]
+    fn resolve_dispatch_targets_or_err_rejects_unknown_site_targets() {
+        let registry = crate::core::registry::build_registry();
+        let err = match resolve_dispatch_targets_or_err(&registry, "update", "missing-site") {
+            Ok(_) => panic!("unknown site should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("unknown site target"));
+    }
+
+    #[test]
+    fn resolve_dispatch_targets_or_err_rejects_unmatched_download_urls() {
+        let registry = crate::core::registry::build_registry();
+        let err =
+            match resolve_dispatch_targets_or_err(&registry, "download", "https://example.com") {
+                Ok(_) => panic!("unmatched url should fail"),
+                Err(err) => err,
+            };
+        assert!(err.to_string().contains("no site matched download URL"));
     }
 
     #[test]
