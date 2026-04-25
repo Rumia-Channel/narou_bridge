@@ -561,12 +561,13 @@ fn build_site_index_json(works: &[RenderedWork]) -> serde_json::Value {
         );
         work_json.insert(
             "author_id".to_string(),
-            rendered
-                .index_entry
-                .author_id
-                .clone()
-                .map(serde_json::Value::String)
-                .unwrap_or(serde_json::Value::Null),
+            serde_json::Value::String(
+                rendered
+                    .index_entry
+                    .author_id
+                    .clone()
+                    .unwrap_or_else(|| "No author_id found".to_string()),
+            ),
         );
         work_json.insert(
             "author_url".to_string(),
@@ -1926,6 +1927,24 @@ mod tests {
         assert_eq!(
             value["n123"]["episodes_data"]["1"]["updateDate"].as_str(),
             Some("2025-01-02T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn build_site_index_json_uses_python_author_id_fallback() {
+        let raw = sample_raw_json();
+        let rendered = build_rendered_work(
+            parse_raw_work(&raw).expect("parse raw"),
+            "narou".to_string(),
+            "n123".to_string(),
+            raw,
+        );
+
+        let value = build_site_index_json(&[rendered]);
+
+        assert_eq!(
+            value["n123"]["author_id"].as_str(),
+            Some("No author_id found")
         );
     }
 }
