@@ -13,7 +13,7 @@ use crate::core::storage::Store;
 use crate::sites::SiteRegistry;
 use anyhow::{Context, Result};
 use axum::Router;
-use axum::extract::{DefaultBodyLimit, FromRequest, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, FromRequest, Path as AxumPath, Query, Request, State};
 use axum::http::header;
 use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::middleware::map_response;
@@ -24,6 +24,7 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs as stdfs;
 use std::io::Read;
@@ -160,6 +161,9 @@ pub fn build_app(state: RuntimeState) -> Router {
         .route("/api/health", get(health))
         .route("/api/tasks", get(list_tasks))
         .route("/api/works", get(list_works_query))
+        .route("/images/database.json", get(image_database_json))
+        .route("/images/cover.json", get(image_cover_json))
+        .route("/{site}/index.json", get(site_index_json))
         .route(
             "/api/account",
             get(list_accounts_query)
@@ -207,6 +211,37 @@ async fn list_works_query(
     let store = state.store.lock().await;
     match store.list_works(query.site.as_deref()) {
         Ok(works) => Json(json!({"site": query.site, "works": works})).into_response(),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn site_index_json(
+    State(state): State<RuntimeState>,
+    AxumPath(site): AxumPath<String>,
+) -> Response {
+    if !state.registry.site_names().iter().any(|name| name == &site) {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let store = state.store.lock().await;
+    match renderer::build_site_index_json_from_store(&store, &site) {
+        Ok(value) => create_json_response(StatusCode::OK, &value),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn image_database_json(State(state): State<RuntimeState>) -> Response {
+    let store = state.store.lock().await;
+    match renderer::build_image_manifest_jsons(&store) {
+        Ok((database, _)) => create_json_response(StatusCode::OK, &database),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn image_cover_json(State(state): State<RuntimeState>) -> Response {
+    let store = state.store.lock().await;
+    match renderer::build_image_manifest_jsons(&store) {
+        Ok((_, cover)) => create_json_response(StatusCode::OK, &cover),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
@@ -864,6 +899,44 @@ fn site_id_label(site_id: crate::sites::SiteId) -> &'static str {
 
 fn create_error(status: StatusCode, message: String) -> Response {
     (status, Json(json!({"status": "error", "message": message}))).into_response()
+}
+
+fn create_json_response(status: StatusCode, value: &Value) -> Response {
+    let payload = match serde_json::to_vec_pretty(value) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return create_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to serialize JSON response: {err}"),
+            );
+        }
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(&payload);
+    let digest = hasher.finalize();
+    let etag = format!(
+        "\"{}\"",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+
+    let mut response = (status, payload).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/json"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-cache"),
+    );
+    if let Ok(value) = header::HeaderValue::from_str(&etag) {
+        headers.insert(header::ETAG, value);
+    }
+    response
 }
 
 async fn ensure_html_utf8_charset(mut response: Response) -> Response {

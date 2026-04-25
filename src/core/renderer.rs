@@ -104,6 +104,20 @@ pub fn refresh_image_manifests(store: &Store, data_dir: &str) -> Result<()> {
     let image_dir = PathBuf::from(data_dir).join("images");
     fs::create_dir_all(&image_dir).context("failed to create image dir")?;
 
+    let (database, cover) = build_image_manifest_jsons(store)?;
+
+    atomic_write(
+        &image_dir.join("database.json"),
+        serde_json::to_string_pretty(&database)?,
+    )?;
+    atomic_write(
+        &image_dir.join("cover.json"),
+        serde_json::to_string_pretty(&cover)?,
+    )?;
+    Ok(())
+}
+
+pub fn build_image_manifest_jsons(store: &Store) -> Result<(serde_json::Value, serde_json::Value)> {
     let images = store.list_images()?;
     let mut database = serde_json::Map::new();
     let mut cover = serde_json::Map::new();
@@ -122,15 +136,10 @@ pub fn refresh_image_manifests(store: &Store, data_dir: &str) -> Result<()> {
     }
     add_narou_cover_aliases(store, &images, &mut cover)?;
 
-    atomic_write(
-        &image_dir.join("database.json"),
-        serde_json::to_string_pretty(&serde_json::Value::Object(database))?,
-    )?;
-    atomic_write(
-        &image_dir.join("cover.json"),
-        serde_json::to_string_pretty(&serde_json::Value::Object(cover))?,
-    )?;
-    Ok(())
+    Ok((
+        serde_json::Value::Object(database),
+        serde_json::Value::Object(cover),
+    ))
 }
 
 fn add_narou_cover_aliases(
@@ -540,10 +549,6 @@ fn write_site_index(
     images: &HashMap<String, ImageAsset>,
 ) -> Result<()> {
     atomic_write(
-        &site_dir.join("index.json"),
-        serde_json::to_string_pretty(&build_site_index_json(works))?,
-    )?;
-    atomic_write(
         &site_dir.join("index.html"),
         render_site_index(site, works, host_name, images),
     )?;
@@ -674,6 +679,15 @@ fn build_site_index_json(works: &[RenderedWork]) -> serde_json::Value {
     }
 
     serde_json::Value::Object(works_json)
+}
+
+pub fn build_site_index_json_from_store(store: &Store, site: &str) -> Result<serde_json::Value> {
+    let works = store.list_works(Some(site))?;
+    let rendered = works
+        .iter()
+        .map(rendered_work_from_record)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(build_site_index_json(&rendered))
 }
 
 fn render_site_index(
@@ -1620,12 +1634,19 @@ mod tests {
         let repaired_raw = fs::read_to_string(raw_dir.join("raw.json")).expect("read repaired raw");
         assert_eq!(repaired_raw, disk_raw_text);
 
-        let index: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(data_dir.join("pixiv").join("index.json")).expect("read index"),
+        let repaired_html =
+            fs::read_to_string(data_dir.join("pixiv").join("n123").join("index.html"))
+                .expect("read repaired html");
+        let repaired_info = fs::read_to_string(
+            data_dir
+                .join("pixiv")
+                .join("n123")
+                .join("info")
+                .join("index.html"),
         )
-        .expect("parse index");
-        assert_eq!(index["n123"]["title"].as_str(), Some("Disk Title"));
-        assert_eq!(index["n123"]["caption"].as_str(), Some("Disk Caption"));
+        .expect("read repaired info html");
+        assert!(repaired_html.contains("Disk Title"));
+        assert!(repaired_info.contains("Disk Caption"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1730,11 +1751,8 @@ mod tests {
             "UNTOUCHED-WORK-B"
         );
 
-        let site_index: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(data_dir.join("pixiv").join("index.json"))
-                .expect("read site index"),
-        )
-        .expect("parse site index");
+        let site_index =
+            build_site_index_json_from_store(&store, "pixiv").expect("site index json");
         assert_eq!(site_index["n123"]["title"].as_str(), Some("Work A Updated"));
         assert_eq!(site_index["n456"]["title"].as_str(), Some("Work B"));
 

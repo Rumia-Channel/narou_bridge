@@ -1,11 +1,14 @@
 use axum::body::Body;
-use axum::http::{Request, StatusCode, header::CONTENT_TYPE};
+use axum::http::{
+    Request, StatusCode,
+    header::{CONTENT_TYPE, ETAG},
+};
 use http_body_util::BodyExt;
-use narou_bridge::core::model::AppConfig;
+use narou_bridge::core::model::{AppConfig, ImageRecord, WorkRecord};
 use narou_bridge::core::registry::build_registry;
 use narou_bridge::core::runtime::{build_app, build_runtime_state};
 use narou_bridge::core::storage::Store;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
@@ -60,6 +63,60 @@ async fn response_json(response: axum::response::Response) -> Value {
         .expect("body")
         .to_bytes();
     serde_json::from_slice(&body).expect("json body")
+}
+
+fn sample_work_record() -> WorkRecord {
+    let raw_json = json!({
+        "version": 0,
+        "get_date": "2025-01-01T00:00:00Z",
+        "title": "DB-backed work",
+        "id": "n123",
+        "nid": "n123",
+        "url": "https://example.com/n123",
+        "author": "author",
+        "author_id": "author-1",
+        "author_url": "https://example.com/author-1",
+        "caption": "caption",
+        "total_episodes": 1,
+        "all_episodes": 1,
+        "total_characters": 10,
+        "all_characters": 10,
+        "type": "novel",
+        "serialization": "短編",
+        "tags": ["tag"],
+        "all_tags": ["tag"],
+        "createDate": "2025-01-01T00:00:00Z",
+        "updateDate": "2025-01-02T00:00:00Z",
+        "episodes": {
+            "1": {
+                "id": "1",
+                "chapter": null,
+                "title": "Episode 1",
+                "textCount": 10,
+                "tags": [],
+                "introduction": "",
+                "text": "text",
+                "postscript": "",
+                "createDate": "2025-01-01T00:00:00Z",
+                "updateDate": "2025-01-02T00:00:00Z"
+            }
+        }
+    });
+
+    WorkRecord {
+        site: "pixiv".to_string(),
+        work_key: "n123".to_string(),
+        title: "DB-backed work".to_string(),
+        author: "author".to_string(),
+        author_id: Some("author-1".to_string()),
+        author_url: Some("https://example.com/author-1".to_string()),
+        r#type: "novel".to_string(),
+        serialization: "短編".to_string(),
+        caption: "caption".to_string(),
+        create_date: "2025-01-01T00:00:00Z".to_string(),
+        update_date: "2025-01-02T00:00:00Z".to_string(),
+        raw_json,
+    }
 }
 
 #[tokio::test]
@@ -150,5 +207,91 @@ async fn key_http_endpoints_respond_in_process() {
             .get("accounts")
             .and_then(Value::as_array)
             .is_some()
+    );
+}
+
+#[tokio::test]
+async fn db_backed_json_routes_respond_without_persisted_json_files() {
+    let root = test_root("e2e-http-db-json");
+    let config = test_config(&root);
+    let seed_store = Store::open(config.db_path_buf()).expect("open seed store");
+    seed_store
+        .upsert_work(&sample_work_record())
+        .expect("upsert work");
+    seed_store
+        .upsert_image(&ImageRecord {
+            logical_name: "pixiv_n123_cover.jpg".to_string(),
+            hash: "deadbeefcafebabe".to_string(),
+            ext: "jpg".to_string(),
+            kind: "cover".to_string(),
+        })
+        .expect("upsert image");
+
+    let state = build_runtime_state(
+        config.clone(),
+        Store::open(config.db_path_buf()).expect("reopen store"),
+        build_registry(),
+    )
+    .await
+    .expect("build runtime state");
+    let app = build_app(state);
+
+    assert!(!root.join("data").join("pixiv").join("index.json").exists());
+    assert!(!root.join("data").join("images").join("cover.json").exists());
+    assert!(
+        !root
+            .join("data")
+            .join("images")
+            .join("database.json")
+            .exists()
+    );
+
+    let index_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/index.json")
+                .body(Body::empty())
+                .expect("index request"),
+        )
+        .await
+        .expect("index response");
+    assert_eq!(index_response.status(), StatusCode::OK);
+    assert!(index_response.headers().contains_key(ETAG));
+    let index_json = response_json(index_response).await;
+    assert_eq!(index_json["n123"]["title"].as_str(), Some("DB-backed work"));
+
+    let cover_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/images/cover.json")
+                .body(Body::empty())
+                .expect("cover request"),
+        )
+        .await
+        .expect("cover response");
+    assert_eq!(cover_response.status(), StatusCode::OK);
+    assert!(cover_response.headers().contains_key(ETAG));
+    let cover_json = response_json(cover_response).await;
+    assert_eq!(
+        cover_json["pixiv_n123_cover.jpg"].as_str(),
+        Some("deadbeefcafebabe")
+    );
+
+    let database_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/images/database.json")
+                .body(Body::empty())
+                .expect("database request"),
+        )
+        .await
+        .expect("database response");
+    assert_eq!(database_response.status(), StatusCode::OK);
+    let database_json = response_json(database_response).await;
+    assert_eq!(
+        database_json["pixiv_n123_cover.jpg"].as_str(),
+        Some("deadbeefcafebabe")
     );
 }
