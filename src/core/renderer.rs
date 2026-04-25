@@ -634,6 +634,16 @@ fn render_episode_page(
         "La",
         &mut postscript_paragraph_id,
     );
+    let introduction_block = if introduction_html.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<div class="episode-block introduction">{introduction_html}</div>"#)
+    };
+    let postscript_block = if postscript_html.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<div class="episode-block postscript">{postscript_html}</div>"#)
+    };
 
     let body = format!(
         r#"<section class="meta-panel">
@@ -641,14 +651,13 @@ fn render_episode_page(
   <p class="meta">episode {episode_key} / id: {episode_id}</p>
   <p class="meta">文字数: {text_count} / chapter: {chapter}</p>
   <p class="meta">作成: {create_date} / 更新: {update_date}</p>
-  <p class="summary">{introduction}</p>
   {tags}
 </section>
 <article class="episode">
   <h2>{title}</h2>
-  <div class="episode-block introduction">{introduction_html}</div>
+  {introduction_block}
   <div class="episode-block text">{text_html}</div>
-  <div class="episode-block postscript">{postscript_html}</div>
+  {postscript_block}
 </article>"#,
         author = escape_html(&rendered.work.author),
         serialization = escape_html(&rendered.work.serialization),
@@ -659,12 +668,11 @@ fn render_episode_page(
         create_date = escape_html(&episode.create_date),
         update_date = escape_html(&episode.update_date),
         text_count = episode.text_count,
-        introduction = escape_html(&episode.introduction),
         tags = render_tag_list(&episode.tags),
         title = escape_html(&episode.title),
-        introduction_html = introduction_html,
+        introduction_block = introduction_block,
         text_html = text_html,
-        postscript_html = postscript_html
+        postscript_block = postscript_block
     );
 
     let canonical_url = format_canonical_url(
@@ -1628,5 +1636,37 @@ mod tests {
         assert!(html.contains(
             r#"<meta property="og:image" content="https://example.invalid/images/coverhash.jpg">"#
         ));
+    }
+
+    #[test]
+    fn render_episode_page_does_not_duplicate_introduction_summary() {
+        let mut raw = sample_raw_json();
+        raw["episodes"]["1"]["introduction"] = json!("導入文");
+        let rendered = build_rendered_work(
+            parse_raw_work(&raw).expect("parse raw"),
+            "narou".to_string(),
+            "n123".to_string(),
+            raw,
+        );
+        let (_, episode) = rendered.episodes.first().expect("episode");
+
+        let html = render_episode_page(
+            "narou",
+            "n123",
+            &rendered,
+            "1",
+            episode,
+            None,
+            None,
+            "",
+            &HashMap::new(),
+        );
+
+        assert!(!html.contains(r#"<p class="summary">導入文</p>"#));
+        assert!(
+            html.contains(
+                r#"<div class="episode-block introduction"><p id="Lp1">導入文</p></div>"#
+            )
+        );
     }
 }
