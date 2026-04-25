@@ -174,6 +174,10 @@ impl Store {
                 );
             "#,
             )?;
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_request_id ON tasks(request_id)",
+                [],
+            )?;
             ensure_column_exists(conn, "tasks", "started_at", "TEXT")?;
             Ok(())
         })
@@ -349,8 +353,8 @@ impl Store {
 
     pub fn enqueue_task(&self, task: &TaskRecord) -> Result<i64> {
         self.with_conn(|conn| {
-            conn.execute(
-                r#"INSERT INTO tasks (request_id, action, param, request_json, status, error, created_at, updated_at, started_at)
+            let changed = conn.execute(
+                r#"INSERT OR IGNORE INTO tasks (request_id, action, param, request_json, status, error, created_at, updated_at, started_at)
                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)"#,
                 params![
                     task.request_id,
@@ -363,7 +367,11 @@ impl Store {
                     task.updated_at,
                 ],
             )?;
-            Ok(conn.last_insert_rowid())
+            Ok(if changed == 0 {
+                0
+            } else {
+                conn.last_insert_rowid()
+            })
         })
     }
 
@@ -1537,6 +1545,24 @@ mod tests {
                 .has_incomplete_task("update", "all")
                 .expect("completed task should not match")
         );
+    }
+
+    #[test]
+    fn enqueue_task_ignores_duplicate_request_id() {
+        let store = Store::open_in_memory().expect("store");
+
+        let first_id = store
+            .enqueue_task(&sample_task("req-dup"))
+            .expect("enqueue first");
+        let second_id = store
+            .enqueue_task(&sample_task("req-dup"))
+            .expect("enqueue duplicate");
+
+        assert!(first_id > 0);
+        assert_eq!(second_id, 0);
+        let tasks = store.list_tasks().expect("list tasks");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].request_id, "req-dup");
     }
 
     #[test]
