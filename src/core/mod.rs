@@ -1,3 +1,4 @@
+pub mod account;
 pub mod atomic_io;
 pub mod bootstrap;
 pub mod migration;

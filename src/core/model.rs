@@ -82,7 +82,7 @@ pub struct TaskState {
     pub queue: Vec<RequestData>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
 pub struct AccountFile {
     pub cookies: serde_json::Value,
     pub user_agent: Option<String>,
