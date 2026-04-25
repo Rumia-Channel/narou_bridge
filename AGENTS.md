@@ -1,73 +1,81 @@
 # Repository Guidelines
 
+Rust 移行は完了済みです。現行ランタイムは `src/` 配下の Rust サーバーで、`sample/` 配下の Python 実装は archive-only の参照資料です。Python ランタイムを前提にした運用判断は行わず、必要な場合は移行元データや旧挙動の確認用途としてのみ `sample/` を参照してください。
+
 ## Runtime Architecture
-`main.py` is the only startup entrypoint. It calls `util.load_config()`, creates runtime directories, regenerates static assets and index files under `data/`, then starts the Flask server through `server.http_run()`.
+`src/main.rs` is the only startup entrypoint. It loads `setting.ini`, prepares runtime directories and SQLite storage, optionally runs the one-shot `migrate` subcommand, then starts the Axum server with `cargo run --release`.
 
-`server.create_app()` is the runtime orchestrator. It:
-- loads crawler modules via `util.init_import()`
-- starts `TaskManager`, a persistent single-worker queue
-- optionally starts `AutoUpdater`, which posts `update=all` back into `/api/`
-- serves everything under `data/` as generated/static output
+`src/core/runtime.rs` is the runtime orchestrator. It:
+- builds the HTTP router for `/api/`, `/api/migrate`, `/api/health`, `/reader/`, and static generated files
+- starts a persistent single-worker queue backed by SQLite plus `queue/task.json`
+- optionally starts the auto-update loop, which enqueues `update=all`
+- serves generated output from `data/`
 
-`/api/` is queueing-only. It never crawls synchronously. The request handler normalizes form fields and uploaded files into a `req_data` object, stores PDF/ZIP payloads in `pdf/`, enqueues the task, persists queue state, and returns `{"status": "queued", "request_id": ...}`.
+`/api/` is queueing-only. It never crawls synchronously. The request handler normalizes form fields and uploaded files into `RequestData`, stores PDF/ZIP payloads in `pdf/`, enqueues the task, persists queue state, and returns `{"status": "queued", "request_id": ...}`.
 
-The worker thread executes at most one queued task at a time. Action resolution is priority-based and stops at the first populated action:
+The worker executes at most one queued task at a time. Action resolution is priority-based and stops at the first populated action:
 `repair -> login -> update -> re_download -> convert -> download`
 
 External POST parameter names are not identical to internal action names. `add` maps to internal `download`.
 
-`util.dispatch_action()` and `crawler/site_runtime.py` are the action router. The current site bindings are:
-- `pixiv` -> `crawler/www_pixiv_net.py`
-- `narou` -> `crawler/ncode_syosetu_com.py` (used for PDF conversion and HTML regeneration)
+`src/core/registry.rs` and `src/sites/*` are the action router. The built-in site bindings are:
+- `pixiv` -> `src/sites/pixiv/`
+- `narou` -> `src/sites/narou/` (used for PDF conversion and HTML regeneration)
 
-`crawler/convert_narou.py` is the final renderer. Site modules should normalize source data into the shared `raw.json` work schema first, then call `narou_gen()` to emit HTML pages.
+`src/core/renderer.rs` is the final renderer. Site modules should normalize source data into the shared `raw.json` work schema first, then refresh HTML / reader output through the shared renderer.
 
 ## Project Structure
-`main.py`
+`src/main.rs`
 - startup only; no business logic
 
-`server.py`
-- Flask app, `/api/` contract, account APIs, queue persistence, background worker, auto-update loop
+`src/core/bootstrap.rs`
+- `setting.ini` loading, runtime path resolution, app config assembly
 
-`util.py`
-- config loading, directory bootstrap, static asset copy, root/reader index generation, action dispatch, PDF/ZIP entrypoints
+`src/core/runtime.rs`
+- Axum app, `/api/` contract, account APIs, migration API, queue persistence, background worker, auto-update loop
 
-`crawler/site_runtime.py`
-- site registry, bound action context, adapter layer between generic actions and site-specific implementations
+`src/core/storage.rs`
+- SQLite-backed persistent store for tasks, works, accounts, images, and migration history
 
-`crawler/common.py`
-- shared filesystem helpers, safe JSON IO, image database handling, site index generation, date/text helpers
+`src/core/migration.rs`
+- legacy Python tree import from `sample/` or another allowed source root
 
-`crawler/www_pixiv_net.py`
-- Pixiv crawler, login flow, update/repair logic, canonical `raw.json` generation, user tracking snapshots
+`src/core/renderer.rs`
+- shared HTML / reader / index generation from normalized work data
 
-`crawler/ncode_syosetu_com.py`
+`src/sites/pixiv/`
+- Pixiv fetch, login account usage, update/repair logic, canonical `raw.json` generation
+
+`src/sites/narou/`
 - PDF-to-structured-data pipeline and HTML regeneration/repair for the Narou-compatible output format
-
-`crawler/convert_narou.py`
-- pure-ish HTML generator from normalized work data
 
 `templates/` and `common/`
 - HTML templates and browser-side assets used by generated pages and the lightweight reader
 
+`tools/`
+- separate `uv` project; includes `login_helper.py` for cookie JSON generation/import
+
+`sample/`
+- archive-only Python reference implementation; never used as the active runtime
+
 `webnovel/*.yaml`
 - external compatibility assets for Narou.rb-style parsing rules
-- current Python runtime does not read these YAML files directly
 - treat them as part of the output contract, not as active server-side configuration
 
 Runtime directories:
 - `data/`: generated site output, root HTML, reader HTML, images, manifests
+- `data/runtime.sqlite3`: primary persistent store for the Rust runtime
 - `cookie/`: per-site account JSON files, including active `login.json`
-- `queue/`: persistent queue state (`queue.pkl`, `task.json`)
+- `queue/`: human-readable queue mirror (`task.json`)
 - `pdf/`: temporary PDF/ZIP upload area
 - `log/`: server logs
 - `setting/`: runtime copy of `setting.ini`
 
 ## Canonical Runtime Flow
 1. Startup
-- `util.load_config()` copies `setting.ini` into `setting/setting.ini` on first run.
+- `src/core/bootstrap.rs:load_app_config()` copies `setting.ini` into `setting/setting.ini` on first run.
 - It resolves absolute paths for `data`, `cookie`, `log`, `queue`, and `pdf`.
-- It creates per-site folders, `data/images`, `data/reader`, root manifest, reader index, and copied static assets.
+- Startup prepares the SQLite store, generated asset roots, manifests, and static reader output.
 
 2. HTTP request ingestion
 - `POST /api/` accepts one logical job at a time.
@@ -75,13 +83,13 @@ Runtime directories:
 - Action parameters are stored into one `req_data` record.
 
 3. Queue persistence
-- `TaskManager` writes a pickle snapshot to `queue/queue.pkl` for restart recovery.
-- It also writes a human-readable mirror to `queue/task.json`.
+- SQLite (`data/runtime.sqlite3`) is the source of truth for queued/running/completed tasks.
+- The runtime also writes a human-readable mirror to `queue/task.json`.
 - Requests are deduplicated by signature excluding `request_id`.
 
 4. Action dispatch
 - The worker chooses the first populated action field by `ACTION_PRIORITY`.
-- `util.dispatch_action()` resolves the target site(s) and calls the bound site handler.
+- `SiteRegistry::dispatch()` resolves the target site(s) and calls the bound site handler.
 - `download` resolves site by URL matching; `update`, `convert`, `repair`, `login`, `re_download` resolve by site key or `all`.
 
 5. Normalization
@@ -90,15 +98,15 @@ Runtime directories:
 - `narou` produces the same schema from parsed PDF text blocks.
 
 6. Rendering and indexing
-- `crawler/convert_narou.py:narou_gen()` renders `index.html`, `info/index.html`, and episode pages.
-- `crawler/common.py:gen_site_index()` regenerates per-site `index.json` and `index.html`.
+- `src/core/renderer.rs` renders `index.html`, `info/index.html`, episode pages, and reader assets.
+- The renderer regenerates per-site `index.json` and `index.html`.
 - The lightweight reader uses only generated JSON/HTML files under `data/`.
 
 ## On-Disk Data Contracts
 `setting/setting.ini`
-- sections: `[setting]`, `[crawler]`, `[login]`, `[display_name]`, `[server]`
-- `[crawler]` maps external site key to crawler module file name
-- `[login]` is per-site login enable flag
+- Rust runtime reads `[setting]` and `[server]`
+- root `setting.ini` is preferred; `setting/setting.ini` is the runtime copy kept for compatibility
+- `[crawler]`, `[login]`, and `[display_name]` may remain in migrated configs but are not required for Rust startup
 
 `queue/task.json`
 ```json
@@ -268,97 +276,40 @@ The reader and site index pages depend on:
 
 If these JSON shapes change, the browser-side reader will break even if the crawler still works.
 
-## Rust Refactor Guidance
-Refactor toward Rust by preserving behavior and contracts first, not Python method names.
+## Rust Runtime Guidance
+The Rust migration is complete. Extend the current runtime by preserving behavior and contracts, not by reviving the old Python execution model.
 
-Rust target direction:
-- primary storage should be SQLite or another explicit database, not the legacy JSON tree
-- the current HTML frontend can be dropped; ship a minimal API-first runtime instead
-- legacy JSON / pickle / HTML files are migration inputs, not the long-term runtime contract
-- login should move out of crawler modules; provide a simple cookie import helper instead of browser automation in the main crawler path
-- `sample/` is archive-only reference code and must not define runtime behavior
-- the simple login helper lives under `tools/` and should only generate/import cookie JSON; do not reintroduce browser automation into the main runtime
-- `tools/` is a separate `uv` project with its own `pyproject.toml` and `uv.lock`
-
-Target stable boundaries:
+Current stable boundaries:
 - config/bootstrap
 - HTTP API and static file serving
-- persistent job queue
+- SQLite-backed persistent job queue
 - typed site action dispatch
 - canonical work model (`raw.json`)
-- HTML rendering pipeline
+- shared HTML rendering pipeline
 - image dedupe database
 
-Recommended Rust-first data types:
+Current core data types:
 - `AppConfig`
 - `RequestData`
-- `TaskState`
+- `TaskRecord`
 - `AccountFile`
-- `ImageDatabase`
-- `CoverDatabase`
-- `SiteIndexEntry`
-- `Work`
+- `ImageRecord`
+- `WorkRecord`
 - `Episode`
 - `ZipImportMetadata`
 
-Refactor principles:
-- do not port Python helpers one-for-one; port state transitions and file contracts
+Implementation principles:
 - keep rendering as a deterministic transform from normalized work data to files
-- isolate side effects behind interfaces: HTTP client, browser login, filesystem, queue store, clock
-- preserve current directory layout only where it matters for migration/import
-- if compatibility with existing installations matters, build a one-shot migration tool for legacy data before replacing formats
-- if compatibility does not matter, move fully to SQLite/explicit storage early and keep JSON only as import/export surface
+- keep SQLite as the source of truth; JSON/HTML files are generated outputs or migration inputs
+- `sample/` is archive-only reference code and must not define runtime behavior
+- `tools/` is a separate `uv` project; `login_helper.py` only generates/imports cookie JSON
 - when adding Rust crates, use `cargo add`; do not edit `Cargo.toml` directly to add dependencies
 
-### Constraining Site Extensibility
-The current Python implementation became complex because site integration is too open-ended. Complexity drivers to avoid carrying into Rust:
-- `setting.ini` can map site keys to arbitrary crawler module names at runtime
-- there are two extension mechanisms at once: module-level action functions and `create_site()` / `BaseSite` objects
-- site modules hold hidden singleton state such as module-global `_crawler`
-- site modules receive many loosely typed context arguments (`folder_path`, `data_path`, `cookie_path`, `key_data`, `host_name`, `interval`)
-- site modules can re-enter the system indirectly by POSTing back to `/api/`
-- `convert` / `repair` are mostly common operations but are reimplemented per site
-
-For Rust, intentionally narrow the extension contract even if it reduces user extensibility.
-
-Keep this outer shape for familiarity:
-- each built-in site module/file may still expose `download`, `login`, `update`, `convert`, `repair`
-- `convert` and `repair` should usually be thin wrappers that delegate to shared core logic
-
-Do not preserve these Python-era freedoms:
-- runtime loading of arbitrary user-provided site modules from config
-- arbitrary new action names beyond the fixed action enum
-- site modules directly owning queue behavior, retry scheduling, or local HTTP callbacks
-- site modules generating final HTML outside the shared renderer
-- site modules choosing their own directory layout or primary on-disk contracts
-
-Preferred Rust shape:
-- built-in static registry keyed by `SiteId`, not dynamic import strings
-- fixed `Action` enum and typed `SiteActionContext`
-- core owns queueing, retries, indexing, rendering, JSON IO, and path policy
-- site modules own only URL parsing, optional login, remote fetch, source-specific normalization, and approved sidecar state
-- per-work refetch/update identity should be persisted as structured metadata, not reconstructed from folder names or ad hoc URL parsing
-- `key_data` and `host_name` should be absorbed by renderer/app core where possible, not passed through every site action
-
-Rust site layout suggestion:
-- organize each built-in site as a library-style module tree such as `src/sites/pixiv/mod.rs` and `src/sites/narou/mod.rs`
-- split large sites into submodules (`fetch.rs`, `download.rs`, `update.rs`, `convert.rs`, `repair.rs`) once that improves clarity
-- keep each site's public surface small and explicit; internal helpers should stay private to the site module tree
-- prefer shared core modules for common behavior instead of letting site modules grow into mini-frameworks
-
-Archive note:
-- treat `sample/` as the archive location for old Python implementations and examples
-- legacy Python files moved there are reference-only and must not define Rust runtime behavior
-- do not expand Rust behavior based on archived Python code unless it matches the current on-disk contracts
-
-Configuration direction for Rust:
-- stop using `[crawler]` as `site key -> python module path`
-- prefer fixed built-in site IDs with enable/disable or display-name settings only
-- adding a new site should require changing Rust code and rebuilding, not dropping in a new runtime script
-
-Practical consequence:
-- preserve the shared `raw.json` boundary and shared renderer
-- narrow site customization to normalization/fetch logic instead of letting each site redefine the whole runtime behavior
+Site extensibility is intentionally constrained:
+- use the built-in static registry keyed by `SiteId`
+- keep the fixed action set (`download`, `login`, `update`, `convert`, `repair`, `re_download`)
+- let core own queueing, retries, indexing, rendering, JSON IO, and path policy
+- keep site modules focused on URL parsing, remote fetch, normalization, and approved sidecar state
 
 ## Testing And Validation
 There is no strong automated test suite today. For behavior changes, validate the current contracts directly.

@@ -1,95 +1,116 @@
 # Narou Bridge
 
-Narou rb が対応していないウェブサイトを, 小説家になろうに近いHTMLファイルに変換するツール.  
-おまけ機能として, タテ書き小説ネットのPDFファイルから小説家になろうに近いHTMLファイルに変換する機能も追加.  
-(ただし, PDFからの変換はメモリ馬鹿食いで, このすば (PDFで 2700 ページ弱) に 570MB 弱使った)
+Rust 版 `narou_bridge` は、Pixiv や PDF 由来の作品データを小説家になろう互換の `raw.json` / HTML / reader 出力へ正規化するサーバーです。現行ランタイムは Rust 実装で、旧 Python 実装は `sample/` に reference として保存されています。
 
-## How to use
-1. seetting.ini を設定
-2. main.cmd または main.sh を実行
+## 起動
 
-Rust ランタイムでは `auto_update=1` を設定すると、起動から約30秒後に `update=all` を内部キューへ投入し、その後は `auto_update_interval` 秒ごとに重複を避けつつ自動更新します。
+1. リポジトリ直下の `setting.ini` を編集します。  
+   初回起動時に `setting\setting.ini` が自動生成されます。
+2. サーバーを起動します。
 
-## How to download
-1. Narou.rb で narou init したフォルダに webnovel フォルダをコピー
-2. Narou.rb で利用する Aozora Epub 3 フォルダ内の chuki_tag.txt の行末に以下のテキストを追加
-
-```
-### Narou Bridge embedded custom chuki ###
-ｌｉｎｋ＿ｓ	<a href="
-link_s	<a href="
-ｌｉｎｋ＿ｔ	">
-link_t	">
-ｌｉｎｋ＿ｅ	</a>
-link_e	</a>
-### Narou Bridge embedded custom chuki ###
+```bash
+cargo run --release
 ```
 
-## To Do
-特定の条件でのみ画像ファイルがフォルダと認識されてしまう不具合の修正  
-詳細なオリジナルスクリプト作成手順の表記
+3. ヘルスチェックを確認します。
 
-## How to setting
-
-#### repo 直下の setting.ini を変更
-
-初回起動時に `setting\setting.ini` が自動生成されます。
-
-設定例(Tailscaleの443ポートからサーバーに転送する前提)
+```bash
+curl http://127.0.0.1:8080/api/health
 ```
+
+## `setting.ini` の場所と最低限の設定
+
+- 優先される設定ファイル: リポジトリ直下の `setting.ini`
+- 互換用ランタイムコピー: `setting\setting.ini`
+- Rust ランタイムが読む主なセクション: `[setting]`, `[server]`
+- 旧 Python 版向けの `[crawler]`, `[login]`, `[display_name]` は移行資料として残しても構いませんが、Rust サーバーの起動には必須ではありません。
+
+最小例:
+
+```ini
 [setting]
 data=
 cookie=
-log=
 queue=
 pdf=
-save_log=1
-interval=2
-reload=900
-auto_update=1
+log=
+auto_update=0
 auto_update_interval=43200
 
-[crawler]
-pixiv=www_pixiv_net.py
-narou=ncode_syosetu_com
-
-[login]
-pixiv=1
-narou=0
-
 [server]
-domain=example.tail0exam.ts.net
+domain=127.0.0.1
 port=8080
-use_proxy=1
+use_proxy=0
 proxy_port=443
-proxy_ssl=1
+proxy_ssl=0
 ```
 
-中身の詳細
+- 空欄のパスはリポジトリ基準で解決され、`data\`, `cookie\`, `queue\`, `pdf\`, `log\` が作られます。
+- 永続ストアは `data\runtime.sqlite3` に作成されます。
+
+## Cookie ログイン情報の用意
+
+`tools\login_helper.py` は別 `uv` プロジェクトです。ここで cookie JSON を作成し、`cookie\<site>\login.json` に配置します。
+
+```bash
+cd tools
+uv sync
+uv run python login_helper.py pixiv output/login.json --display-name "main account"
 ```
-[setting]
-data=小説の保存先(強制的にそのフォルダ内にdataフォルダが作成される, 空だとスクリプトが存在するフォルダ)
-cookie=クッキーの保存先(強制的にそのフォルダ内にcookieフォルダが作成される, 空だとスクリプトが存在するフォルダ)
-log=クッキーの保存先(強制的にそのフォルダ内にcookieフォルダが作成される, 空だとスクリプトが存在するフォルダ)
-queue=タスクリストの保存先(強制的にそのフォルダ内にqueueフォルダが作成される, 空だとスクリプトが存在するフォルダ)
-pdf=PDFファイルの処理終了までの一時保存先(強制的にそのフォルダ内にpdfフォルダが作成される, 空だとスクリプトが存在するフォルダ)
-save_log=サーバーのログを保存するか否か(0で無効, 1で有効)
-interval=小説やファイルを取得する間隔の秒数(2秒以上が負荷が少なくていいかも, int 型なので整数指定)
-reload=現状無意味(デフォルトでOK)
-auto_update=サーバー起動時に小説の自動アップデートをするか(0で無効, 1で有効)
-auto_update_interval=小説の自動アップデートをする際の間隔(秒指定, デフォルトで12時間)
-img_url=画像のベースURL(空の場合は相対パス、例: https://example.com/ を指定すると画像リンクが https://example.com/画像名.png になる)
 
-[crawler]
-サイト名(内部で使う名前)=crawlerフォルダにあるファイル名(サイトのURLから'https://'を抜いて '.' を '_' に入れ替えることを推奨)
+生成した JSON をランタイム配置へコピーします。
 
-[login]
-サイト名=ログインをするか否か(すべてのサイトでこの設定があるわけではない, ログインするなら1, 違うなら0)
-
-[server]
-domain=サーバーを公開するURL(localhostで内部にできる)
-port=サーバーを公開するポート番号
-use_proxy=プロキシを利用するか否か(0で無効, 1で有効)
-proxy_port=プロキシが公開するポート(実際にユーザーがアクセスするポート)
-proxy_ssl=プロキシが公開する際にSSLを利用するか否か(0で無効, 1で有効)
+```bash
+copy output\login.json ..\cookie\pixiv\login.json
 ```
+
+- `pixiv` の部分は対象サイト ID に置き換えてください。
+- 既存 cookie を流用する場合は `--cookies-file existing.json` が使えます。
+
+## 旧 Python 版データの取り込み
+
+`POST /api/migrate` で旧 Python 版の `data\`, `cookie\`, `queue\` を含むディレクトリを取り込めます。`source_root` には **旧 Python 版のルート** を指定してください（`data\` 単体ではなく、その親ディレクトリ）。
+
+例:
+
+```bash
+curl -X POST "http://127.0.0.1:8080/api/migrate?source_root=C:\Users\me\Desktop\narou_bridge_py"
+```
+
+- `source_root` を省略すると既定で `sample\` を参照します。
+- 取り込み後、旧ファイル群は `archive\` へ退避されます。
+
+## 主要エンドポイント
+
+| Endpoint | Method | 用途 |
+| --- | --- | --- |
+| `/api/` | POST | ダウンロード / 更新 / repair / convert / PDF / ZIP 取り込みをキュー投入 |
+| `/api/migrate` | POST | 旧 Python 版ツリーの移行 |
+| `/api/health` | GET | ヘルスチェック |
+| `/<site>/index.html` | GET | サイト別の生成済み一覧ページ |
+| `/reader/` | GET | 軽量 reader UI |
+
+補足:
+
+- `/reader/?site=<site>&nid=<work>` で作品 reader を直接開けます。
+- `/api/` は同期クロールせず、常にキューへ積んでバックグラウンド worker が順次処理します。
+
+## `/api/` の代表例
+
+URL 追加:
+
+```bash
+curl -X POST -F "add=https://www.pixiv.net/novel/show.php?id=123456" http://127.0.0.1:8080/api/
+```
+
+全件更新:
+
+```bash
+curl -X POST -F "update=all" http://127.0.0.1:8080/api/
+```
+
+## Legacy Python reference
+
+- `sample/` は旧 Python 版 `narou_bridge` の参照実装です。
+- Rust ランタイムから直接呼ばれません。
+- 旧データ仕様、移行前挙動、差分確認のためだけに保持しています。
