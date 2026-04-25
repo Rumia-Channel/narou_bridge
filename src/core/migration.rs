@@ -439,8 +439,7 @@ fn archive_legacy_files(root: &Path, archive_root: &Path) -> Result<usize> {
         let name = entry.file_name();
         let dst = archive_root.join(name);
         if src.is_file() {
-            fs::copy(&src, &dst).context("failed to archive file")?;
-            count += 1;
+            count += usize::from(copy_file_if_changed(&src, &dst)?);
         } else if src.is_dir() {
             let dir_name = src.file_name().and_then(|s| s.to_str()).unwrap_or_default();
             if dir_name == "sample"
@@ -448,27 +447,35 @@ fn archive_legacy_files(root: &Path, archive_root: &Path) -> Result<usize> {
                 || dir_name == "common"
                 || dir_name == "templates"
             {
-                copy_dir_recursive(&src, &dst)?;
-                count += 1;
+                count += copy_dir_recursive(&src, &dst)?;
             }
         }
     }
     Ok(count)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<usize> {
     fs::create_dir_all(dst)?;
+    let mut count = 0;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let path = entry.path();
         let target = dst.join(entry.file_name());
         if path.is_dir() {
-            copy_dir_recursive(&path, &target)?;
+            count += copy_dir_recursive(&path, &target)?;
         } else {
-            fs::copy(&path, &target)?;
+            count += usize::from(copy_file_if_changed(&path, &target)?);
         }
     }
-    Ok(())
+    Ok(count)
+}
+
+fn copy_file_if_changed(src: &Path, dst: &Path) -> Result<bool> {
+    if dst.exists() && fs::read(src)? == fs::read(dst)? {
+        return Ok(false);
+    }
+    fs::copy(src, dst).context("failed to archive file")?;
+    Ok(true)
 }
 
 fn parse_request_data(value: &Value) -> RequestData {
@@ -742,6 +749,27 @@ mod tests {
         assert_eq!(works.len(), 1);
         assert_eq!(works[0].create_date, "2025-03-01T00:00:00Z");
         assert_eq!(works[0].update_date, "2025-03-02T00:00:00Z");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_legacy_files_skips_identical_reruns() {
+        let root = test_dir("migration-archive-rerun");
+        let archive_root = root.join("archive");
+        let sample_dir = root.join("sample");
+        fs::create_dir_all(&sample_dir).unwrap();
+        fs::write(sample_dir.join("example.txt"), b"same-bytes").unwrap();
+
+        let first = archive_legacy_files(&root, &archive_root).expect("archive first");
+        let second = archive_legacy_files(&root, &archive_root).expect("archive second");
+
+        assert_eq!(first, 1);
+        assert_eq!(second, 0);
+        assert_eq!(
+            fs::read_to_string(archive_root.join("sample").join("example.txt")).unwrap(),
+            "same-bytes"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
