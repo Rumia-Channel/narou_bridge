@@ -1,3 +1,4 @@
+use crate::core::atomic_io::atomic_write;
 use crate::core::model::{ImageRecord, WorkRecord};
 use crate::core::renderer;
 use crate::core::storage::Store;
@@ -873,10 +874,8 @@ pub fn hash_ids<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
 // ---------------------------------------------------------------------------
 
 fn save_json_pretty(path: &Path, value: &Value) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, serde_json::to_string_pretty(value)?)?;
+    let payload = serde_json::to_vec_pretty(value)?;
+    atomic_write(path, payload)?;
     Ok(())
 }
 
@@ -1447,10 +1446,14 @@ pub fn save_image_hashed(img_path: &Path, data: &[u8], logical_name: &str) -> St
     if let Some(map) = db.as_object_mut() {
         map.insert(logical_name.to_string(), json!(hash_short));
     }
-    let _ = fs::write(
-        &db_path,
-        serde_json::to_string_pretty(&db).unwrap_or_default(),
-    );
+    if let Ok(payload) = serde_json::to_vec_pretty(&db) {
+        if let Err(err) = atomic_write(&db_path, payload) {
+            warn!(
+                "Failed to update image database {}: {err}",
+                db_path.display()
+            );
+        }
+    }
 
     hash_short.to_string()
 }
@@ -1468,10 +1471,14 @@ pub fn update_cover_json(img_path: &Path, logical_name: &str, hash: &str) {
     if let Some(map) = cover.as_object_mut() {
         map.insert(logical_name.to_string(), json!(hash));
     }
-    let _ = fs::write(
-        &cover_path,
-        serde_json::to_string_pretty(&cover).unwrap_or_default(),
-    );
+    if let Ok(payload) = serde_json::to_vec_pretty(&cover) {
+        if let Err(err) = atomic_write(&cover_path, payload) {
+            warn!(
+                "Failed to update cover database {}: {err}",
+                cover_path.display()
+            );
+        }
+    }
 }
 
 pub fn find_image_by_logical_prefix(img_path: &Path, prefix: &str) -> Option<String> {

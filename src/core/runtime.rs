@@ -1,3 +1,4 @@
+use crate::core::atomic_io::atomic_write;
 use crate::core::migration::{MigrationPlan, migrate_legacy_tree};
 use crate::core::model::{
     AccountFile, AccountRecord, AppConfig, ImageRecord, RequestData, TaskRecord, TaskStatus,
@@ -1737,8 +1738,10 @@ async fn sync_queue_state(state: &RuntimeState) -> Result<()> {
         store.task_state()?
     };
     let payload = serde_json::to_vec_pretty(&task_state)?;
-    fs::write(state.config.queue_task_json_path(), payload)
+    let queue_task_json_path = state.config.queue_task_json_path();
+    tokio::task::spawn_blocking(move || atomic_write(&queue_task_json_path, payload))
         .await
+        .context("failed to join queue/task.json atomic write")?
         .context("failed to write queue/task.json")?;
     Ok(())
 }
