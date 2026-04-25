@@ -137,6 +137,11 @@ fn migrate_tasks(store: &Store, root: &Path) -> Result<usize> {
 }
 
 fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
+    let root = root.join("data");
+    if !root.exists() {
+        tracing::warn!("legacy works directory not found: {}", root.display());
+        return Ok(0);
+    }
     let mut count = 0;
     for site_dir in fs::read_dir(root)? {
         let site_dir = site_dir?;
@@ -616,6 +621,37 @@ mod tests {
             .join(format!("{name}-{unique}"));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn migrate_works_reads_canonical_data_directory() {
+        let root = test_dir("migration-works-data-dir");
+        let raw_dir = root.join("data").join("pixiv").join("n123").join("raw");
+        fs::create_dir_all(&raw_dir).unwrap();
+        fs::write(
+            raw_dir.join("raw.json"),
+            serde_json::to_string_pretty(&json!({
+                "title": "Example Work",
+                "author": "Example Author",
+                "type": "novel",
+                "serialization": "連載中",
+                "caption": "caption",
+                "createDate": "2025-01-01T00:00:00Z",
+                "updateDate": "2025-01-02T00:00:00Z"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        let migrated = migrate_works(&store, &root).expect("migrate works");
+
+        assert_eq!(migrated, 1);
+        let works = store.list_works(Some("pixiv")).expect("list works");
+        assert_eq!(works.len(), 1);
+        assert_eq!(works[0].work_key, "n123");
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
