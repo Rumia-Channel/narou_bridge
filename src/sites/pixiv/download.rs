@@ -861,19 +861,25 @@ pub fn download_user(
             }
         }
 
+        // Keep only already-known ids plus artworks that finished persisting in this run.
+        // Failed fetches must stay out of the snapshot so later updates retry them.
+        let mut successful_art_ids = BTreeSet::new();
         for art_id in &new_art_ids {
             match download_art(client, art_id, folder_path, img_path) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
+                        successful_art_ids.insert(art_id.clone());
                     }
                 }
                 Err(err) => summary.failures.push(format!("artwork {art_id}: {err}")),
             }
         }
 
-        let hash = save_illust_snapshot(store, folder_path, user_id, &target_art_ids)?;
-        summary.tracked_artworks = target_art_ids.len();
+        let successful_snapshot_ids =
+            snapshot_success_ids(&previous_snapshot, successful_art_ids.iter().cloned());
+        let hash = save_illust_snapshot(store, folder_path, user_id, &successful_snapshot_ids)?;
+        summary.tracked_artworks = successful_snapshot_ids.len();
         super::update_tracked_user(store, folder_path, user_id, |entry| {
             entry.illust_ids_snapshot_hash = Some(hash.clone());
             if let Some(user_name) = summary.user_name.clone() {
@@ -928,6 +934,38 @@ fn fetch_comic_series_art_ids(client: &Client, comic_id: &str) -> Result<Vec<Str
     let mut sorted = ids.into_iter().collect::<Vec<_>>();
     sorted.sort();
     Ok(sorted)
+}
+
+fn snapshot_success_ids<I>(
+    previous_snapshot: &BTreeSet<String>,
+    successful_ids: I,
+) -> BTreeSet<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut snapshot = previous_snapshot.clone();
+    snapshot.extend(successful_ids);
+    snapshot
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artwork_snapshot_only_keeps_successful_ids() {
+        let previous_snapshot = ["10".to_string()].into_iter().collect::<BTreeSet<_>>();
+        let successful_snapshot_ids =
+            snapshot_success_ids(&previous_snapshot, vec!["20".to_string()]);
+
+        assert_eq!(
+            successful_snapshot_ids,
+            ["10".to_string(), "20".to_string()]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert!(!successful_snapshot_ids.contains("30"));
+    }
 }
 
 /// Format novel text with image and ruby markup
