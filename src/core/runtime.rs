@@ -425,10 +425,15 @@ async fn handle_post(State(state): State<RuntimeState>, request: Request) -> imp
 
     let request_id = payload.request_id.clone().unwrap_or_else(random_request_id);
     let req_data = request_data_from_input(payload, request_id.clone());
+    if let Some(message) = validate_request_action_conflicts(&req_data) {
+        cleanup_uploaded_files_for_request(&state.config, &req_data);
+        return create_error(StatusCode::BAD_REQUEST, message);
+    }
 
     let (action, param) = match resolve_request_action(&req_data) {
         Some(v) => v,
         None => {
+            cleanup_uploaded_files_for_request(&state.config, &req_data);
             return create_error(
                 StatusCode::BAD_REQUEST,
                 "No valid action found in request data".to_string(),
@@ -441,7 +446,7 @@ async fn handle_post(State(state): State<RuntimeState>, request: Request) -> imp
         request_id: request_id.clone(),
         action,
         param,
-        request: req_data,
+        request: req_data.clone(),
         status: TaskStatus::Queued,
         error: None,
         created_at: now_string(),
@@ -452,6 +457,7 @@ async fn handle_post(State(state): State<RuntimeState>, request: Request) -> imp
         Ok(EnqueueTaskOutcome::Enqueued) => {}
         Ok(EnqueueTaskOutcome::SkippedDuplicate) => unreachable!("HTTP enqueue does not dedupe"),
         Err(err) => {
+            cleanup_uploaded_files_for_request(&state.config, &req_data);
             return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
         }
     }
@@ -696,6 +702,22 @@ fn resolve_request_action(req: &RequestData) -> Option<(String, String)> {
         return Some(("download".to_string(), v));
     }
     None
+}
+
+fn validate_request_action_conflicts(request: &RequestData) -> Option<String> {
+    if request.zip_name.is_none() {
+        return None;
+    }
+
+    let has_other_action = request.pdf_path.is_some()
+        || request.repair.is_some()
+        || request.login.is_some()
+        || request.update.is_some()
+        || request.re_download.is_some()
+        || request.convert.is_some()
+        || request.add.is_some();
+
+    has_other_action.then(|| "zip upload cannot be combined with other actions".to_string())
 }
 
 async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskRecord) -> Result<()> {
@@ -1389,6 +1411,40 @@ fn queued_upload_path(base_dir: &Path, request_id: &str, extension: &str) -> Res
     Ok(base_dir.join(format!("{request_id}.{extension}")))
 }
 
+fn cleanup_uploaded_files_for_request(config: &AppConfig, request: &RequestData) {
+    let pdf_dir = config.pdf_dir_path();
+    let mut cleanup_candidates = Vec::new();
+    if request.pdf_path.is_some() {
+        cleanup_candidates.push("pdf");
+    }
+    if request.zip_name.is_some() {
+        cleanup_candidates.push("zip");
+    }
+
+    for extension in cleanup_candidates {
+        match queued_upload_path(&pdf_dir, &request.request_id, extension) {
+            Ok(path) if path.exists() => {
+                if let Err(err) = stdfs::remove_file(&path) {
+                    warn!(
+                        request_id = %request.request_id,
+                        upload_path = %path.display(),
+                        error = %err,
+                        "failed to clean up uploaded request file"
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(err) => {
+                warn!(
+                    request_id = %request.request_id,
+                    error = %err,
+                    "failed to resolve uploaded request cleanup path"
+                );
+            }
+        }
+    }
+}
+
 fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str) -> Result<usize> {
     if !site_dir.exists() {
         anyhow::bail!("zip archive is missing the {site_name}/ payload");
@@ -1992,6 +2048,20 @@ mod tests {
             ..zip_only.clone()
         };
         assert!(!should_import_zip_request(&with_action));
+    }
+
+    #[test]
+    fn validate_request_action_conflicts_rejects_zip_with_other_actions() {
+        let request = RequestData {
+            request_id: "req-zip".to_string(),
+            zip_name: Some("legacy.zip".to_string()),
+            add: Some("https://example.com/work".to_string()),
+            ..RequestData::default()
+        };
+
+        let message =
+            validate_request_action_conflicts(&request).expect("zip plus add should be rejected");
+        assert!(message.contains("zip upload cannot be combined"));
     }
 
     #[tokio::test]
