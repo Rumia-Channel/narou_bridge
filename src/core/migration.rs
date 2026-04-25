@@ -113,23 +113,29 @@ fn migrate_tasks(store: &Store, root: &Path) -> Result<usize> {
     let queue_pkl = queue_dir.join("queue.pkl");
     if queue_pkl.exists() {
         let data = fs::read(&queue_pkl)?;
-        if let Ok(values) = serde_pickle::from_slice::<Vec<Value>>(&data, Default::default()) {
-            for item in values {
-                let req = parse_request_data(&item);
-                let task = TaskRecord {
-                    id: 0,
-                    request_id: req.request_id.clone(),
-                    action: detect_action(&req),
-                    param: detect_param(&req),
-                    request: req,
-                    status: TaskStatus::Queued,
-                    error: None,
-                    created_at: now_string(),
-                    updated_at: now_string(),
-                };
-                store.enqueue_task(&task)?;
-                count += 1;
+        match serde_pickle::from_slice::<Vec<Value>>(&data, Default::default()) {
+            Ok(values) => {
+                for item in values {
+                    let req = parse_request_data(&item);
+                    let task = TaskRecord {
+                        id: 0,
+                        request_id: req.request_id.clone(),
+                        action: detect_action(&req),
+                        param: detect_param(&req),
+                        request: req,
+                        status: TaskStatus::Queued,
+                        error: None,
+                        created_at: now_string(),
+                        updated_at: now_string(),
+                    };
+                    store.enqueue_task(&task)?;
+                    count += 1;
+                }
             }
+            Err(err) => tracing::warn!(
+                "legacy queue pickle parse failed: {} ({err})",
+                queue_pkl.display()
+            ),
         }
     }
 
@@ -591,7 +597,13 @@ where
 {
     let content =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    Ok(serde_json::from_str(&content).unwrap_or_default())
+    Ok(match serde_json::from_str(&content) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!("legacy json parse failed: {} ({err})", path.display());
+            T::default()
+        }
+    })
 }
 
 fn file_modified_string(path: &Path) -> Option<String> {
