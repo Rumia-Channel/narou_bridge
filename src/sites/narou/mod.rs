@@ -5,10 +5,12 @@ use crate::sites::narou::repair::repair_narou;
 use crate::sites::{Site, SiteActionContext, SiteActionResult, SiteId};
 use anyhow::{Context, Result, bail};
 use lopdf::Document;
+use regex::Regex;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::info;
 
 pub mod convert;
 pub mod repair;
@@ -39,6 +41,11 @@ struct ImportedEpisode {
 
 pub struct NarouSite;
 
+#[derive(Debug, PartialEq, Eq)]
+enum NarouDownloadOutcome {
+    Skipped(String),
+}
+
 pub fn site() -> Box<dyn Site> {
     Box::new(NarouSite)
 }
@@ -64,9 +71,10 @@ impl Site for NarouSite {
         store: &mut Store,
     ) -> SiteActionResult {
         match action {
-            "download" => match narou_download(value, store, &context.data_dir, &context.host_name)
-            {
-                Ok(message) => SiteActionResult::success(self.id(), action, message),
+            "download" => match narou_download(value, store, context) {
+                Ok(NarouDownloadOutcome::Skipped(message)) => {
+                    SiteActionResult::skipped(self.id(), action, message)
+                }
                 Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
             },
             "convert" => match import_pdf_or_render(store, context) {
@@ -94,50 +102,32 @@ impl Site for NarouSite {
 fn narou_download(
     value: &str,
     store: &mut Store,
-    data_dir: &str,
-    host_name: &str,
-) -> Result<String> {
-    let work_key = sanitize_key(value);
-    let now = chrono::Utc::now().to_rfc3339();
-    let record = WorkRecord {
-        site: "narou".to_string(),
-        work_key: work_key.clone(),
-        title: format!("Narou Import {work_key}"),
-        author: "narou".to_string(),
-        author_id: None,
-        author_url: None,
-        r#type: "novel".to_string(),
-        serialization: "連載中".to_string(),
-        caption: value.to_string(),
-        create_date: now.clone(),
-        update_date: now.clone(),
-        raw_json: json!({
-            "version": 0,
-            "get_date": now,
-            "title": format!("Narou Import {work_key}"),
-            "id": work_key,
-            "nid": value,
-            "url": value,
-            "author": "narou",
-            "author_id": null,
-            "author_url": null,
-            "caption": value,
-            "total_episodes": 1,
-            "all_episodes": 1,
-            "total_characters": 0,
-            "all_characters": 0,
-            "type": "novel",
-            "serialization": "連載中",
-            "tags": [],
-            "all_tags": [],
-            "createDate": now,
-            "updateDate": now,
-            "episodes": {}
-        }),
-    };
-    store.upsert_work(&record)?;
-    renderer::render_site_from_store(store, "narou", data_dir, host_name)?;
-    Ok(format!("stored {work_key}"))
+    _context: &SiteActionContext,
+) -> Result<NarouDownloadOutcome> {
+    let candidates = narou_lookup_candidates(value);
+    if let Some(existing) = find_existing_narou_work(store, &candidates)? {
+        let nid = existing
+            .raw_json
+            .get("nid")
+            .and_then(|value| value.as_str())
+            .unwrap_or(&existing.work_key);
+        info!(
+            site = "narou",
+            work_key = %existing.work_key,
+            nid = %nid,
+            "narou download skipped: PDF アップロードなしには更新できません。/api/ から PDF を添付してください"
+        );
+        return Ok(NarouDownloadOutcome::Skipped(format!(
+            "narou {nid} は既存データを保持しました。PDF アップロードなしには更新できないため、/api/ から PDF を添付してください"
+        )));
+    }
+
+    let requested = candidates
+        .iter()
+        .find(|candidate| looks_like_narou_nid(candidate))
+        .cloned()
+        .unwrap_or_else(|| value.trim().to_string());
+    bail!("narou {requested} は未登録です。PDF を /api/ から添付してください")
 }
 
 fn import_pdf_or_render(store: &mut Store, context: &SiteActionContext) -> Result<String> {
@@ -452,6 +442,52 @@ fn sanitize_key(value: &str) -> String {
             _ => ch,
         })
         .collect()
+}
+
+fn find_existing_narou_work(store: &Store, candidates: &[String]) -> Result<Option<WorkRecord>> {
+    let works = store.list_works(Some("narou"))?;
+    Ok(works.into_iter().find(|work| {
+        let nid = work
+            .raw_json
+            .get("nid")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_lowercase());
+        candidates.iter().any(|candidate| {
+            candidate == &work.work_key.to_lowercase() || nid.as_deref() == Some(candidate.as_str())
+        })
+    }))
+}
+
+fn narou_lookup_candidates(value: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return candidates;
+    }
+
+    candidates.push(trimmed.to_lowercase());
+    candidates.push(sanitize_key(trimmed).to_lowercase());
+    if let Some(nid) = extract_narou_nid(trimmed) {
+        candidates.push(nid);
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn extract_narou_nid(value: &str) -> Option<String> {
+    let regex = Regex::new(r"(?i)(n[0-9]+[a-z0-9]+)").ok()?;
+    regex
+        .captures(value.trim())
+        .and_then(|captures| captures.get(1))
+        .map(|capture| capture.as_str().to_lowercase())
+}
+
+fn looks_like_narou_nid(value: &str) -> bool {
+    extract_narou_nid(value)
+        .as_deref()
+        .map(|nid| nid == value.trim().to_lowercase())
+        .unwrap_or(false)
 }
 
 fn normalize_serialization(raw: Option<&str>, chapter_input: &ChapterInput) -> String {
@@ -843,5 +879,120 @@ mod tests {
 
         assert_eq!(first, second);
         assert_ne!(first, third);
+    }
+
+    #[test]
+    fn narou_download_returns_error_when_no_work_exists() {
+        let mut store = Store::open_in_memory().unwrap();
+        let context = test_context(
+            crate::core::model::RequestData::default(),
+            "C:\\narou-missing",
+        );
+
+        let err = narou_download("n1234ab", &mut store, &context).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("PDF を /api/ から添付してください")
+        );
+    }
+
+    #[test]
+    fn narou_download_preserves_existing_raw_json() {
+        let mut store = Store::open_in_memory().unwrap();
+        let existing = sample_work_record("n1234ab", "n1234ab");
+        let expected_raw = existing.raw_json.clone();
+        store.upsert_work(&existing).unwrap();
+        let context = test_context(
+            crate::core::model::RequestData::default(),
+            "C:\\narou-existing",
+        );
+
+        let outcome = narou_download("n1234ab", &mut store, &context).unwrap();
+        assert!(matches!(outcome, NarouDownloadOutcome::Skipped(_)));
+
+        let stored = store.list_works(Some("narou")).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].raw_json, expected_raw);
+    }
+
+    #[test]
+    fn narou_download_matches_existing_nid_without_overwrite() {
+        let mut store = Store::open_in_memory().unwrap();
+        let existing = sample_work_record("ncode_pdf_demo", "n1234ab");
+        store.upsert_work(&existing).unwrap();
+        let context = test_context(crate::core::model::RequestData::default(), "C:\\narou-nid");
+
+        let outcome =
+            narou_download("https://ncode.syosetu.com/n1234ab/", &mut store, &context).unwrap();
+        assert!(matches!(outcome, NarouDownloadOutcome::Skipped(_)));
+        let stored = store.list_works(Some("narou")).unwrap();
+        assert_eq!(stored[0].raw_json["episodes"]["1"]["text"], "既存本文");
+    }
+
+    fn sample_work_record(work_key: &str, nid: &str) -> WorkRecord {
+        WorkRecord {
+            site: "narou".to_string(),
+            work_key: work_key.to_string(),
+            title: "既存作品".to_string(),
+            author: "作者".to_string(),
+            author_id: None,
+            author_url: None,
+            r#type: "novel".to_string(),
+            serialization: "連載中".to_string(),
+            caption: "既存キャプション".to_string(),
+            create_date: "2026-01-01T00:00:00+09:00".to_string(),
+            update_date: "2026-01-01T00:00:00+09:00".to_string(),
+            raw_json: json!({
+                "version": 0,
+                "get_date": "2026-01-01T00:00:00+09:00",
+                "title": "既存作品",
+                "id": nid,
+                "nid": nid,
+                "url": format!("https://ncode.syosetu.com/{nid}/"),
+                "author": "作者",
+                "author_id": null,
+                "author_url": null,
+                "caption": "既存キャプション",
+                "total_episodes": 1,
+                "all_episodes": 1,
+                "total_characters": 4,
+                "all_characters": 4,
+                "type": "novel",
+                "serialization": "連載中",
+                "tags": [],
+                "all_tags": [],
+                "createDate": "2026-01-01T00:00:00+09:00",
+                "updateDate": "2026-01-01T00:00:00+09:00",
+                "episodes": {
+                    "1": {
+                        "id": "page-1",
+                        "chapter": null,
+                        "title": "既存作品",
+                        "textCount": 4,
+                        "tags": [],
+                        "introduction": "",
+                        "text": "既存本文",
+                        "postscript": "",
+                        "createDate": "2026-01-01T00:00:00+09:00",
+                        "updateDate": "2026-01-01T00:00:00+09:00"
+                    }
+                }
+            }),
+        }
+    }
+
+    fn test_context(
+        request: crate::core::model::RequestData,
+        root: &str,
+    ) -> crate::sites::SiteActionContext {
+        crate::sites::SiteActionContext {
+            host_name: String::new(),
+            data_dir: format!("{root}\\data"),
+            cookie_dir: format!("{root}\\cookie"),
+            queue_dir: format!("{root}\\queue"),
+            pdf_dir: format!("{root}\\pdf"),
+            archive_dir: format!("{root}\\archive"),
+            request,
+        }
     }
 }
