@@ -203,7 +203,15 @@ async fn upload_account_query(
     let Some(file_text) = payload.file else {
         return create_error(StatusCode::BAD_REQUEST, "file is required".to_string());
     };
-    let account_json: AccountFile = serde_json::from_str(&file_text).unwrap_or_default();
+    let account_json: AccountFile = match serde_json::from_str(&file_text) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            return create_error(
+                StatusCode::BAD_REQUEST,
+                format!("invalid account JSON: {err}"),
+            );
+        }
+    };
     let preferred_name = payload
         .name
         .as_deref()
@@ -2217,6 +2225,56 @@ mod tests {
                 .get(header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok()),
             Some("text/html; charset=utf-8")
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_account_query_rejects_malformed_json() {
+        let store = Store::open_in_memory().expect("store");
+        let state = RuntimeState {
+            config: AppConfig::default(),
+            store: Arc::new(Mutex::new(store)),
+            registry: Arc::new(SiteRegistry::new(Vec::new())),
+            worker_notify: Arc::new(Notify::new()),
+        };
+
+        let query = AccountQuery {
+            site: Some("pixiv".to_string()),
+            account: None,
+        };
+        let payload = AccountInput {
+            file: Some("not valid json".to_string()),
+            name: Some("login".to_string()),
+        };
+
+        let response = upload_account_query(State(state.clone()), Query(query), Json(payload))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let parsed: Value = serde_json::from_slice(&body).expect("json body");
+        assert_eq!(parsed.get("status").and_then(Value::as_str), Some("error"));
+        let message = parsed
+            .get("message")
+            .and_then(Value::as_str)
+            .expect("error message");
+        assert!(
+            message.contains("invalid account JSON"),
+            "unexpected message: {message}"
+        );
+
+        let store = state.store.lock().await;
+        let accounts = store.list_accounts("pixiv").expect("list accounts");
+        assert!(
+            accounts.is_empty(),
+            "no account row should be persisted on parse failure"
         );
     }
 
