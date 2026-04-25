@@ -1678,6 +1678,7 @@ fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str
                 .with_context(|| format!("failed to open {}", payload_path.display()))?,
         )
         .with_context(|| format!("failed to parse {}", payload_path.display()))?;
+        ensure_work_payload_has_episodes(&work_key, &raw_json)?;
         let record = work_record_from_json(site_name, &work_key, raw_json)?;
         records.push(record);
     }
@@ -1850,9 +1851,6 @@ fn import_existing_image_records(store: &Store, images_dir: &Path) -> Result<usi
 fn work_record_from_json(site: &str, work_key: &str, raw_json: Value) -> Result<WorkRecord> {
     let payload: ZipWorkPayload =
         serde_json::from_value(raw_json.clone()).context("invalid zip work payload")?;
-    if payload.episodes.is_empty() {
-        anyhow::bail!("zip work payload {work_key} is missing episodes");
-    }
 
     Ok(WorkRecord {
         site: site.to_string(),
@@ -1868,6 +1866,18 @@ fn work_record_from_json(site: &str, work_key: &str, raw_json: Value) -> Result<
         update_date: payload.update_date,
         raw_json,
     })
+}
+
+fn ensure_work_payload_has_episodes(work_key: &str, raw_json: &Value) -> Result<()> {
+    let has_episodes = raw_json
+        .get("episodes")
+        .and_then(Value::as_object)
+        .map(|map| !map.is_empty())
+        .unwrap_or(false);
+    if !has_episodes {
+        anyhow::bail!("zip work payload {work_key} is missing episodes");
+    }
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -2726,7 +2736,7 @@ mod tests {
         )
         .expect_err("invalid payload should fail");
 
-        assert!(err.to_string().contains("invalid zip work payload"));
+        assert!(err.to_string().contains("missing episodes"));
         assert!(!data_dir.join("narou").exists());
         assert!(!data_dir.join("images").join("abc123.png").exists());
         assert!(!data_dir.join(".zip-import-staging").exists());
@@ -2825,9 +2835,11 @@ mod tests {
             "updateDate": "2026-01-01",
             "episodes": {}
         });
-        let err = work_record_from_json("narou", "work", raw_json)
+        let err = ensure_work_payload_has_episodes("work", &raw_json)
             .expect_err("missing episodes should fail");
         assert!(err.to_string().contains("missing episodes"));
+        // bootstrap path tolerates empty episodes
+        assert!(work_record_from_json("narou", "work", raw_json).is_ok());
     }
 
     #[tokio::test]
