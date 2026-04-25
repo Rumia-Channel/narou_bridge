@@ -211,16 +211,8 @@ fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
                             .and_then(|v| v.as_str())
                             .unwrap_or_default()
                             .to_string(),
-                        create_date: alt
-                            .get("createDate")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        update_date: alt
-                            .get("updateDate")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
+                        create_date: pick_first_str(&alt, &["createDate", "create_date"]),
+                        update_date: pick_first_str(&alt, &["updateDate", "update_date"]),
                         raw_json: alt,
                     };
                     store.upsert_work(&record)?;
@@ -265,16 +257,8 @@ fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
-                create_date: raw_json
-                    .get("createDate")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                update_date: raw_json
-                    .get("updateDate")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
+                create_date: pick_first_str(&raw_json, &["createDate", "create_date"]),
+                update_date: pick_first_str(&raw_json, &["updateDate", "update_date"]),
                 raw_json,
             };
             store.upsert_work(&record)?;
@@ -626,6 +610,13 @@ fn supported_image_extensions() -> &'static [&'static str] {
     ]
 }
 
+fn pick_first_str(value: &Value, keys: &[&str]) -> String {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn load_json_or_default<T>(path: &Path) -> Result<T>
 where
     T: serde::de::DeserializeOwned + Default,
@@ -719,6 +710,38 @@ mod tests {
         assert_eq!(images[0].hash, "abc");
         assert_eq!(images[1].logical_name, "def.webp");
         assert_eq!(images[1].hash, "def");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrate_works_falls_back_to_snake_case_dates() {
+        let root = test_dir("migration-works-snake-case-dates");
+        let raw_dir = root.join("data").join("narou").join("n123").join("raw");
+        fs::create_dir_all(&raw_dir).unwrap();
+        fs::write(
+            raw_dir.join("raw.json"),
+            serde_json::to_string_pretty(&json!({
+                "title": "Narou Work",
+                "author": "Author",
+                "type": "novel",
+                "serialization": "完結済",
+                "caption": "caption",
+                "create_date": "2025-03-01T00:00:00Z",
+                "update_date": "2025-03-02T00:00:00Z"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        let migrated = migrate_works(&store, &root).expect("migrate works");
+
+        assert_eq!(migrated, 1);
+        let works = store.list_works(Some("narou")).expect("list works");
+        assert_eq!(works.len(), 1);
+        assert_eq!(works[0].create_date, "2025-03-01T00:00:00Z");
+        assert_eq!(works[0].update_date, "2025-03-02T00:00:00Z");
 
         fs::remove_dir_all(root).unwrap();
     }
