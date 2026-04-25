@@ -1,6 +1,7 @@
 use crate::core::model::WorkRecord;
 use crate::core::renderer;
 use crate::core::storage::Store;
+use crate::sites::narou::pdf::{ParsedNarouPdf, extract_narou_pdf};
 use crate::sites::narou::repair::repair_narou;
 use crate::sites::{Site, SiteActionContext, SiteActionResult, SiteId};
 use anyhow::{Context, Result, bail};
@@ -10,9 +11,10 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::info;
+use tracing::{info, warn};
 
 pub mod convert;
+pub mod pdf;
 pub mod repair;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +45,7 @@ pub struct NarouSite;
 
 #[derive(Debug, PartialEq, Eq)]
 enum NarouDownloadOutcome {
+    Imported(String),
     Skipped(String),
 }
 
@@ -72,6 +75,9 @@ impl Site for NarouSite {
     ) -> SiteActionResult {
         match action {
             "download" => match narou_download(value, store, context) {
+                Ok(NarouDownloadOutcome::Imported(message)) => {
+                    SiteActionResult::success(self.id(), action, message)
+                }
                 Ok(NarouDownloadOutcome::Skipped(message)) => {
                     SiteActionResult::skipped(self.id(), action, message)
                 }
@@ -102,8 +108,30 @@ impl Site for NarouSite {
 fn narou_download(
     value: &str,
     store: &mut Store,
-    _context: &SiteActionContext,
+    context: &SiteActionContext,
 ) -> Result<NarouDownloadOutcome> {
+    let pdf_path = context
+        .request
+        .pdf_path
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|path| path.exists());
+
+    if let Some(pdf_path) = pdf_path {
+        let imported = import_pdf_file(
+            store,
+            &pdf_path,
+            &context.request,
+            &context.data_dir,
+            &context.pdf_dir,
+            &context.host_name,
+        )?;
+        return Ok(NarouDownloadOutcome::Imported(format!(
+            "imported {}",
+            imported.work_key
+        )));
+    }
+
     let candidates = narou_lookup_candidates(value);
     if let Some(existing) = find_existing_narou_work(store, &candidates)? {
         let nid = existing
@@ -169,18 +197,46 @@ fn import_pdf_file(
     pdf_dir: &str,
     host_name: &str,
 ) -> Result<WorkRecord> {
-    let extracted_pages = extract_pdf_pages(pdf_path)?;
-    let work_key = derive_pdf_work_key(request, pdf_path, &extracted_pages);
-    let title = request.pdf_name.clone().unwrap_or_else(|| work_key.clone());
     let author_id = request.author_id.clone();
     let author_url = request.author_url.clone();
-    let author = author_id
-        .clone()
-        .or_else(|| author_url.clone())
-        .unwrap_or_else(|| "narou".to_string());
     let chapter_input = parse_chapter_input(request.chapter.as_deref())?;
     let serialization = normalize_serialization(request.novel_type.as_deref(), &chapter_input);
     let now = chrono::Utc::now().to_rfc3339();
+    let parsed_pdf = match extract_narou_pdf(pdf_path) {
+        Ok(parsed_pdf) => Some(parsed_pdf),
+        Err(err) => {
+            warn!(
+                path = %pdf_path.display(),
+                error = %err,
+                "narou PDF structured extraction failed; falling back to page-text import"
+            );
+            None
+        }
+    };
+    let extracted_pages = parsed_pdf
+        .as_ref()
+        .map(|parsed| parsed.pages.clone())
+        .unwrap_or_else(|| extract_pdf_pages(pdf_path).unwrap_or_default());
+    let work_key = parsed_pdf
+        .as_ref()
+        .and_then(|parsed| parsed.nid.clone())
+        .filter(|nid| looks_like_narou_nid(nid))
+        .unwrap_or_else(|| derive_pdf_work_key(request, pdf_path, &extracted_pages));
+    let title = parsed_pdf
+        .as_ref()
+        .and_then(|parsed| parsed.title.clone())
+        .or_else(|| request.pdf_name.clone())
+        .unwrap_or_else(|| work_key.clone());
+    let author = parsed_pdf
+        .as_ref()
+        .and_then(|parsed| parsed.author.clone())
+        .or_else(|| author_id.clone())
+        .or_else(|| author_url.clone())
+        .unwrap_or_else(|| "narou".to_string());
+    let caption = parsed_pdf
+        .as_ref()
+        .and_then(|parsed| parsed.caption.clone())
+        .unwrap_or_else(|| request.pdf_name.clone().unwrap_or_default());
     let record = WorkRecord {
         site: "narou".to_string(),
         work_key: work_key.clone(),
@@ -189,29 +245,144 @@ fn import_pdf_file(
         author_id: author_id.clone(),
         author_url: author_url.clone(),
         r#type: "novel".to_string(),
-        serialization: serialization.clone(),
-        caption: request.pdf_name.clone().unwrap_or_default(),
+        serialization: parsed_pdf
+            .as_ref()
+            .and_then(|parsed| parsed.serialization.clone())
+            .unwrap_or_else(|| serialization.clone()),
+        caption: caption.clone(),
         create_date: now.clone(),
         update_date: now.clone(),
-        raw_json: build_raw_json(
-            &work_key,
-            &title,
-            &author,
-            &author_id,
-            &author_url,
-            &request.pdf_name.clone().unwrap_or_default(),
-            &pdf_path.to_string_lossy(),
-            &serialization,
-            &chapter_input,
-            &extracted_pages,
-            &now,
-        )?,
+        raw_json: match parsed_pdf.as_ref() {
+            Some(parsed) => build_raw_json_from_extracted(
+                &work_key,
+                parsed,
+                &title,
+                &author,
+                &author_id,
+                &author_url,
+                &caption,
+                &serialization,
+                &now,
+            )?,
+            None => build_raw_json(
+                &work_key,
+                &title,
+                &author,
+                &author_id,
+                &author_url,
+                &caption,
+                &pdf_path.to_string_lossy(),
+                &serialization,
+                &chapter_input,
+                &extracted_pages,
+                &now,
+            )?,
+        },
     };
 
     store.upsert_work(&record)?;
     save_pdf_copy(pdf_path, pdf_dir, &work_key)?;
     renderer::render_site_from_store(store, "narou", data_dir, host_name)?;
     Ok(record)
+}
+
+fn build_raw_json_from_extracted(
+    work_key: &str,
+    parsed: &ParsedNarouPdf,
+    fallback_title: &str,
+    fallback_author: &str,
+    author_id: &Option<String>,
+    author_url: &Option<String>,
+    fallback_caption: &str,
+    fallback_serialization: &str,
+    now: &str,
+) -> Result<serde_json::Value> {
+    let nid = parsed
+        .nid
+        .clone()
+        .filter(|nid| !nid.trim().is_empty())
+        .unwrap_or_else(|| work_key.to_string());
+    let title = parsed
+        .title
+        .clone()
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| fallback_title.to_string());
+    let author = parsed
+        .author
+        .clone()
+        .filter(|author| !author.trim().is_empty())
+        .unwrap_or_else(|| fallback_author.to_string());
+    let caption = parsed
+        .caption
+        .clone()
+        .filter(|caption| !caption.trim().is_empty())
+        .unwrap_or_else(|| fallback_caption.to_string());
+    let serialization = parsed
+        .serialization
+        .clone()
+        .filter(|serialization| !serialization.trim().is_empty())
+        .unwrap_or_else(|| fallback_serialization.to_string());
+    let create_date = parsed
+        .create_date
+        .clone()
+        .filter(|date| !date.trim().is_empty())
+        .unwrap_or_else(|| now.to_string());
+    let update_date = parsed
+        .update_date
+        .clone()
+        .filter(|date| !date.trim().is_empty())
+        .unwrap_or_else(|| now.to_string());
+    let mut episode_map = serde_json::Map::new();
+    let mut total_characters = 0i64;
+
+    for (index, episode) in parsed.episodes.iter().enumerate() {
+        total_characters += episode.text_count;
+        episode_map.insert(
+            (index + 1).to_string(),
+            json!({
+                "id": episode.id,
+                "chapter": episode.chapter,
+                "title": episode.title,
+                "textCount": episode.text_count,
+                "tags": [],
+                "introduction": episode.introduction,
+                "text": episode.text,
+                "postscript": episode.postscript,
+                "createDate": episode.create_date.as_deref().unwrap_or(&create_date),
+                "updateDate": episode.update_date.as_deref().unwrap_or(&update_date),
+            }),
+        );
+    }
+
+    if episode_map.is_empty() {
+        bail!("narou PDF extraction produced no episodes");
+    }
+
+    let tags = parsed.tags.clone();
+    let all_tags = tags.clone();
+    Ok(json!({
+        "version": 0,
+        "get_date": now,
+        "title": title,
+        "id": nid,
+        "nid": nid,
+        "url": format!("https://ncode.syosetu.com/{}/", parsed.nid.as_deref().unwrap_or(work_key)),
+        "author": author,
+        "author_id": author_id,
+        "author_url": author_url,
+        "caption": caption,
+        "total_episodes": episode_map.len(),
+        "all_episodes": episode_map.len(),
+        "total_characters": total_characters,
+        "all_characters": total_characters,
+        "type": "novel",
+        "serialization": serialization,
+        "tags": tags,
+        "all_tags": all_tags,
+        "createDate": create_date,
+        "updateDate": update_date,
+        "episodes": episode_map
+    }))
 }
 
 fn extract_pdf_pages(pdf_path: &Path) -> Result<Vec<String>> {
@@ -733,6 +904,10 @@ fn page_label(start_page: usize, end_page: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sites::SiteActionContext;
+    use lopdf::content::{Content, Operation};
+    use lopdf::{Object, Stream, dictionary};
+    use std::fs;
 
     #[test]
     fn normalize_serialization_accepts_legacy_values() {
@@ -929,6 +1104,61 @@ mod tests {
         assert_eq!(stored[0].raw_json["episodes"]["1"]["text"], "既存本文");
     }
 
+    #[test]
+    fn narou_download_imports_pdf_when_path_is_present() {
+        let root = std::env::temp_dir().join(format!(
+            "narou-download-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let data_dir = root.join("data");
+        let pdf_dir = root.join("pdf");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&pdf_dir).unwrap();
+        let pdf_path = root.join("sample.pdf");
+        create_sample_pdf(&pdf_path).unwrap();
+
+        let mut store = Store::open_in_memory().unwrap();
+        let request = crate::core::model::RequestData {
+            request_id: "req-pdf".to_string(),
+            pdf_path: Some(pdf_path.to_string_lossy().to_string()),
+            pdf_name: Some("sample.pdf".to_string()),
+            ..Default::default()
+        };
+        let context = SiteActionContext {
+            host_name: String::new(),
+            data_dir: data_dir.to_string_lossy().to_string(),
+            cookie_dir: String::new(),
+            queue_dir: String::new(),
+            pdf_dir: pdf_dir.to_string_lossy().to_string(),
+            archive_dir: String::new(),
+            request,
+        };
+
+        let outcome = narou_download("n1234ab", &mut store, &context).unwrap();
+        assert!(matches!(outcome, NarouDownloadOutcome::Imported(_)));
+
+        let works = store.list_works(Some("narou")).unwrap();
+        assert_eq!(works.len(), 1);
+        assert_eq!(works[0].work_key, "n1234ab");
+        assert_eq!(works[0].raw_json["title"], "Sample Title");
+        assert_eq!(works[0].raw_json["author"], "Alice");
+        assert_eq!(works[0].raw_json["caption"], "Summary line");
+        assert_eq!(
+            works[0].raw_json["episodes"]
+                .as_object()
+                .map(|episodes| episodes.len()),
+            Some(1)
+        );
+        assert!(
+            works[0].raw_json["episodes"]["1"]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Body text")
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     fn sample_work_record(work_key: &str, nid: &str) -> WorkRecord {
         WorkRecord {
             site: "narou".to_string(),
@@ -981,11 +1211,8 @@ mod tests {
         }
     }
 
-    fn test_context(
-        request: crate::core::model::RequestData,
-        root: &str,
-    ) -> crate::sites::SiteActionContext {
-        crate::sites::SiteActionContext {
+    fn test_context(request: crate::core::model::RequestData, root: &str) -> SiteActionContext {
+        SiteActionContext {
             host_name: String::new(),
             data_dir: format!("{root}\\data"),
             cookie_dir: format!("{root}\\cookie"),
@@ -994,5 +1221,86 @@ mod tests {
             archive_dir: format!("{root}\\archive"),
             request,
         }
+    }
+
+    fn create_sample_pdf(path: &Path) -> Result<()> {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => font_id,
+            },
+        });
+
+        let page_one = add_test_page(
+            &mut doc,
+            pages_id,
+            resources_id,
+            &[
+                (24, 72, 760, "Sample Title"),
+                (12, 72, 720, "ncode: n1234ab"),
+                (12, 72, 700, "author: Alice"),
+                (12, 72, 680, "caption: Summary line"),
+            ],
+        )?;
+        let page_two = add_test_page(
+            &mut doc,
+            pages_id,
+            resources_id,
+            &[(28, 200, 500, "Episode 1")],
+        )?;
+        let page_three = add_test_page(
+            &mut doc,
+            pages_id,
+            resources_id,
+            &[(14, 72, 720, "Body text for episode one.")],
+        )?;
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page_one.into(), page_two.into(), page_three.into()],
+            "Count" => 3,
+            "Resources" => resources_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.compress();
+        doc.save(path)?;
+        Ok(())
+    }
+
+    fn add_test_page(
+        doc: &mut Document,
+        pages_id: lopdf::ObjectId,
+        resources_id: lopdf::ObjectId,
+        lines: &[(i64, i64, i64, &str)],
+    ) -> Result<lopdf::ObjectId> {
+        let mut operations = Vec::new();
+        for (size, x, y, text) in lines {
+            operations.push(Operation::new("BT", vec![]));
+            operations.push(Operation::new("Tf", vec!["F1".into(), (*size).into()]));
+            operations.push(Operation::new("Td", vec![(*x).into(), (*y).into()]));
+            operations.push(Operation::new("Tj", vec![Object::string_literal(*text)]));
+            operations.push(Operation::new("ET", vec![]));
+        }
+        let content = Content { operations };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode()?));
+        Ok(doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "Resources" => resources_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        }))
     }
 }
