@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::error;
+use tracing::{error, info, warn};
 
 pub struct Store {
     inner: Arc<StoreInner>,
@@ -104,6 +104,7 @@ impl Store {
             if !self.inner.in_memory {
                 conn.pragma_update(None, "journal_mode", "WAL")
                     .context("failed to enable sqlite WAL mode")?;
+                verify_runtime_journal_mode(conn)?;
             }
             conn.pragma_update(None, "synchronous", "NORMAL")
                 .context("failed to configure sqlite synchronous mode")?;
@@ -1044,6 +1045,18 @@ impl Store {
     }
 }
 
+fn verify_runtime_journal_mode(conn: &Connection) -> Result<()> {
+    let journal_mode: String = conn
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .context("failed to read sqlite journal_mode")?;
+    if journal_mode.eq_ignore_ascii_case("wal") {
+        info!("sqlite journal_mode=WAL");
+    } else {
+        warn!(journal_mode = %journal_mode, "sqlite journal_mode is not WAL");
+    }
+    Ok(())
+}
+
 impl std::fmt::Display for TaskStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -1213,6 +1226,42 @@ mod tests {
         store
             .enqueue_task(&sample_task("req-wal"))
             .expect("enqueue task");
+
+        let journal_mode: String = store
+            .with_conn(|conn| {
+                conn.pragma_query_value(None, "journal_mode", |row| row.get(0))
+                    .map_err(Into::into)
+            })
+            .expect("journal mode");
+        assert_eq!(journal_mode.to_lowercase(), "wal");
+
+        let synchronous: String = store
+            .with_conn(|conn| {
+                conn.pragma_query_value(None, "synchronous", |row| {
+                    let synchronous = match row.get_ref(0)? {
+                        rusqlite::types::ValueRef::Text(value) => {
+                            String::from_utf8_lossy(value).into_owned()
+                        }
+                        rusqlite::types::ValueRef::Integer(0) => "OFF".to_string(),
+                        rusqlite::types::ValueRef::Integer(1) => "NORMAL".to_string(),
+                        rusqlite::types::ValueRef::Integer(2) => "FULL".to_string(),
+                        rusqlite::types::ValueRef::Integer(3) => "EXTRA".to_string(),
+                        other => {
+                            return Err(rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                other.data_type(),
+                                Box::new(std::io::Error::other(format!(
+                                    "unexpected sqlite synchronous value: {other:?}"
+                                ))),
+                            ));
+                        }
+                    };
+                    Ok(synchronous)
+                })
+                .map_err(Into::into)
+            })
+            .expect("synchronous mode");
+        assert_eq!(synchronous.to_lowercase(), "normal");
 
         let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
         assert!(
