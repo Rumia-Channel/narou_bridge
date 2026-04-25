@@ -21,7 +21,7 @@ pub fn pixiv_update(
 
     let tracked_users = super::tracked_user_ids(store, &folder_path)?;
     if tracked_users.is_empty() {
-        renderer::render_site_from_store(store, "pixiv", data_dir, host_name)?;
+        renderer::render_site_from_store(store, "pixiv", data_dir, host_name, None)?;
         return Ok(
             "pixiv update rendered existing works; no tracked users in user.json".to_string(),
         );
@@ -49,7 +49,7 @@ pub fn pixiv_update(
         }
     }
 
-    renderer::render_site_from_store(store, "pixiv", data_dir, host_name)?;
+    renderer::render_site_from_store(store, "pixiv", data_dir, host_name, None)?;
 
     if !failures.is_empty() {
         return Err(anyhow::anyhow!(

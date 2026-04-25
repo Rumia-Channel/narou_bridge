@@ -1,3 +1,4 @@
+use crate::core::atomic_io::atomic_write;
 use crate::core::model::{EpisodeIndexEntry, SiteIndexEntry, WorkRecord};
 use crate::core::storage::Store;
 use anyhow::{Context, Result, bail};
@@ -112,12 +113,12 @@ pub fn refresh_image_manifests(store: &Store, data_dir: &str) -> Result<()> {
         }
     }
 
-    fs::write(
-        image_dir.join("database.json"),
+    atomic_write(
+        &image_dir.join("database.json"),
         serde_json::to_string_pretty(&serde_json::Value::Object(database))?,
     )?;
-    fs::write(
-        image_dir.join("cover.json"),
+    atomic_write(
+        &image_dir.join("cover.json"),
         serde_json::to_string_pretty(&serde_json::Value::Object(cover))?,
     )?;
     Ok(())
@@ -128,6 +129,7 @@ pub fn render_site_from_store(
     site: &str,
     data_dir: &str,
     host_name: &str,
+    target_work: Option<&str>,
 ) -> Result<()> {
     refresh_image_manifests(store, data_dir)?;
     let works = store.list_works(Some(site))?;
@@ -135,10 +137,25 @@ pub fn render_site_from_store(
     fs::create_dir_all(&site_dir).context("failed to create site dir")?;
 
     let image_assets = load_image_assets(store)?;
-    let mut rendered = Vec::new();
+    let mut rendered = Vec::with_capacity(works.len());
+    let mut target_found = target_work.is_none();
 
     for work in works {
-        rendered.push(render_work(&site_dir, &work, host_name, &image_assets)?);
+        if target_work
+            .map(|target| target == work.work_key.as_str())
+            .unwrap_or(true)
+        {
+            target_found = true;
+            rendered.push(render_work(&site_dir, &work, host_name, &image_assets)?);
+        } else {
+            rendered.push(rendered_work_from_record(&work)?);
+        }
+    }
+
+    if let Some(target_work) = target_work {
+        if !target_found {
+            bail!("work {target_work} was not found for site {site}");
+        }
     }
 
     write_site_index(&site_dir, site, &rendered, host_name, &image_assets)?;
@@ -238,6 +255,17 @@ fn render_work(
     )
 }
 
+fn rendered_work_from_record(work: &WorkRecord) -> Result<RenderedWork> {
+    let raw_work = parse_raw_work(&work.raw_json)
+        .with_context(|| format!("failed to parse raw work for {}", work.work_key))?;
+    Ok(build_rendered_work(
+        raw_work,
+        work.site.clone(),
+        work.work_key.clone(),
+        work.raw_json.clone(),
+    ))
+}
+
 fn render_work_from_raw(
     site_dir: &Path,
     site: &str,
@@ -254,8 +282,8 @@ fn render_work_from_raw(
     fs::create_dir_all(&info_dir).context("failed to create info dir")?;
 
     if write_raw_json {
-        fs::write(
-            raw_dir.join("raw.json"),
+        atomic_write(
+            &raw_dir.join("raw.json"),
             serde_json::to_string_pretty(&raw_json)?,
         )?;
     }
@@ -295,9 +323,9 @@ fn render_work_from_raw(
             images,
         )
     };
-    fs::write(work_dir.join("index.html"), work_root_html)?;
-    fs::write(
-        info_dir.join("index.html"),
+    atomic_write(&work_dir.join("index.html"), work_root_html)?;
+    atomic_write(
+        &info_dir.join("index.html"),
         render_work_info(
             &rendered.site,
             &rendered.work_key,
@@ -322,8 +350,8 @@ fn render_work_from_raw(
         if let Some(parent) = episode_path.parent() {
             fs::create_dir_all(parent).context("failed to create episode dir")?;
         }
-        fs::write(
-            episode_path,
+        atomic_write(
+            &episode_path,
             render_episode_page(
                 &rendered.site,
                 &rendered.work_key,
@@ -393,12 +421,12 @@ fn write_site_index(
     host_name: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> Result<()> {
-    fs::write(
-        site_dir.join("index.json"),
+    atomic_write(
+        &site_dir.join("index.json"),
         serde_json::to_string_pretty(&build_site_index_json(works))?,
     )?;
-    fs::write(
-        site_dir.join("index.html"),
+    atomic_write(
+        &site_dir.join("index.html"),
         render_site_index(site, works, host_name, images),
     )?;
     Ok(())
@@ -1447,8 +1475,8 @@ fn update_cover_json(store: &Store, site: &str, site_dir: &Path) -> Result<()> {
 
     let cover_dir = site_dir.join("images");
     fs::create_dir_all(&cover_dir).context("failed to create images dir")?;
-    fs::write(
-        cover_dir.join("cover.json"),
+    atomic_write(
+        &cover_dir.join("cover.json"),
         serde_json::to_string_pretty(&serde_json::Value::Object(cover_map))?,
     )
     .context("failed to write cover.json")?;
@@ -1553,7 +1581,7 @@ mod tests {
             })
             .expect("upsert work");
 
-        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "")
+        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", None)
             .expect("render site");
 
         let cover: serde_json::Value = serde_json::from_str(
@@ -1618,6 +1646,117 @@ mod tests {
         .expect("parse index");
         assert_eq!(index["n123"]["title"].as_str(), Some("Disk Title"));
         assert_eq!(index["n123"]["caption"].as_str(), Some("Disk Caption"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incremental_render_updates_only_target_work_html() {
+        let root = test_dir("renderer-incremental-target");
+        let data_dir = root.join("data");
+        let store = Store::open_in_memory().expect("store");
+
+        let mut work_a = sample_raw_json();
+        work_a["title"] = json!("Work A");
+        work_a["id"] = json!("n123");
+        work_a["nid"] = json!("n123");
+        work_a["url"] = json!("https://example.invalid/n123");
+        work_a["episodes"]["1"]["id"] = json!("1");
+        store
+            .upsert_work(&WorkRecord {
+                site: "pixiv".to_string(),
+                work_key: "n123".to_string(),
+                title: "Work A".to_string(),
+                author: "Example Author".to_string(),
+                author_id: None,
+                author_url: None,
+                r#type: "novel".to_string(),
+                serialization: "短編".to_string(),
+                caption: "Caption A".to_string(),
+                create_date: "2025-01-01T00:00:00Z".to_string(),
+                update_date: "2025-01-01T00:00:00Z".to_string(),
+                raw_json: work_a,
+            })
+            .expect("upsert work a");
+
+        let mut work_b = sample_raw_json();
+        work_b["title"] = json!("Work B");
+        work_b["id"] = json!("n456");
+        work_b["nid"] = json!("n456");
+        work_b["url"] = json!("https://example.invalid/n456");
+        work_b["episodes"]["1"]["id"] = json!("2");
+        store
+            .upsert_work(&WorkRecord {
+                site: "pixiv".to_string(),
+                work_key: "n456".to_string(),
+                title: "Work B".to_string(),
+                author: "Example Author".to_string(),
+                author_id: None,
+                author_url: None,
+                r#type: "novel".to_string(),
+                serialization: "短編".to_string(),
+                caption: "Caption B".to_string(),
+                create_date: "2025-01-01T00:00:00Z".to_string(),
+                update_date: "2025-01-01T00:00:00Z".to_string(),
+                raw_json: work_b,
+            })
+            .expect("upsert work b");
+
+        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", None)
+            .expect("initial full render");
+
+        let untouched_html_path = data_dir.join("pixiv").join("n456").join("index.html");
+        fs::write(&untouched_html_path, "UNTOUCHED-WORK-B").expect("overwrite work b html");
+
+        let mut updated_work_a = sample_raw_json();
+        updated_work_a["title"] = json!("Work A Updated");
+        updated_work_a["id"] = json!("n123");
+        updated_work_a["nid"] = json!("n123");
+        updated_work_a["url"] = json!("https://example.invalid/n123");
+        updated_work_a["episodes"]["1"]["id"] = json!("1");
+        store
+            .upsert_work(&WorkRecord {
+                site: "pixiv".to_string(),
+                work_key: "n123".to_string(),
+                title: "Work A Updated".to_string(),
+                author: "Example Author".to_string(),
+                author_id: None,
+                author_url: None,
+                r#type: "novel".to_string(),
+                serialization: "短編".to_string(),
+                caption: "Caption A".to_string(),
+                create_date: "2025-01-01T00:00:00Z".to_string(),
+                update_date: "2025-01-02T00:00:00Z".to_string(),
+                raw_json: updated_work_a,
+            })
+            .expect("update work a");
+
+        render_site_from_store(
+            &store,
+            "pixiv",
+            data_dir.to_str().unwrap(),
+            "",
+            Some("n123"),
+        )
+        .expect("incremental render");
+
+        assert!(
+            fs::read_to_string(data_dir.join("pixiv").join("n123").join("index.html"))
+                .expect("read work a html")
+                .contains("Work A Updated")
+        );
+        assert_eq!(
+            fs::read_to_string(&untouched_html_path).expect("read work b html"),
+            "UNTOUCHED-WORK-B"
+        );
+
+        let site_index: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(data_dir.join("pixiv").join("index.json"))
+                .expect("read site index"),
+        )
+        .expect("parse site index");
+        assert_eq!(site_index["n123"]["title"].as_str(), Some("Work A Updated"));
+        assert_eq!(site_index["n456"]["title"].as_str(), Some("Work B"));
 
         fs::remove_dir_all(root).unwrap();
     }

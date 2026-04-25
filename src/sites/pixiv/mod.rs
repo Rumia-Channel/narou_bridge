@@ -192,30 +192,46 @@ fn pixiv_download(
     let client = build_client(store, cookie_dir)?;
     let target = parse_pixiv_url(url).ok_or_else(|| anyhow!("unsupported pixiv url: {url}"))?;
 
-    let (message, deferred_error) = match target {
+    let (message, deferred_error, target_work) = match target {
         PixivUrlTarget::Novel(id) => {
             info!("Pixiv download: novel id={id}");
             let record = download_novel(&client, &id, &folder_path, &img_path)?;
             persist_work_record(store, &record, &img_path)?;
-            (format!("stored {}", record.work_key), None)
+            (
+                format!("stored {}", record.work_key),
+                None,
+                Some(record.work_key),
+            )
         }
         PixivUrlTarget::Series(id) => {
             info!("Pixiv download: novel series id={id}");
             let record = download_series(&client, &id, &folder_path, &img_path)?;
             persist_work_record(store, &record, &img_path)?;
-            (format!("stored {}", record.work_key), None)
+            (
+                format!("stored {}", record.work_key),
+                None,
+                Some(record.work_key),
+            )
         }
         PixivUrlTarget::Art(id) => {
             info!("Pixiv download: artwork id={id}");
             let record = download_art(&client, &id, &folder_path, &img_path)?;
             persist_work_record(store, &record, &img_path)?;
-            (format!("stored {}", record.work_key), None)
+            (
+                format!("stored {}", record.work_key),
+                None,
+                Some(record.work_key),
+            )
         }
         PixivUrlTarget::Comic(id) => {
             info!("Pixiv download: comic series id={id}");
             let record = download_comic(&client, &id, &folder_path, &img_path)?;
             persist_work_record(store, &record, &img_path)?;
-            (format!("stored {}", record.work_key), None)
+            (
+                format!("stored {}", record.work_key),
+                None,
+                Some(record.work_key),
+            )
         }
         PixivUrlTarget::User(user_id) => {
             info!("Pixiv download: user id={user_id}");
@@ -235,11 +251,12 @@ fn pixiv_download(
                     user_name, summary.user_id, summary.downloaded_works
                 ),
                 deferred_error,
+                None,
             )
         }
     };
 
-    renderer::render_site_from_store(store, "pixiv", data_dir, host_name)?;
+    renderer::render_site_from_store(store, "pixiv", data_dir, host_name, target_work.as_deref())?;
     if let Some(err) = deferred_error {
         return Err(err);
     }

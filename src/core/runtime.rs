@@ -1150,7 +1150,7 @@ fn import_uploaded_zip(
         copy_staged_zip_images(&payload_entries, staging_root, data_root)?;
         merge_zip_images(store, &metadata)?;
         renderer::refresh_image_manifests(store, data_dir)?;
-        renderer::render_site_from_store(store, &metadata.site_name, data_dir, host_name)?;
+        renderer::render_site_from_store(store, &metadata.site_name, data_dir, host_name, None)?;
 
         Ok(format!(
             "imported {} ({imported} works)",

@@ -178,7 +178,7 @@ fn import_pdf_or_render(store: &mut Store, context: &SiteActionContext) -> Resul
         return Ok(format!("imported {}", imported.work_key));
     }
 
-    renderer::render_site_from_store(store, "narou", &context.data_dir, &context.host_name)?;
+    renderer::render_site_from_store(store, "narou", &context.data_dir, &context.host_name, None)?;
     Ok(format!(
         "narou {} completed",
         if request.chapter.is_some() {
@@ -282,7 +282,7 @@ fn import_pdf_file(
 
     store.upsert_work(&record)?;
     save_pdf_copy(pdf_path, pdf_dir, &work_key)?;
-    renderer::render_site_from_store(store, "narou", data_dir, host_name)?;
+    renderer::render_site_from_store(store, "narou", data_dir, host_name, Some(&work_key))?;
     Ok(record)
 }
 
