@@ -83,6 +83,18 @@ pub fn rewrite_cookie_site_mirror(
     Ok(())
 }
 
+pub fn write_login_account_mirror(
+    cookie_root: &Path,
+    site: &str,
+    account: &AccountFile,
+) -> Result<()> {
+    let dir = cookie_root.join(site);
+    fs::create_dir_all(&dir)?;
+    let payload = serde_json::to_vec_pretty(account)?;
+    atomic_write(&dir.join("login.json"), payload.as_slice())?;
+    Ok(())
+}
+
 fn account_file_from_value(value: Value) -> Result<AccountFile> {
     match value {
         Value::Object(map) => {
