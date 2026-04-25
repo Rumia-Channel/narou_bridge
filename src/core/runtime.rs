@@ -21,6 +21,7 @@ use axum::routing::{get, post};
 use axum_extra::extract::Multipart;
 use bytes::Bytes;
 use http_body_util::BodyExt;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -1701,21 +1702,38 @@ fn import_existing_site_records_from_tree(
         return Ok(0);
     }
 
-    let mut imported = 0usize;
-    for entry in stdfs::read_dir(site_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
+    let work_dirs: Vec<PathBuf> = stdfs::read_dir(site_dir)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .file_type()
+                .map(|file_type| file_type.is_dir())
+                .unwrap_or(false)
+        })
+        .map(|entry| entry.path())
+        .collect();
 
-        let work_key = entry.file_name().to_string_lossy().to_string();
-        let raw_path = entry.path().join("raw").join("raw.json");
-        let alt_path = entry.path().join("data.json");
+    if work_dirs.is_empty() {
+        return Ok(0);
+    }
+
+    let bar = make_progress_bar(work_dirs.len() as u64, &format!("import {site_name}"));
+    let mut imported = 0usize;
+    for work_path in work_dirs {
+        let work_key = work_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        bar.set_message(format!("{site_name}/{work_key}"));
+
+        let raw_path = work_path.join("raw").join("raw.json");
+        let alt_path = work_path.join("data.json");
         let payload_path = if raw_path.exists() {
             raw_path
         } else if alt_path.exists() {
             alt_path
         } else {
+            bar.inc(1);
             continue;
         };
 
@@ -1727,9 +1745,24 @@ fn import_existing_site_records_from_tree(
         let record = work_record_from_json(site_name, &work_key, raw_json)?;
         store.upsert_work(&record)?;
         imported += 1;
+        bar.inc(1);
     }
 
+    bar.finish_with_message(format!("{site_name}: {imported} works imported"));
     Ok(imported)
+}
+
+fn make_progress_bar(total: u64, label: &str) -> ProgressBar {
+    let bar = ProgressBar::new(total);
+    let template = format!(
+        "{{spinner:.green}} {label:>16} [{{bar:40.cyan/blue}}] {{pos}}/{{len}} ({{eta}}) {{msg}}"
+    );
+    let style = ProgressStyle::with_template(&template)
+        .unwrap_or_else(|_| ProgressStyle::default_bar())
+        .progress_chars("=>-");
+    bar.set_style(style);
+    bar.enable_steady_tick(Duration::from_millis(200));
+    bar
 }
 
 fn import_existing_image_records(store: &Store, images_dir: &Path) -> Result<usize> {
@@ -1801,9 +1834,16 @@ fn import_existing_image_records(store: &Store, images_dir: &Path) -> Result<usi
     }
 
     let imported = records.len();
-    for record in records.values() {
-        store.upsert_image(record)?;
+    if imported == 0 {
+        return Ok(0);
     }
+    let bar = make_progress_bar(imported as u64, "import images");
+    let images: Vec<ImageRecord> = records.into_values().collect();
+    let bar_ref = bar.clone();
+    store.bulk_upsert_images(&images, move |done| {
+        bar_ref.set_position(done as u64);
+    })?;
+    bar.finish_with_message(format!("images: {imported} records imported"));
     Ok(imported)
 }
 

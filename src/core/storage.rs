@@ -700,6 +700,36 @@ impl Store {
         })
     }
 
+    pub fn bulk_upsert_images<F>(&self, images: &[ImageRecord], mut on_progress: F) -> Result<()>
+    where
+        F: FnMut(usize),
+    {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            {
+                let mut stmt = tx.prepare(
+                    r#"INSERT INTO images (logical_name, hash, ext, kind)
+                       VALUES (?1, ?2, ?3, ?4)
+                       ON CONFLICT(logical_name) DO UPDATE SET
+                           hash=excluded.hash,
+                           ext=excluded.ext,
+                           kind=excluded.kind"#,
+                )?;
+                for (idx, image) in images.iter().enumerate() {
+                    stmt.execute(params![
+                        image.logical_name,
+                        image.hash,
+                        image.ext,
+                        image.kind
+                    ])?;
+                    on_progress(idx + 1);
+                }
+            }
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
     pub fn list_images(&self) -> Result<Vec<ImageRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
