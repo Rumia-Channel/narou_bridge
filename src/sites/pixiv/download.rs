@@ -522,20 +522,31 @@ pub fn download_comic(
         }
 
         // Extract series entries from this page
-        let series_data = extract_comic_series_entries(&resp);
-        if series_data.is_empty() {
+        let series_page = extract_comic_series_entries(&resp, page);
+        if series_page.entries.is_empty() {
             break;
         }
-        for item in &series_data {
+        let mut added_this_page = 0usize;
+        let mut seen_orders = HashSet::new();
+        let mut seen_art_ids = HashSet::new();
+        for item in &series_page.entries {
             let order = item.get("order").and_then(Value::as_i64).unwrap_or(0);
             let work_id = item
                 .get("workId")
                 .or_else(|| item.get("id"))
                 .map(value_to_string)
                 .unwrap_or_default();
-            if !work_id.is_empty() {
+            if !work_id.is_empty()
+                && seen_orders.insert(order)
+                && seen_art_ids.insert(work_id.clone())
+            {
                 arts.insert(order, work_id);
+                added_this_page += 1;
             }
+        }
+
+        if added_this_page == 0 || !series_page.has_more {
+            break;
         }
 
         page += 1;
@@ -871,25 +882,33 @@ pub fn download_user(
 fn fetch_comic_series_art_ids(client: &Client, comic_id: &str) -> Result<Vec<String>> {
     let mut page = 1;
     let mut ids = HashSet::new();
+    let mut seen_orders = HashSet::new();
     loop {
         sleep();
         let body = fetch_body_json(
             client,
             &format!("https://www.pixiv.net/ajax/series/{comic_id}?p={page}&lang=ja"),
         )?;
-        let entries = extract_comic_series_entries(&body);
-        if entries.is_empty() {
+        let series_page = extract_comic_series_entries(&body, page);
+        if series_page.entries.is_empty() {
             break;
         }
-        for entry in entries {
+        let mut added_this_page = 0usize;
+        for entry in series_page.entries {
+            let order = entry.get("order").and_then(Value::as_i64).unwrap_or(0);
             if let Some(id) = entry
                 .get("workId")
                 .or_else(|| entry.get("id"))
                 .map(value_to_string)
                 .filter(|id| !id.is_empty())
             {
-                ids.insert(id);
+                if seen_orders.insert(order) && ids.insert(id) {
+                    added_this_page += 1;
+                }
             }
+        }
+        if added_this_page == 0 || !series_page.has_more {
+            break;
         }
         page += 1;
     }

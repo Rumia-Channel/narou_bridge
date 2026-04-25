@@ -820,44 +820,63 @@ pub fn dedup_tags(tags: &mut Vec<String>) {
 // Comic series helpers
 // ---------------------------------------------------------------------------
 
-pub fn extract_comic_series_entries(body: &Value) -> Vec<Value> {
-    // Try page.series first (newer API)
-    if let Some(series) = body
-        .get("page")
-        .and_then(|v| v.get("series"))
-        .and_then(Value::as_array)
-    {
-        return series.clone();
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComicSeriesEntriesPage {
+    pub entries: Vec<Value>,
+    pub has_more: bool,
+}
+
+pub fn extract_comic_series_entries(body: &Value, page: usize) -> ComicSeriesEntriesPage {
+    let preferred_sources = [
+        body.get("page").and_then(|v| v.get("series")),
+        body.get("page").and_then(|v| v.get("contentOrder")),
+        body.get("series"),
+        body.get("contentOrder"),
+        body.get("page").and_then(|v| v.get("seriesContents")),
+        body.get("seriesContents"),
+    ];
+
+    for source in preferred_sources {
+        if let Some(entries) = source
+            .and_then(Value::as_array)
+            .filter(|entries| !entries.is_empty())
+        {
+            return ComicSeriesEntriesPage {
+                entries: entries.clone(),
+                has_more: true,
+            };
+        }
     }
-    // Try page.seriesContents
-    if let Some(contents) = body
-        .get("page")
-        .and_then(|v| v.get("seriesContents"))
-        .and_then(Value::as_array)
-    {
-        return contents.clone();
-    }
-    // Try thumbnails.illust and construct order/workId
+
     if let Some(illusts) = body
         .get("thumbnails")
         .and_then(|v| v.get("illust"))
         .and_then(Value::as_array)
+        .filter(|illusts| !illusts.is_empty())
     {
-        return illusts
-            .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                json!({
-                    "order": item.get("seriesOrder")
-                        .or_else(|| item.get("order"))
-                        .and_then(Value::as_i64)
-                        .unwrap_or((i + 1) as i64),
-                    "workId": item.get("id").map(value_to_string).unwrap_or_default(),
+        let offset = page.saturating_sub(1) * illusts.len();
+        return ComicSeriesEntriesPage {
+            entries: illusts
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    json!({
+                        "order": item.get("seriesOrder")
+                            .or_else(|| item.get("order"))
+                            .and_then(Value::as_i64)
+                            .unwrap_or((offset + i + 1) as i64),
+                        "workId": item.get("id").map(value_to_string).unwrap_or_default(),
+                    })
                 })
-            })
-            .collect();
+                .collect(),
+            has_more: false,
+        };
     }
-    Vec::new()
+
+    ComicSeriesEntriesPage {
+        entries: Vec::new(),
+        has_more: false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1612,5 +1631,25 @@ mod tests {
         }));
 
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn extract_comic_series_entries_stops_after_thumbnail_fallback_page() {
+        let body = json!({
+            "thumbnails": {
+                "illust": [
+                    {"id": "100", "seriesOrder": 1},
+                    {"id": "200", "seriesOrder": 2}
+                ]
+            }
+        });
+
+        let page = extract_comic_series_entries(&body, 3);
+        assert_eq!(page.entries.len(), 2);
+        assert!(!page.has_more);
+        assert_eq!(
+            page.entries[0].get("workId").and_then(Value::as_str),
+            Some("100")
+        );
     }
 }
