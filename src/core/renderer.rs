@@ -101,18 +101,23 @@ pub fn refresh_image_manifests(store: &Store, data_dir: &str) -> Result<()> {
     let image_dir = PathBuf::from(data_dir).join("images");
     fs::create_dir_all(&image_dir).context("failed to create image dir")?;
 
+    let images = store.list_images()?;
     let mut database = serde_json::Map::new();
     let mut cover = serde_json::Map::new();
 
-    for image in store.list_images()? {
+    for image in &images {
         database.insert(
             image.logical_name.clone(),
             serde_json::Value::String(image.hash.clone()),
         );
         if image.kind == "cover" {
-            cover.insert(image.logical_name, serde_json::Value::String(image.hash));
+            cover.insert(
+                image.logical_name.clone(),
+                serde_json::Value::String(image.hash.clone()),
+            );
         }
     }
+    add_narou_cover_aliases(store, &images, &mut cover)?;
 
     atomic_write(
         &image_dir.join("database.json"),
@@ -123,6 +128,119 @@ pub fn refresh_image_manifests(store: &Store, data_dir: &str) -> Result<()> {
         serde_json::to_string_pretty(&serde_json::Value::Object(cover))?,
     )?;
     Ok(())
+}
+
+fn add_narou_cover_aliases(
+    store: &Store,
+    images: &[crate::core::model::ImageRecord],
+    cover: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let image_lookup = images
+        .iter()
+        .map(|image| (image.logical_name.as_str(), image))
+        .collect::<HashMap<_, _>>();
+
+    for work in store.list_works(Some("narou"))? {
+        if has_named_cover_alias(cover, &work.work_key) {
+            continue;
+        }
+
+        let Some(image) = find_narou_cover_image(&work.raw_json, &image_lookup) else {
+            continue;
+        };
+
+        cover.insert(
+            format!("narou_{}_cover.{}", work.work_key, image.ext),
+            serde_json::Value::String(image.hash.clone()),
+        );
+    }
+
+    Ok(())
+}
+
+fn has_named_cover_alias(
+    cover: &serde_json::Map<String, serde_json::Value>,
+    work_key: &str,
+) -> bool {
+    let prefix = format!("narou_{work_key}_cover.");
+    cover
+        .keys()
+        .any(|logical_name| logical_name.starts_with(&prefix))
+}
+
+fn find_narou_cover_image<'a>(
+    raw_json: &serde_json::Value,
+    image_lookup: &HashMap<&'a str, &'a crate::core::model::ImageRecord>,
+) -> Option<&'a crate::core::model::ImageRecord> {
+    let mut candidates = Vec::new();
+    collect_narou_cover_candidates(raw_json, false, &mut candidates);
+    candidates
+        .into_iter()
+        .filter_map(|candidate| image_lookup.get(candidate.as_str()).copied())
+        .find(|image| image.kind == "cover" || logical_name_looks_like_cover(&image.logical_name))
+}
+
+fn collect_narou_cover_candidates(
+    value: &serde_json::Value,
+    in_cover_field: bool,
+    candidates: &mut Vec<String>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                collect_narou_cover_candidates(
+                    child,
+                    in_cover_field || is_cover_field(key),
+                    candidates,
+                );
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                collect_narou_cover_candidates(child, in_cover_field, candidates);
+            }
+        }
+        serde_json::Value::String(text) => {
+            if in_cover_field {
+                push_unique_candidate(candidates, text.trim());
+            }
+            collect_image_markup_candidates(text, candidates);
+        }
+        _ => {}
+    }
+}
+
+fn is_cover_field(key: &str) -> bool {
+    matches!(
+        key,
+        "cover" | "cover_image" | "coverImage" | "thumbnail" | "thumbnail_image" | "thumbnailImage"
+    )
+}
+
+fn collect_image_markup_candidates(text: &str, candidates: &mut Vec<String>) {
+    let mut remainder = text;
+    while let Some(start) = remainder.find("[image](") {
+        let after_marker = &remainder[start + "[image](".len()..];
+        let Some(end) = after_marker.find(')') else {
+            break;
+        };
+        push_unique_candidate(candidates, after_marker[..end].trim());
+        remainder = &after_marker[end + 1..];
+    }
+}
+
+fn push_unique_candidate(candidates: &mut Vec<String>, candidate: &str) {
+    if candidate.is_empty() {
+        return;
+    }
+    if candidates.iter().any(|existing| existing == candidate) {
+        return;
+    }
+    candidates.push(candidate.to_string());
+}
+
+fn logical_name_looks_like_cover(logical_name: &str) -> bool {
+    logical_name.to_ascii_lowercase().contains("cover")
 }
 
 pub fn render_site_from_store(
@@ -1431,6 +1549,55 @@ mod tests {
             json!({
                 "pixiv_n123_cover.jpg": "abc123def4567890"
             })
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refresh_image_manifests_adds_narou_cover_alias_from_raw_markup() {
+        let root = test_dir("renderer-narou-cover-alias");
+        let data_dir = root.join("data");
+        let images_dir = data_dir.join("images");
+        fs::create_dir_all(&images_dir).unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        store
+            .upsert_image(&ImageRecord {
+                logical_name: "cover.png".to_string(),
+                hash: "feedfacecafebeef".to_string(),
+                ext: "png".to_string(),
+                kind: "cover".to_string(),
+            })
+            .expect("upsert image");
+        let mut raw_json = sample_raw_json();
+        raw_json["episodes"]["1"]["text"] = json!("[image](cover.png)\n本文");
+        store
+            .upsert_work(&WorkRecord {
+                site: "narou".to_string(),
+                work_key: "n123".to_string(),
+                title: "Example Title".to_string(),
+                author: "Example Author".to_string(),
+                author_id: None,
+                author_url: None,
+                r#type: "novel".to_string(),
+                serialization: "短編".to_string(),
+                caption: "Example Caption".to_string(),
+                create_date: "2025-01-01T00:00:00Z".to_string(),
+                update_date: "2025-01-01T00:00:00Z".to_string(),
+                raw_json,
+            })
+            .expect("upsert work");
+
+        refresh_image_manifests(&store, data_dir.to_str().unwrap()).expect("refresh manifests");
+
+        let cover: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(images_dir.join("cover.json")).expect("read cover manifest"),
+        )
+        .expect("parse cover manifest");
+        assert_eq!(
+            cover["narou_n123_cover.png"].as_str(),
+            Some("feedfacecafebeef")
         );
 
         fs::remove_dir_all(root).unwrap();
