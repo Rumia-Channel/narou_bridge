@@ -599,21 +599,32 @@ fn render_episode_page(
     let page_title = format!("{} - {}", episode.title, rendered.work.title);
     let nav = render_episode_nav(site, work_key, episode_key, prev, next, host_name);
 
-    let mut paragraph_id = 1usize;
+    let mut preface_paragraph_id = 1usize;
     let introduction_html = render_rich_text(
         &episode.introduction,
         site,
         work_key,
         images,
-        &mut paragraph_id,
+        "Lp",
+        &mut preface_paragraph_id,
     );
-    let text_html = render_rich_text(&episode.text, site, work_key, images, &mut paragraph_id);
+    let mut body_paragraph_id = 1usize;
+    let text_html = render_rich_text(
+        &episode.text,
+        site,
+        work_key,
+        images,
+        "L",
+        &mut body_paragraph_id,
+    );
+    let mut postscript_paragraph_id = 1usize;
     let postscript_html = render_rich_text(
         &episode.postscript,
         site,
         work_key,
         images,
-        &mut paragraph_id,
+        "La",
+        &mut postscript_paragraph_id,
     );
 
     let body = format!(
@@ -677,6 +688,7 @@ fn render_episode_summary_list(
             site,
             work_key,
             images,
+            "p",
             &mut paragraph_id,
         );
         items.push_str(&format!(
@@ -797,6 +809,7 @@ fn render_rich_text(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    id_prefix: &str,
     paragraph_id: &mut usize,
 ) -> String {
     let mut blocks = Vec::new();
@@ -811,6 +824,7 @@ fn render_rich_text(
                     site,
                     work_key,
                     images,
+                    id_prefix,
                     paragraph_id,
                 ));
                 current.clear();
@@ -825,6 +839,7 @@ fn render_rich_text(
                 site,
                 work_key,
                 images,
+                id_prefix,
                 paragraph_id,
             ));
             continue;
@@ -839,6 +854,7 @@ fn render_rich_text(
             site,
             work_key,
             images,
+            id_prefix,
             paragraph_id,
         ));
     }
@@ -851,19 +867,20 @@ fn render_text_block(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    id_prefix: &str,
     paragraph_id: &mut usize,
 ) -> String {
     let mut paragraphs = Vec::new();
-    for paragraph in normalize_newlines(text).split("\n\n") {
-        let paragraph = paragraph.trim_end();
-        if paragraph.is_empty() {
-            continue;
-        }
-        let html = format!(
-            r#"<p id="p{}">{}</p>"#,
-            paragraph_id,
-            render_inline_markup(paragraph, site, work_key, images)
-        );
+    for line in normalize_newlines(text).split('\n') {
+        let line = line.trim_end();
+        let html = if line.is_empty() {
+            format!(r#"<p id="{id_prefix}{paragraph_id}"><br/></p>"#)
+        } else {
+            format!(
+                r#"<p id="{id_prefix}{paragraph_id}">{}</p>"#,
+                render_inline_markup(line, site, work_key, images)
+            )
+        };
         paragraphs.push(html);
         *paragraph_id += 1;
     }
@@ -875,13 +892,19 @@ fn render_markup_line(
     site: &str,
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
+    id_prefix: &str,
     paragraph_id: &mut usize,
 ) -> String {
     if let Some(inner) = line
         .strip_prefix("[image](")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return render_image(inner, images);
+        let result = format!(
+            r#"<p id="{id_prefix}{paragraph_id}">{}</p>"#,
+            render_image(inner, images)
+        );
+        *paragraph_id += 1;
+        return result;
     }
     if let Some(inner) = line
         .strip_prefix("[ruby:<")
@@ -890,8 +913,7 @@ fn render_markup_line(
         if let Some((base, reading)) = inner.split_once(">(") {
             let reading = reading.trim_end_matches(')');
             let result = format!(
-                r#"<p id="p{}"><ruby><rb>{}</rb><rt>{}</rt></ruby></p>"#,
-                paragraph_id,
+                r#"<p id="{id_prefix}{paragraph_id}"><ruby><rb>{}</rb><rt>{}</rt></ruby></p>"#,
                 escape_html(base),
                 escape_html(reading)
             );
@@ -904,8 +926,7 @@ fn render_markup_line(
         .and_then(|s| s.strip_suffix(']'))
     {
         let result = format!(
-            r#"<p id="p{}"><a href="./{}.html">episode {}</a></p>"#,
-            paragraph_id,
+            r#"<p id="{id_prefix}{paragraph_id}"><a href="./{}.html">episode {}</a></p>"#,
             escape_html(target),
             escape_html(target)
         );
@@ -913,8 +934,7 @@ fn render_markup_line(
         return result;
     }
     let result = format!(
-        r#"<p id="p{}">{}</p>"#,
-        paragraph_id,
+        r#"<p id="{id_prefix}{paragraph_id}">{}</p>"#,
         render_inline_markup(line, site, work_key, images)
     );
     *paragraph_id += 1;
