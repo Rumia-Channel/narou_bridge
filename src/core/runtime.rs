@@ -2572,4 +2572,58 @@ mod tests {
             Some("application/json")
         );
     }
+
+    #[tokio::test]
+    async fn static_reader_js_includes_cache_validator_headers() {
+        let root = test_dir("runtime-static-cache-headers");
+        let data_dir = root.join("data");
+        let config = AppConfig {
+            data_dir: data_dir.to_string_lossy().to_string(),
+            cookie_dir: root.join("cookie").to_string_lossy().to_string(),
+            queue_dir: root.join("queue").to_string_lossy().to_string(),
+            pdf_dir: root.join("pdf").to_string_lossy().to_string(),
+            log_dir: root.join("log").to_string_lossy().to_string(),
+            db_path: root.join("narou_bridge.db").to_string_lossy().to_string(),
+            archive_dir: root.join("archive").to_string_lossy().to_string(),
+            bind_addr: "127.0.0.1:0".to_string(),
+            host_name: String::new(),
+            auto_update: false,
+            auto_update_interval: 0,
+            legacy_root: None,
+        };
+        ensure_runtime_dirs(&config).await.expect("runtime dirs");
+        write_static_bootstrap(&config, &[])
+            .await
+            .expect("static bootstrap");
+
+        let store = Store::open_in_memory().expect("store");
+        let state = RuntimeState {
+            config: config.clone(),
+            store: Arc::new(Mutex::new(store)),
+            registry: Arc::new(SiteRegistry::new(Vec::new())),
+            worker_notify: Arc::new(Notify::new()),
+        };
+        let app = build_app(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let response = reqwest::get(format!("http://{addr}/script/reader.js"))
+            .await
+            .expect("fetch reader.js");
+
+        assert!(response.status().is_success());
+        let headers = response.headers();
+        assert!(
+            headers.contains_key(header::ETAG) || headers.contains_key(header::LAST_MODIFIED),
+            "expected ETag or Last-Modified, got headers: {headers:?}"
+        );
+
+        server.abort();
+        stdfs::remove_dir_all(root).unwrap();
+    }
 }
