@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const NOVEL_PAGE_TEMPLATE: &str = include_str!("../../templates/novel_page.html");
+const SITE_INDEX_TEMPLATE: &str = include_str!("../../templates/site_index.html");
 
 #[derive(Debug, Clone, Deserialize)]
 struct RawWork {
@@ -559,93 +560,11 @@ fn build_site_index_json(works: &[RenderedWork]) -> serde_json::Value {
 
 fn render_site_index(
     site: &str,
-    works: &[RenderedWork],
-    host_name: &str,
-    images: &HashMap<String, ImageAsset>,
+    _works: &[RenderedWork],
+    _host_name: &str,
+    _images: &HashMap<String, ImageAsset>,
 ) -> String {
-    let mut cards = String::new();
-    for rendered in works {
-        let work = &rendered.work;
-        let episode_count = rendered.episodes.len();
-        let tag_list = render_tag_list(&work.tags);
-        cards.push_str(&format!(
-            r#"<article class="card">
-  <h2><a href="./{work_key}/index.html">{title}</a></h2>
-  <p class="meta">{author} · {serialization} · {episode_count} 話</p>
-  <p class="meta">更新: {update_date}</p>
-  <p class="summary">{caption}</p>
-  {tag_list}
-  <p class="links">
-    <a href="./{work_key}/index.html">作品ページ</a>
-    <a href="./{work_key}/info/index.html">詳細</a>
-    <a href="./{work_key}/raw/raw.json">raw.json</a>
-    <a href="{reader_url}">reader</a>
-  </p>
-</article>"#,
-            work_key = escape_html(&rendered.work_key),
-            title = escape_html(&work.title),
-            author = escape_html(&work.author),
-            serialization = escape_html(&work.serialization),
-            episode_count = episode_count,
-            update_date = escape_html(&work.update_date),
-            caption = escape_html(&work.caption),
-            tag_list = tag_list,
-            reader_url = escape_html(&reader_url(host_name, site, &rendered.work_key)),
-        ));
-    }
-
-    let canonical_url = format_canonical_url(host_name, &format!("/{}/", site));
-    let og_image = works
-        .iter()
-        .find_map(|rendered| {
-            let path = get_cover_image_url(site, &rendered.work_key, images);
-            if path.is_empty() { None } else { Some(path) }
-        })
-        .unwrap_or_default();
-    let og_tags = build_og_tags(
-        &format!("{site} - Narou Bridge"),
-        "Web小説・漫画の管理・閲覧システム",
-        "website",
-        &canonical_url,
-        &format_optional_url(host_name, &og_image),
-    );
-
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{site} index</title>
-  {og_tags}
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 0; background: #f6f7fb; color: #1f2933; }}
-    header {{ padding: 24px 20px; background: #111827; color: #fff; }}
-    main {{ max-width: 1100px; margin: 0 auto; padding: 20px; }}
-    .card {{ background: #fff; border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-    .card h2 {{ margin: 0 0 8px; font-size: 1.05rem; }}
-    .card a {{ color: #2563eb; text-decoration: none; }}
-    .meta {{ margin: 0 0 8px; color: #6b7280; font-size: .92rem; }}
-    .summary {{ margin: 0 0 10px; line-height: 1.7; white-space: pre-wrap; }}
-    .tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }}
-    .tag {{ background: #e5eefc; color: #1d4ed8; border-radius: 999px; padding: 2px 10px; font-size: .82rem; }}
-    .links {{ display: flex; flex-wrap: wrap; gap: 12px; margin: 0; }}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>{site}</h1>
-    <p>{count} works · <a href="/">home</a></p>
-  </header>
-  <main>
-    {cards}
-  </main>
-</body>
-</html>"#,
-        site = escape_html(site),
-        count = works.len(),
-        cards = cards
-    )
+    SITE_INDEX_TEMPLATE.replace("{site_name}", &escape_html(site))
 }
 
 fn render_work_index(
