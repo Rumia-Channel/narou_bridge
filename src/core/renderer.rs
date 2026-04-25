@@ -393,20 +393,140 @@ fn write_site_index(
     host_name: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> Result<()> {
-    let index_entries: BTreeMap<String, SiteIndexEntry> = works
-        .iter()
-        .map(|rendered| (rendered.work_key.clone(), rendered.index_entry.clone()))
-        .collect();
-
     fs::write(
         site_dir.join("index.json"),
-        serde_json::to_string_pretty(&index_entries)?,
+        serde_json::to_string_pretty(&build_site_index_json(works))?,
     )?;
     fs::write(
         site_dir.join("index.html"),
         render_site_index(site, works, host_name, images),
     )?;
     Ok(())
+}
+
+fn build_site_index_json(works: &[RenderedWork]) -> serde_json::Value {
+    let mut works_json = serde_json::Map::new();
+    for rendered in works {
+        let mut work_json = serde_json::Map::new();
+        work_json.insert(
+            "title".to_string(),
+            serde_json::Value::String(rendered.index_entry.title.clone()),
+        );
+        work_json.insert(
+            "author".to_string(),
+            serde_json::Value::String(rendered.index_entry.author.clone()),
+        );
+        work_json.insert(
+            "author_id".to_string(),
+            rendered
+                .index_entry
+                .author_id
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        work_json.insert(
+            "author_url".to_string(),
+            rendered
+                .index_entry
+                .author_url
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        work_json.insert(
+            "type".to_string(),
+            serde_json::Value::String(rendered.index_entry.r#type.clone()),
+        );
+        work_json.insert(
+            "serialization".to_string(),
+            serde_json::Value::String(rendered.index_entry.serialization.clone()),
+        );
+        work_json.insert(
+            "tags".to_string(),
+            serde_json::Value::Array(
+                rendered
+                    .index_entry
+                    .tags
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+        work_json.insert(
+            "all_tags".to_string(),
+            serde_json::Value::Array(
+                rendered
+                    .index_entry
+                    .all_tags
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+        work_json.insert(
+            "caption".to_string(),
+            serde_json::Value::String(rendered.index_entry.caption.clone()),
+        );
+        work_json.insert(
+            "create_date".to_string(),
+            serde_json::Value::String(rendered.index_entry.create_date.clone()),
+        );
+        work_json.insert(
+            "update_date".to_string(),
+            serde_json::Value::String(rendered.index_entry.update_date.clone()),
+        );
+
+        let mut episodes_json = serde_json::Map::new();
+        for (episode_key, episode) in &rendered.episodes {
+            let mut episode_json = serde_json::Map::new();
+            episode_json.insert(
+                "title".to_string(),
+                serde_json::Value::String(episode.title.clone()),
+            );
+            episode_json.insert(
+                "id".to_string(),
+                serde_json::Value::String(episode.id.clone()),
+            );
+            episode_json.insert(
+                "caption".to_string(),
+                serde_json::Value::String(episode.introduction.clone()),
+            );
+            episode_json.insert(
+                "tags".to_string(),
+                serde_json::Value::Array(
+                    episode
+                        .tags
+                        .iter()
+                        .cloned()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+            episode_json.insert(
+                "chapter".to_string(),
+                serde_json::Value::String(episode.chapter.clone().unwrap_or_default()),
+            );
+            episode_json.insert(
+                "updateDate".to_string(),
+                serde_json::Value::String(episode.update_date.clone()),
+            );
+            episodes_json.insert(episode_key.clone(), serde_json::Value::Object(episode_json));
+        }
+        work_json.insert(
+            "episodes_data".to_string(),
+            serde_json::Value::Object(episodes_json),
+        );
+
+        works_json.insert(
+            rendered.work_key.clone(),
+            serde_json::Value::Object(work_json),
+        );
+    }
+
+    serde_json::Value::Object(works_json)
 }
 
 fn render_site_index(
@@ -1668,5 +1788,29 @@ mod tests {
 
         assert!(html.contains(r#"<div class="p-eplist__chapter-title">第一章</div>"#));
         assert!(html.contains(r#"<div class="p-eplist__chapter-title">第二章</div>"#));
+    }
+
+    #[test]
+    fn build_site_index_json_includes_episode_chapter_and_update_date() {
+        let mut raw = sample_raw_json();
+        raw["episodes"]["1"]["chapter"] = json!("第一章");
+        raw["episodes"]["1"]["updateDate"] = json!("2025-01-02T00:00:00Z");
+        let rendered = build_rendered_work(
+            parse_raw_work(&raw).expect("parse raw"),
+            "narou".to_string(),
+            "n123".to_string(),
+            raw,
+        );
+
+        let value = build_site_index_json(&[rendered]);
+
+        assert_eq!(
+            value["n123"]["episodes_data"]["1"]["chapter"].as_str(),
+            Some("第一章")
+        );
+        assert_eq!(
+            value["n123"]["episodes_data"]["1"]["updateDate"].as_str(),
+            Some("2025-01-02T00:00:00Z")
+        );
     }
 }
