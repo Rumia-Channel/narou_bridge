@@ -933,7 +933,7 @@ fn render_markup_line(
         if let Some((base, reading)) = inner.split_once(">(") {
             let reading = reading.trim_end_matches(')');
             let result = format!(
-                r#"<p id="{id_prefix}{paragraph_id}"><ruby><rb>{}</rb><rt>{}</rt></ruby></p>"#,
+                r#"<p id="{id_prefix}{paragraph_id}"><ruby>{}<rp>(</rp><rt>{}</rt><rp>)</rp></ruby></p>"#,
                 escape_html(base),
                 escape_html(reading)
             );
@@ -987,7 +987,7 @@ fn render_inline_markup(
                 if let Some(reading_end) = rest.find(")]") {
                     let reading = &rest[..reading_end];
                     out.push_str(&format!(
-                        "<ruby><rb>{}</rb><rt>{}</rt></ruby>",
+                        "<ruby>{}<rp>(</rp><rt>{}</rt><rp>)</rp></ruby>",
                         escape_html(base),
                         escape_html(reading)
                     ));
@@ -1487,5 +1487,17 @@ mod tests {
         let images: HashMap<String, ImageAsset> = HashMap::new();
         let html = render_image("not-an-image", &images, "../../images");
         assert_eq!(html, "<p><code>not-an-image</code></p>");
+    }
+
+    #[test]
+    fn render_inline_markup_uses_canonical_ruby_markup() {
+        let html = render_inline_markup(
+            "[ruby:<漢字>(かな)]",
+            "narou",
+            "n123",
+            &HashMap::new(),
+            "../../images",
+        );
+        assert_eq!(html, "<ruby>漢字<rp>(</rp><rt>かな</rt><rp>)</rp></ruby>");
     }
 }
