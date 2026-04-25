@@ -139,7 +139,7 @@ pub fn render_site_from_store(
         rendered.push(render_work(&site_dir, &work, host_name, &image_assets)?);
     }
 
-    write_site_index(&site_dir, site, &rendered, host_name)?;
+    write_site_index(&site_dir, site, &rendered, host_name, &image_assets)?;
     update_cover_json(store, site, &site_dir)?;
     Ok(())
 }
@@ -200,7 +200,7 @@ pub fn repair_site_from_raw(
         );
     }
 
-    write_site_index(&site_dir, site, &rendered, host_name)?;
+    write_site_index(&site_dir, site, &rendered, host_name, &image_assets)?;
     update_cover_json(store, site, &site_dir)?;
     Ok(())
 }
@@ -274,7 +274,13 @@ fn render_work_from_raw(
     )?;
     fs::write(
         info_dir.join("index.html"),
-        render_work_info(&rendered.site, &rendered.work_key, &rendered, host_name),
+        render_work_info(
+            &rendered.site,
+            &rendered.work_key,
+            &rendered,
+            host_name,
+            images,
+        ),
     )?;
 
     for (index, (episode_key, episode)) in rendered.episodes.iter().enumerate() {
@@ -361,6 +367,7 @@ fn write_site_index(
     site: &str,
     works: &[RenderedWork],
     host_name: &str,
+    images: &HashMap<String, ImageAsset>,
 ) -> Result<()> {
     let index_entries: BTreeMap<String, SiteIndexEntry> = works
         .iter()
@@ -373,12 +380,17 @@ fn write_site_index(
     )?;
     fs::write(
         site_dir.join("index.html"),
-        render_site_index(site, works, host_name),
+        render_site_index(site, works, host_name, images),
     )?;
     Ok(())
 }
 
-fn render_site_index(site: &str, works: &[RenderedWork], host_name: &str) -> String {
+fn render_site_index(
+    site: &str,
+    works: &[RenderedWork],
+    host_name: &str,
+    images: &HashMap<String, ImageAsset>,
+) -> String {
     let mut cards = String::new();
     for rendered in works {
         let work = &rendered.work;
@@ -411,12 +423,19 @@ fn render_site_index(site: &str, works: &[RenderedWork], host_name: &str) -> Str
     }
 
     let canonical_url = format_canonical_url(host_name, &format!("/{}/", site));
+    let og_image = works
+        .iter()
+        .find_map(|rendered| {
+            let path = get_cover_image_url(site, &rendered.work_key, images);
+            if path.is_empty() { None } else { Some(path) }
+        })
+        .unwrap_or_default();
     let og_tags = build_og_tags(
         &format!("{site} - Narou Bridge"),
         "Web小説・漫画の管理・閲覧システム",
         "website",
         &canonical_url,
-        "",
+        &format_optional_url(host_name, &og_image),
     );
 
     format!(
@@ -509,7 +528,13 @@ fn render_work_index(
 
     let canonical_url =
         format_canonical_url(host_name, &format!("/{}/{}/index.html", site, work_key));
-    let og_tags = build_og_tags(&page_title, &work.caption, "article", &canonical_url, "");
+    let og_tags = build_og_tags(
+        &page_title,
+        &work.caption,
+        "article",
+        &canonical_url,
+        &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
+    );
 
     render_page_shell_with_ogp(&page_title, &work.title, &nav, &body, &og_tags)
 }
@@ -519,6 +544,7 @@ fn render_work_info(
     work_key: &str,
     rendered: &RenderedWork,
     host_name: &str,
+    images: &HashMap<String, ImageAsset>,
 ) -> String {
     let work = &rendered.work;
     let first_episode = rendered
@@ -542,7 +568,13 @@ fn render_work_info(
         host_name,
         &format!("/{}/{}/info/index.html", site, work_key),
     );
-    let og_tags = build_og_tags(&page_title, &work.caption, "article", &canonical_url, "");
+    let og_tags = build_og_tags(
+        &page_title,
+        &work.caption,
+        "article",
+        &canonical_url,
+        &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
+    );
 
     render_page_shell_with_ogp(
         &page_title,
@@ -644,7 +676,7 @@ fn render_episode_page(
         &episode.introduction,
         "article",
         &canonical_url,
-        "",
+        &format_optional_url(host_name, &get_cover_image_url(site, work_key, images)),
     );
 
     render_page_shell_with_ogp(&page_title, &episode.title, &nav, &body, &og_tags)
@@ -1228,6 +1260,10 @@ fn build_og_tags(title: &str, description: &str, og_type: &str, url: &str, image
 
     if !url.is_empty() {
         tags.push_str(&format!(
+            "  <link rel=\"canonical\" href=\"{}\">\n",
+            escape_html_attr(url)
+        ));
+        tags.push_str(&format!(
             "  <meta property=\"og:url\" content=\"{}\">\n",
             escape_html_attr(url)
         ));
@@ -1273,12 +1309,23 @@ fn format_canonical_url(host_name: &str, path: &str) -> String {
     }
 }
 
-fn get_cover_image_url(
-    _site: &str,
-    _work_key: &str,
-    images: &HashMap<String, ImageAsset>,
-) -> String {
-    // Try to find a cover image
+fn format_optional_url(host_name: &str, path: &str) -> String {
+    if path.is_empty() {
+        String::new()
+    } else {
+        format_canonical_url(host_name, path)
+    }
+}
+
+fn get_cover_image_url(site: &str, work_key: &str, images: &HashMap<String, ImageAsset>) -> String {
+    let preferred_prefix = format!("{site}_{work_key}");
+    for (logical_name, image) in images.iter() {
+        if logical_name.contains(&preferred_prefix)
+            && (logical_name.contains("cover") || logical_name.contains("Cover"))
+        {
+            return format!("/images/{}.{}", image.hash, image.ext);
+        }
+    }
     for (logical_name, image) in images.iter() {
         if logical_name.contains("cover") || logical_name.contains("Cover") {
             return format!("/images/{}.{}", image.hash, image.ext);
@@ -1541,11 +1588,45 @@ mod tests {
             raw,
         );
 
-        let html = render_work_info("narou", "n123", &rendered, "");
+        let html = render_work_info("narou", "n123", &rendered, "", &HashMap::new());
 
         assert!(html.contains("<table>"));
         assert!(html.contains("あらすじ"));
         assert!(!html.contains("<pre>"));
         assert!(!html.contains("version:"));
+    }
+
+    #[test]
+    fn render_work_index_includes_canonical_and_og_image() {
+        let raw = sample_raw_json();
+        let rendered = build_rendered_work(
+            parse_raw_work(&raw).expect("parse raw"),
+            "narou".to_string(),
+            "n123".to_string(),
+            raw,
+        );
+        let mut images = HashMap::new();
+        images.insert(
+            "narou_n123_cover.jpg".to_string(),
+            ImageAsset {
+                hash: "coverhash".to_string(),
+                ext: "jpg".to_string(),
+            },
+        );
+
+        let html = render_work_index(
+            "narou",
+            "n123",
+            &rendered,
+            "https://example.invalid",
+            &images,
+        );
+
+        assert!(html.contains(
+            r#"<link rel="canonical" href="https://example.invalid/narou/n123/index.html">"#
+        ));
+        assert!(html.contains(
+            r#"<meta property="og:image" content="https://example.invalid/images/coverhash.jpg">"#
+        ));
     }
 }
