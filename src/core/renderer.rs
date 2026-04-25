@@ -1194,18 +1194,28 @@ fn split_hashed_name(name: &str) -> Option<(&str, &str)> {
     if stem.is_empty() || ext.is_empty() {
         return None;
     }
-    if stem.len() < 10
-        || !stem
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        || stem.chars().all(|c| c.is_ascii_alphabetic())
-    {
+    if !looks_like_image_hash(stem) {
         return None;
     }
     if !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
         return None;
     }
     Some((stem, ext))
+}
+
+fn looks_like_image_hash(hash: &str) -> bool {
+    looks_like_sha3_base64url(hash) || looks_like_legacy_hex_hash(hash)
+}
+
+fn looks_like_sha3_base64url(hash: &str) -> bool {
+    hash.len() == 43
+        && hash
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+fn looks_like_legacy_hex_hash(hash: &str) -> bool {
+    hash.len() >= 10 && hash.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn parse_raw_work(value: &serde_json::Value) -> Result<RawWork> {
@@ -1789,7 +1799,7 @@ mod tests {
     }
 
     #[test]
-    fn render_image_resolves_hashed_filename() {
+    fn render_image_resolves_legacy_hex_hashed_filename() {
         let mut images = HashMap::new();
         images.insert(
             "pixiv_n123_cover.jpg".to_string(),
@@ -1805,19 +1815,20 @@ mod tests {
 
     #[test]
     fn render_image_resolves_base64url_style_hashed_filename() {
+        let hashed_name = "0123456789012345678901234567890123456789012";
         let mut images = HashMap::new();
         images.insert(
             "pixiv_n123_page1.jpg".to_string(),
             ImageAsset {
-                hash: "QDuicAbcdef_123-XYZ".to_string(),
+                hash: hashed_name.to_string(),
                 ext: "jpg".to_string(),
             },
         );
 
-        let html = render_image("QDuicAbcdef_123-XYZ.jpg", &images, "../../images");
+        let html = render_image(&format!("{hashed_name}.jpg"), &images, "../../images");
         assert_eq!(
             html,
-            r#"<img src="../../images/QDuicAbcdef_123-XYZ.jpg" alt="">"#
+            format!(r#"<img src="../../images/{hashed_name}.jpg" alt="">"#)
         );
     }
 

@@ -607,15 +607,25 @@ fn parse_markup_image_name(logical_name: &str) -> Option<(String, String)> {
     let path = Path::new(logical_name);
     let ext = path.extension()?.to_str()?.to_string();
     let hash = path.file_stem()?.to_str()?.to_string();
-    if hash.len() < 10
-        || !hash
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-        || hash.chars().all(|ch| ch.is_ascii_alphabetic())
-    {
+    if !looks_like_image_hash(&hash) {
         return None;
     }
     Some((hash, ext))
+}
+
+fn looks_like_image_hash(hash: &str) -> bool {
+    looks_like_sha3_base64url(hash) || looks_like_legacy_hex_hash(hash)
+}
+
+fn looks_like_sha3_base64url(hash: &str) -> bool {
+    hash.len() == 43
+        && hash
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+fn looks_like_legacy_hex_hash(hash: &str) -> bool {
+    hash.len() >= 10 && hash.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 // ---------------------------------------------------------------------------
