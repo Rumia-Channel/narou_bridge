@@ -1,3 +1,6 @@
+use crate::core::account::{
+    rewrite_cookie_site_mirror as rewrite_cookie_site_mirror_impl, validate_account_file,
+};
 use crate::core::atomic_io::atomic_write;
 use crate::core::migration::{MigrationPlan, migrate_legacy_tree};
 use crate::core::model::{
@@ -97,21 +100,8 @@ struct PendingUpload {
 }
 
 pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Result<()> {
-    let state = RuntimeState {
-        config: config.clone(),
-        store: Arc::new(Mutex::new(store)),
-        registry: Arc::new(registry),
-        worker_notify: Arc::new(Notify::new()),
-    };
-
-    ensure_runtime_dirs(&state.config).await?;
-    write_static_bootstrap(&state.config, &state.registry.site_names()).await?;
-    recover_queued_runtime_state(&state).await?;
-    sync_queue_state(&state).await?;
-    tokio::spawn(worker_loop(state.clone()));
-    if state.config.auto_update {
-        tokio::spawn(auto_update_loop(state.clone()));
-    }
+    let state = build_runtime_state(config, store, registry).await?;
+    start_background_tasks(&state);
 
     let app = build_app(state.clone());
 
@@ -131,12 +121,43 @@ pub async fn run(config: AppConfig, store: Store, registry: SiteRegistry) -> Res
     Ok(())
 }
 
-fn build_app(state: RuntimeState) -> Router {
+pub async fn build_runtime_state(
+    config: AppConfig,
+    store: Store,
+    registry: SiteRegistry,
+) -> Result<RuntimeState> {
+    let state = RuntimeState {
+        config,
+        store: Arc::new(Mutex::new(store)),
+        registry: Arc::new(registry),
+        worker_notify: Arc::new(Notify::new()),
+    };
+    prepare_runtime_state(&state).await?;
+    Ok(state)
+}
+
+async fn prepare_runtime_state(state: &RuntimeState) -> Result<()> {
+    ensure_runtime_dirs(&state.config).await?;
+    write_static_bootstrap(&state.config, &state.registry.site_names()).await?;
+    recover_queued_runtime_state(state).await?;
+    sync_queue_state(state).await?;
+    Ok(())
+}
+
+fn start_background_tasks(state: &RuntimeState) {
+    tokio::spawn(worker_loop(state.clone()));
+    if state.config.auto_update {
+        tokio::spawn(auto_update_loop(state.clone()));
+    }
+}
+
+pub fn build_app(state: RuntimeState) -> Router {
     let data_dir = state.config.data_dir_path();
     let static_files = ServeDir::new(&data_dir).append_index_html_on_directories(true);
 
     Router::new()
         .route("/health", get(health))
+        .route("/api/health", get(health))
         .route("/api/tasks", get(list_tasks))
         .route("/api/works", get(list_works_query))
         .route(
@@ -168,7 +189,7 @@ fn build_app(state: RuntimeState) -> Router {
 }
 
 async fn health() -> Json<Value> {
-    Json(json!({"status": "ok"}))
+    Json(json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}))
 }
 
 async fn list_tasks(State(state): State<RuntimeState>) -> impl IntoResponse {
@@ -224,6 +245,9 @@ async fn upload_account_query(
             );
         }
     };
+    if let Err(err) = validate_account_file(&site, &account_json) {
+        return create_error(StatusCode::BAD_REQUEST, err.to_string());
+    }
     let preferred_name = payload
         .name
         .as_deref()
@@ -1674,36 +1698,7 @@ fn rewrite_cookie_site_mirror(
     site: &str,
     accounts: &[AccountRecord],
 ) -> Result<()> {
-    let dir = config.cookie_dir_path(site);
-    stdfs::create_dir_all(&dir)?;
-    let mut desired_files = BTreeMap::new();
-    for account in accounts {
-        let json = serde_json::to_vec_pretty(&account.account)?;
-        desired_files.insert(account_file_name(&account.name), json.clone());
-        if account.active {
-            desired_files.insert("login.json".to_string(), json);
-        }
-    }
-
-    let existing_json_files = stdfs::read_dir(&dir)?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let path = entry.path();
-            (entry.file_type().ok()?.is_file()
-                && path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-            .then(|| entry.file_name().to_string_lossy().to_string())
-        })
-        .collect::<HashSet<_>>();
-
-    for (file_name, payload) in &desired_files {
-        atomic_write(&dir.join(file_name), payload.as_slice())?;
-    }
-
-    let desired_names = desired_files.keys().cloned().collect::<HashSet<_>>();
-    for stale_file in existing_json_files.difference(&desired_names) {
-        stdfs::remove_file(dir.join(stale_file))?;
-    }
-    Ok(())
+    rewrite_cookie_site_mirror_impl(Path::new(&config.cookie_dir), site, accounts)
 }
 
 fn random_account_name() -> String {
@@ -1802,9 +1797,11 @@ async fn claim_next_task(state: &RuntimeState) -> Result<Option<TaskRecord>> {
 mod tests {
     use super::*;
     use axum::body::Body;
+    use axum::http::Request as HttpRequest;
     use std::collections::BTreeMap;
     use std::io::{Cursor, Write};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tower::ServiceExt;
 
     fn test_dir(name: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -1833,6 +1830,32 @@ mod tests {
             active,
             updated_at: "2025-01-01T00:00:00Z".to_string(),
         }
+    }
+
+    fn smoke_test_config(root: &Path) -> AppConfig {
+        AppConfig {
+            data_dir: root.join("data").to_string_lossy().to_string(),
+            cookie_dir: root.join("cookie").to_string_lossy().to_string(),
+            queue_dir: root.join("queue").to_string_lossy().to_string(),
+            pdf_dir: root.join("pdf").to_string_lossy().to_string(),
+            log_dir: root.join("log").to_string_lossy().to_string(),
+            db_path: root.join("narou_bridge.db").to_string_lossy().to_string(),
+            archive_dir: root.join("archive").to_string_lossy().to_string(),
+            bind_addr: "127.0.0.1:0".to_string(),
+            host_name: "http://127.0.0.1:0".to_string(),
+            auto_update: false,
+            auto_update_interval: 0,
+            legacy_root: None,
+        }
+    }
+
+    async fn smoke_test_app(root: &Path) -> Router {
+        let config = smoke_test_config(root);
+        let store = Store::open_in_memory().expect("store");
+        let state = build_runtime_state(config, store, crate::core::registry::build_registry())
+            .await
+            .expect("runtime state");
+        build_app(state)
     }
 
     fn zip_archive(entries: &[(&str, &str)]) -> zip::ZipArchive<Cursor<Vec<u8>>> {
@@ -2571,6 +2594,66 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("application/json")
         );
+    }
+
+    #[tokio::test]
+    async fn api_health_returns_status_and_version() {
+        let root = test_dir("runtime-health-smoke");
+        let app = smoke_test_app(&root).await;
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let parsed: Value = serde_json::from_slice(&body).expect("json body");
+        assert_eq!(parsed.get("status").and_then(Value::as_str), Some("ok"));
+        assert_eq!(
+            parsed.get("version").and_then(Value::as_str),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+
+        stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn site_index_smoke_returns_bootstrapped_html() {
+        let root = test_dir("runtime-site-index-smoke");
+        let app = smoke_test_app(&root).await;
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/pixiv/index.html")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let html = String::from_utf8(body.to_vec()).expect("utf-8 html");
+        assert!(html.contains("pixiv"), "unexpected html: {html}");
+
+        stdfs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
