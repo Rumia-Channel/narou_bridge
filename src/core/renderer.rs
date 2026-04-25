@@ -12,6 +12,7 @@ const NOVEL_PAGE_TEMPLATE: &str = include_str!("../../templates/novel_page.html"
 const SITE_INDEX_TEMPLATE: &str = include_str!("../../templates/site_index.html");
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct RawWork {
     #[serde(default)]
     version: i64,
@@ -58,6 +59,7 @@ struct RawWork {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct RawEpisode {
     #[serde(default)]
     id: String,
@@ -88,6 +90,7 @@ struct ImageAsset {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct RenderedWork {
     site: String,
     work_key: String,
