@@ -727,8 +727,8 @@ fn parse_status(value: &str) -> TaskStatus {
 
 fn account_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRecord> {
     let account_json: String = row.get(3)?;
-    let account: crate::core::model::AccountFile = serde_json::from_str(&account_json)
-        .map_err(|e| {
+    let account: crate::core::model::AccountFile =
+        serde_json::from_str(&account_json).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
         })?;
     Ok(AccountRecord {
@@ -1017,5 +1017,45 @@ mod tests {
                 .has_incomplete_task("update", "all")
                 .expect("completed task should not match")
         );
+    }
+
+    #[test]
+    fn malformed_site_document_json_is_not_silently_overwritten_with_default() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .conn
+            .execute(
+                r#"INSERT INTO site_documents (site, key, document_json, updated_at)
+                   VALUES (?1, ?2, ?3, ?4)"#,
+                params![
+                    "pixiv",
+                    "tracked_users/123/config",
+                    "{not valid json",
+                    "2025-01-01T00:00:00Z",
+                ],
+            )
+            .expect("insert malformed row");
+
+        let read_result = store.get_site_document_record("pixiv", "tracked_users/123/config");
+        assert!(
+            read_result.is_err(),
+            "reading malformed JSON row should propagate an error"
+        );
+
+        let list_result = store.list_site_document_records("pixiv", None);
+        assert!(
+            list_result.is_err(),
+            "listing rows containing malformed JSON should propagate an error"
+        );
+
+        let stored: String = store
+            .conn
+            .query_row(
+                "SELECT document_json FROM site_documents WHERE site = ?1 AND key = ?2",
+                params!["pixiv", "tracked_users/123/config"],
+                |row| row.get(0),
+            )
+            .expect("row still exists");
+        assert_eq!(stored, "{not valid json");
     }
 }
