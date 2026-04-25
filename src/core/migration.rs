@@ -335,7 +335,7 @@ fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
         }
     }
 
-    for ext in ["jpg", "jpeg", "png", "gif", "apng", "webp"] {
+    for ext in supported_image_extensions() {
         let dir = image_dir.join(ext);
         if !dir.exists() {
             continue;
@@ -350,6 +350,35 @@ fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
             let record = ImageRecord {
                 logical_name,
                 hash: name.trim_end_matches(&format!(".{ext}")).to_string(),
+                ext: ext.to_string(),
+                kind: "image".to_string(),
+            };
+            store.upsert_image(&record)?;
+            count += 1;
+        }
+    }
+
+    if image_dir.exists() {
+        for entry in fs::read_dir(&image_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if !supported_image_extensions().contains(&ext) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let record = ImageRecord {
+                logical_name: name.clone(),
+                hash: path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or_default()
+                    .to_string(),
                 ext: ext.to_string(),
                 kind: "image".to_string(),
             };
@@ -591,6 +620,12 @@ fn normalize_pixiv_illust_ids(value: &Value) -> Vec<String> {
     ids
 }
 
+fn supported_image_extensions() -> &'static [&'static str] {
+    &[
+        "jpg", "jpeg", "png", "gif", "apng", "webp", "bmp", "avif", "svg",
+    ]
+}
+
 fn load_json_or_default<T>(path: &Path) -> Result<T>
 where
     T: serde::de::DeserializeOwned + Default,
@@ -662,6 +697,28 @@ mod tests {
         let works = store.list_works(Some("pixiv")).expect("list works");
         assert_eq!(works.len(), 1);
         assert_eq!(works[0].work_key, "n123");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrate_images_imports_extension_directories_and_flat_files() {
+        let root = test_dir("migration-images-layouts");
+        let image_dir = root.join("data").join("images");
+        fs::create_dir_all(image_dir.join("png")).unwrap();
+        fs::write(image_dir.join("png").join("abc.png"), b"png").unwrap();
+        fs::write(image_dir.join("def.webp"), b"webp").unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        let migrated = migrate_images(&store, &root).expect("migrate images");
+
+        assert_eq!(migrated, 2);
+        let images = store.list_images().expect("list images");
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].logical_name, "abc.png");
+        assert_eq!(images[0].hash, "abc");
+        assert_eq!(images[1].logical_name, "def.webp");
+        assert_eq!(images[1].hash, "def");
 
         fs::remove_dir_all(root).unwrap();
     }
