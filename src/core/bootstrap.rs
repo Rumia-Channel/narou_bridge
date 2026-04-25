@@ -14,16 +14,21 @@ pub fn load_app_config(repo_root: &Path) -> Result<AppConfig> {
         .join(RUNTIME_SETTING_FILE);
     let source_setting_path = repo_root.join(ROOT_SETTING_FILE);
 
-    let source_path = if source_setting_path.exists() {
-        ensure_runtime_setting_copy(&source_setting_path, &runtime_setting_path)?;
-        source_setting_path
-    } else if runtime_setting_path.exists() {
-        runtime_setting_path.clone()
-    } else {
-        bail!("missing setting.ini at {}", source_setting_path.display());
-    };
+    // Python 版互換: 正本は `setting/setting.ini`。ルート `setting.ini` は初回起動時の
+    // テンプレートとしてのみ使い、コピー後は `setting/setting.ini` のみを読み込む。
+    if !runtime_setting_path.exists() {
+        if source_setting_path.exists() {
+            ensure_runtime_setting_copy(&source_setting_path, &runtime_setting_path)?;
+        } else {
+            bail!(
+                "missing setting.ini at {} or {}",
+                source_setting_path.display(),
+                runtime_setting_path.display()
+            );
+        }
+    }
 
-    let document = IniDocument::from_file(&source_path)?;
+    let document = IniDocument::from_file(&runtime_setting_path)?;
     Ok(build_app_config(repo_root, &document))
 }
 
