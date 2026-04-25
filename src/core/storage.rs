@@ -3,12 +3,15 @@ use crate::core::model::{
     TaskState, TaskStatus, WorkRecord,
 };
 use anyhow::{Context, Result, anyhow};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
+use tracing::error;
 
 pub struct Store {
     inner: Arc<StoreInner>,
@@ -17,9 +20,24 @@ pub struct Store {
 struct StoreInner {
     conn: Mutex<Connection>,
     in_memory: bool,
+    failed_tasks: Mutex<HashMap<i64, FailedTaskState>>,
+    last_stale_recovery: Mutex<Option<Instant>>,
+    #[cfg(test)]
+    mark_task_status_failures: Mutex<usize>,
 }
 
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const MARK_TASK_STATUS_RETRY_ATTEMPTS: usize = 5;
+const MARK_TASK_STATUS_RETRY_DELAY: Duration = Duration::from_millis(100);
+const STALE_RUNNING_THRESHOLD: ChronoDuration = ChronoDuration::hours(1);
+const STALE_RUNNING_RECOVERY_INTERVAL: Duration = Duration::from_secs(60);
+const STALE_RUNNING_ERROR: &str = "worker recovered stale running task";
+
+#[derive(Clone)]
+struct FailedTaskState {
+    error: Option<String>,
+    updated_at: String,
+}
 
 fn store_cache() -> &'static Mutex<HashMap<PathBuf, Arc<StoreInner>>> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<StoreInner>>>> = OnceLock::new();
@@ -54,6 +72,10 @@ impl Store {
             inner: Arc::new(StoreInner {
                 conn: Mutex::new(conn),
                 in_memory,
+                failed_tasks: Mutex::new(HashMap::new()),
+                last_stale_recovery: Mutex::new(None),
+                #[cfg(test)]
+                mark_task_status_failures: Mutex::new(0),
             }),
         };
         store.init_schema()?;
@@ -98,7 +120,8 @@ impl Store {
                     status TEXT NOT NULL,
                     error TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS accounts (
@@ -151,15 +174,184 @@ impl Store {
                 );
             "#,
             )?;
+            ensure_column_exists(conn, "tasks", "started_at", "TEXT")?;
             Ok(())
         })
+    }
+
+    fn persist_task_status(
+        &self,
+        task_id: i64,
+        status: TaskStatus,
+        error: Option<String>,
+        updated_at: &str,
+    ) -> Result<()> {
+        self.maybe_fail_mark_task_status()?;
+        self.with_conn(|conn| {
+            let changed = conn.execute(
+                r#"UPDATE tasks
+                   SET status = ?1,
+                       error = ?2,
+                       updated_at = ?3,
+                       started_at = CASE
+                           WHEN ?1 = 'running' THEN COALESCE(started_at, ?3)
+                           WHEN ?1 = 'queued' THEN NULL
+                           ELSE started_at
+                       END
+                   WHERE id = ?4"#,
+                params![status.to_string(), error, updated_at, task_id],
+            )?;
+            if changed == 0 {
+                anyhow::bail!("task {task_id} not found");
+            }
+            Ok(())
+        })
+    }
+
+    fn clear_failed_task_state(&self, task_id: i64) {
+        if let Ok(mut failed_tasks) = self.inner.failed_tasks.lock() {
+            failed_tasks.remove(&task_id);
+        }
+    }
+
+    fn remember_failed_task_state(&self, task_id: i64, error: Option<String>, updated_at: &str) {
+        if let Ok(mut failed_tasks) = self.inner.failed_tasks.lock() {
+            failed_tasks.insert(
+                task_id,
+                FailedTaskState {
+                    error,
+                    updated_at: updated_at.to_string(),
+                },
+            );
+        }
+    }
+
+    fn failed_task_state(&self, task_id: i64) -> Option<FailedTaskState> {
+        self.inner
+            .failed_tasks
+            .lock()
+            .ok()
+            .and_then(|failed_tasks| failed_tasks.get(&task_id).cloned())
+    }
+
+    fn apply_failed_task_state(&self, task: &mut TaskRecord) {
+        if let Some(failed_state) = self.failed_task_state(task.id) {
+            task.status = TaskStatus::Failed;
+            task.error = failed_state.error;
+            task.updated_at = failed_state.updated_at;
+        }
+    }
+
+    fn list_tasks_with_status(
+        &self,
+        status: &str,
+        include_started_at: bool,
+    ) -> Result<Vec<(TaskRecord, Option<String>)>> {
+        self.with_conn(|conn| {
+            let select = if include_started_at {
+                r#"SELECT id, request_id, action, param, request_json, status, error, created_at, updated_at, started_at
+                   FROM tasks WHERE status = ?1 ORDER BY id ASC"#
+            } else {
+                r#"SELECT id, request_id, action, param, request_json, status, error, created_at, updated_at, NULL AS started_at
+                   FROM tasks WHERE status = ?1 ORDER BY id ASC"#
+            };
+            let mut stmt = conn.prepare(select)?;
+            let rows = stmt.query_map([status], task_with_started_at_from_row)?;
+            let mut tasks = Vec::new();
+            for row in rows {
+                let (mut task, started_at) = row?;
+                self.apply_failed_task_state(&mut task);
+                tasks.push((task, started_at));
+            }
+            Ok(tasks)
+        })
+    }
+
+    fn maybe_recover_stale_running_tasks(&self, updated_at: &str) -> Result<()> {
+        let should_recover = {
+            let mut last_recovery = self
+                .inner
+                .last_stale_recovery
+                .lock()
+                .map_err(|_| anyhow!("stale recovery mutex poisoned"))?;
+            if last_recovery
+                .map(|instant| instant.elapsed() >= STALE_RUNNING_RECOVERY_INTERVAL)
+                .unwrap_or(true)
+            {
+                *last_recovery = Some(Instant::now());
+                true
+            } else {
+                false
+            }
+        };
+
+        if should_recover {
+            let _ = self.recover_stale_running_tasks(updated_at)?;
+        }
+        Ok(())
+    }
+
+    fn recover_stale_running_tasks(&self, updated_at: &str) -> Result<usize> {
+        let cutoff = parse_timestamp(updated_at)? - STALE_RUNNING_THRESHOLD;
+        let mut recovered = 0;
+        for (task, started_at) in self.list_tasks_with_status("running", true)? {
+            if task.status != TaskStatus::Running {
+                continue;
+            }
+
+            let started_at = started_at.unwrap_or_else(|| task.updated_at.clone());
+            if parse_timestamp(&started_at)? > cutoff {
+                continue;
+            }
+
+            let stale_error = Some(format!("{STALE_RUNNING_ERROR}: running since {started_at}"));
+            match self.mark_task_status(task.id, TaskStatus::Failed, stale_error, updated_at) {
+                Ok(()) => recovered += 1,
+                Err(err) => error!(
+                    task_id = task.id,
+                    request_id = %task.request_id,
+                    error = %err,
+                    "failed to recover stale running task"
+                ),
+            }
+        }
+        Ok(recovered)
+    }
+
+    #[cfg(test)]
+    fn set_mark_task_status_failures(&self, failures: usize) {
+        let mut remaining = self
+            .inner
+            .mark_task_status_failures
+            .lock()
+            .expect("mark_task_status failure injector");
+        *remaining = failures;
+    }
+
+    #[cfg(test)]
+    fn maybe_fail_mark_task_status(&self) -> Result<()> {
+        let mut remaining = self
+            .inner
+            .mark_task_status_failures
+            .lock()
+            .map_err(|_| anyhow!("mark_task_status failure injector poisoned"))?;
+        if *remaining > 0 {
+            *remaining -= 1;
+            anyhow::bail!("injected mark_task_status failure");
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn maybe_fail_mark_task_status(&self) -> Result<()> {
+        Ok(())
     }
 
     pub fn enqueue_task(&self, task: &TaskRecord) -> Result<i64> {
         self.with_conn(|conn| {
             conn.execute(
-                r#"INSERT INTO tasks (request_id, action, param, request_json, status, error, created_at, updated_at)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+                r#"INSERT INTO tasks (request_id, action, param, request_json, status, error, created_at, updated_at, started_at)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)"#,
                 params![
                     task.request_id,
                     task.action,
@@ -184,24 +376,20 @@ impl Store {
             let rows = stmt.query_map([], task_record_from_row)?;
             let mut tasks = Vec::new();
             for row in rows {
-                tasks.push(row?);
+                let mut task = row?;
+                self.apply_failed_task_state(&mut task);
+                tasks.push(task);
             }
             Ok(tasks)
         })
     }
 
     pub fn has_incomplete_task(&self, action: &str, param: &str) -> Result<bool> {
-        self.with_conn(|conn| {
-            let count: i64 = conn.query_row(
-                r#"SELECT COUNT(*) FROM tasks
-                   WHERE action = ?1
-                     AND param = ?2
-                     AND status IN ('queued', 'running')"#,
-                params![action, param],
-                |row| row.get(0),
-            )?;
-            Ok(count > 0)
-        })
+        Ok(self.list_tasks()?.into_iter().any(|task| {
+            task.action == action
+                && task.param == param
+                && matches!(task.status, TaskStatus::Queued | TaskStatus::Running)
+        }))
     }
 
     pub fn upsert_account(&self, account: &AccountRecord) -> Result<()> {
@@ -676,69 +864,123 @@ impl Store {
         error: Option<String>,
         updated_at: &str,
     ) -> Result<()> {
-        self.with_conn(|conn| {
-            conn.execute(
-                r#"UPDATE tasks SET status = ?1, error = ?2, updated_at = ?3 WHERE id = ?4"#,
-                params![status.to_string(), error, updated_at, task_id],
-            )?;
-            Ok(())
-        })
+        let mut last_error = None;
+        for attempt in 0..MARK_TASK_STATUS_RETRY_ATTEMPTS {
+            match self.persist_task_status(task_id, status.clone(), error.clone(), updated_at) {
+                Ok(()) => {
+                    self.clear_failed_task_state(task_id);
+                    return Ok(());
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                    if attempt + 1 < MARK_TASK_STATUS_RETRY_ATTEMPTS {
+                        thread::sleep(MARK_TASK_STATUS_RETRY_DELAY);
+                    }
+                }
+            }
+        }
+
+        let err = last_error.unwrap_or_else(|| anyhow!("mark_task_status failed unexpectedly"));
+        let failed_error = format!(
+            "failed to persist task status after {MARK_TASK_STATUS_RETRY_ATTEMPTS} attempts: {err}"
+        );
+        error!(
+            task_id,
+            target_status = %status,
+            error = %err,
+            "failed to persist task status"
+        );
+        self.remember_failed_task_state(task_id, Some(failed_error.clone()), updated_at);
+        Err(anyhow!(failed_error))
     }
 
     pub fn next_queued_task(&self) -> Result<Option<TaskRecord>> {
-        self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                r#"SELECT id, request_id, action, param, request_json, status, error, created_at, updated_at
-                   FROM tasks WHERE status = 'queued' ORDER BY id ASC LIMIT 1"#,
-            )?;
-            let mut rows = stmt.query([])?;
-            match rows.next()? {
-                Some(row) => Ok(Some(task_record_from_row(row)?)),
-                None => Ok(None),
-            }
-        })
+        Ok(self
+            .list_tasks_with_status("queued", false)?
+            .into_iter()
+            .map(|(task, _)| task)
+            .find(|task| task.status == TaskStatus::Queued))
     }
 
     pub fn current_running_task(&self) -> Result<Option<TaskRecord>> {
-        self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                r#"SELECT id, request_id, action, param, request_json, status, error, created_at, updated_at
-                   FROM tasks WHERE status = 'running' ORDER BY id ASC LIMIT 1"#,
-            )?;
-            let mut rows = stmt.query([])?;
-            match rows.next()? {
-                Some(row) => Ok(Some(task_record_from_row(row)?)),
-                None => Ok(None),
-            }
-        })
+        Ok(self
+            .list_tasks_with_status("running", false)?
+            .into_iter()
+            .map(|(task, _)| task)
+            .find(|task| task.status == TaskStatus::Running))
     }
 
     pub fn claim_next_queued_task(&self, updated_at: &str) -> Result<Option<TaskRecord>> {
+        self.maybe_recover_stale_running_tasks(updated_at)?;
         if self.current_running_task()?.is_some() {
             return Ok(None);
         }
 
-        let Some(mut task) = self.next_queued_task()? else {
-            return Ok(None);
-        };
+        for (mut task, _) in self.list_tasks_with_status("queued", false)? {
+            if task.status != TaskStatus::Queued {
+                continue;
+            }
 
-        self.mark_task_status(task.id, TaskStatus::Running, None, updated_at)?;
-        task.status = TaskStatus::Running;
-        task.error = None;
-        task.updated_at = updated_at.to_string();
-        Ok(Some(task))
+            match self.mark_task_status(task.id, TaskStatus::Running, None, updated_at) {
+                Ok(()) => {
+                    task.status = TaskStatus::Running;
+                    task.error = None;
+                    task.updated_at = updated_at.to_string();
+                    return Ok(Some(task));
+                }
+                Err(err) => {
+                    error!(
+                        task_id = task.id,
+                        request_id = %task.request_id,
+                        error = %err,
+                        "failed to claim queued task, treating it as failed in memory"
+                    );
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn requeue_running_tasks(&self, updated_at: &str) -> Result<usize> {
-        self.with_conn(|conn| {
-            let changed = conn.execute(
-                r#"UPDATE tasks
-                   SET status = 'queued', error = NULL, updated_at = ?1
-                   WHERE status = 'running'"#,
-                params![updated_at],
-            )?;
-            Ok(changed)
-        })
+        let cutoff = parse_timestamp(updated_at)? - STALE_RUNNING_THRESHOLD;
+        let mut requeued = 0;
+
+        for (task, started_at) in self.list_tasks_with_status("running", true)? {
+            if task.status != TaskStatus::Running {
+                continue;
+            }
+
+            let started_at = started_at.unwrap_or_else(|| task.updated_at.clone());
+            if parse_timestamp(&started_at)? <= cutoff {
+                let stale_error =
+                    Some(format!("{STALE_RUNNING_ERROR}: running since {started_at}"));
+                if let Err(err) =
+                    self.mark_task_status(task.id, TaskStatus::Failed, stale_error, updated_at)
+                {
+                    error!(
+                        task_id = task.id,
+                        request_id = %task.request_id,
+                        error = %err,
+                        "failed to persist stale running task failure"
+                    );
+                }
+                continue;
+            }
+
+            if let Err(err) = self.mark_task_status(task.id, TaskStatus::Queued, None, updated_at) {
+                error!(
+                    task_id = task.id,
+                    request_id = %task.request_id,
+                    error = %err,
+                    "failed to requeue running task"
+                );
+                continue;
+            }
+            requeued += 1;
+        }
+
+        Ok(requeued)
     }
 
     pub fn task_state(&self) -> Result<TaskState> {
@@ -817,6 +1059,32 @@ fn parse_status(value: &str) -> TaskStatus {
     }
 }
 
+fn ensure_column_exists(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for existing in columns {
+        if existing? == column {
+            return Ok(());
+        }
+    }
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
+    )?;
+    Ok(())
+}
+
+fn parse_timestamp(value: &str) -> Result<DateTime<Utc>> {
+    Ok(DateTime::parse_from_rfc3339(value)
+        .with_context(|| format!("failed to parse timestamp: {value}"))?
+        .with_timezone(&Utc))
+}
+
 fn account_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRecord> {
     let account_json: String = row.get(3)?;
     let account: crate::core::model::AccountFile =
@@ -850,6 +1118,12 @@ fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord>
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
     })
+}
+
+fn task_with_started_at_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(TaskRecord, Option<String>)> {
+    Ok((task_record_from_row(row)?, row.get(9)?))
 }
 
 #[cfg(test)]
@@ -1013,6 +1287,105 @@ mod tests {
         assert!(state.current_task.is_none());
         assert_eq!(state.queue.len(), 1);
         assert_eq!(state.queue[0].request_id, "req-1");
+    }
+
+    #[test]
+    fn mark_task_status_retries_transient_failures() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .enqueue_task(&sample_task("req-1"))
+            .expect("enqueue task");
+        let claimed = store
+            .claim_next_queued_task("2025-01-01T00:00:01Z")
+            .expect("claim task");
+        assert!(claimed.is_some());
+
+        store.set_mark_task_status_failures(2);
+        store
+            .mark_task_status(1, TaskStatus::Succeeded, None, "2025-01-01T00:00:02Z")
+            .expect("retry should eventually succeed");
+
+        let tasks = store.list_tasks().expect("list tasks");
+        assert_eq!(tasks[0].status, TaskStatus::Succeeded);
+        assert!(
+            store
+                .current_running_task()
+                .expect("running task")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn mark_task_status_failure_marks_task_failed_in_memory() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .enqueue_task(&sample_task("req-1"))
+            .expect("enqueue task");
+        let claimed = store
+            .claim_next_queued_task("2025-01-01T00:00:01Z")
+            .expect("claim task");
+        assert!(claimed.is_some());
+
+        store.set_mark_task_status_failures(MARK_TASK_STATUS_RETRY_ATTEMPTS);
+        let result = store.mark_task_status(1, TaskStatus::Succeeded, None, "2025-01-01T00:00:02Z");
+        assert!(
+            result.is_err(),
+            "persistent failures should surface as errors"
+        );
+
+        let tasks = store.list_tasks().expect("list tasks");
+        assert_eq!(tasks[0].status, TaskStatus::Failed);
+        assert!(
+            tasks[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("failed to persist task status"))
+        );
+        assert!(
+            store
+                .current_running_task()
+                .expect("running task")
+                .is_none()
+        );
+        assert!(
+            store
+                .task_state()
+                .expect("task state")
+                .current_task
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn requeue_running_tasks_marks_stale_running_tasks_failed() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .enqueue_task(&sample_task("req-1"))
+            .expect("enqueue task");
+        let claimed = store
+            .claim_next_queued_task("2025-01-01T00:00:01Z")
+            .expect("claim task");
+        assert!(claimed.is_some());
+
+        let changed = store
+            .requeue_running_tasks("2025-01-01T01:00:02Z")
+            .expect("recover stale running task");
+        assert_eq!(changed, 0);
+
+        let tasks = store.list_tasks().expect("list tasks");
+        assert_eq!(tasks[0].status, TaskStatus::Failed);
+        assert!(
+            tasks[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains(STALE_RUNNING_ERROR))
+        );
+        assert!(
+            store
+                .current_running_task()
+                .expect("running task")
+                .is_none()
+        );
     }
 
     #[test]
