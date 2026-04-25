@@ -53,48 +53,20 @@ async fn write_empty_site_indexes(config: &AppConfig, sites: &[String]) -> Resul
             continue;
         }
 
-        // Create empty site index page that will be overwritten when data is loaded
+        // Create an empty site index page using the same template the renderer uses,
+        // so that site_index_table.js can render the (empty) state with the full UI
+        // and pick up new works once data is written without producing two flavors of
+        // the page.
         let empty_index = render_empty_site_index(site);
         write_text_if_changed(&site_index_path, &empty_index).await?;
     }
     Ok(())
 }
 
+const SITE_INDEX_TEMPLATE: &str = include_str!("../../templates/site_index.html");
+
 fn render_empty_site_index(site: &str) -> String {
-    let site_escaped = escape_html(site);
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{site} index</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 0; background: #f6f7fb; color: #1f2933; }}
-    header {{ padding: 24px 20px; background: #111827; color: #fff; }}
-    main {{ max-width: 1100px; margin: 0 auto; padding: 20px; }}
-    .empty-message {{ background: #fff; border-radius: 14px; padding: 32px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-    .empty-message h2 {{ margin-top: 0; color: #6b7280; }}
-    .empty-message p {{ color: #9ca3af; }}
-    .empty-message a {{ color: #2563eb; text-decoration: none; }}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>{site}</h1>
-    <p>0 works · <a href="/">home</a></p>
-  </header>
-  <main>
-    <div class="empty-message">
-      <h2>作品がまだありません</h2>
-      <p>このサイトに作品をダウンロードまたはインポートすると、ここに表示されます。</p>
-      <p><a href="/">トップページに戻る</a></p>
-    </div>
-  </main>
-</body>
-</html>"#,
-        site = site_escaped
-    )
+    SITE_INDEX_TEMPLATE.replace("{site_name}", &escape_html(site))
 }
 
 async fn write_manifest(config: &AppConfig) -> Result<()> {
@@ -281,9 +253,8 @@ mod tests {
     fn empty_site_index_is_valid_html() {
         let html = render_empty_site_index("pixiv");
         assert!(html.contains("<!DOCTYPE html>"));
-        assert!(html.contains("<title>pixiv index</title>"));
-        assert!(html.contains("作品がまだありません"));
-        assert!(html.contains("href=\"/\""));
+        assert!(html.contains("<title>pixiv Index</title>"));
+        assert!(html.contains("/script/site_index_table.js"));
     }
 
     #[tokio::test]
@@ -319,8 +290,8 @@ mod tests {
             .unwrap();
 
         let actual = fs::read_to_string(&site_index_path).await.unwrap();
-        assert!(actual.contains("<title>narou index</title>"));
-        assert!(actual.contains("作品がまだありません"));
+        assert!(actual.contains("<title>narou Index</title>"));
+        assert!(actual.contains("/script/site_index_table.js"));
 
         std::fs::remove_dir_all(test_dir).unwrap();
     }

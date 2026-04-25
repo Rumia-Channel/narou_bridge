@@ -834,18 +834,6 @@ fn render_novel_page(
         .replace("{nav_links}", nav_links)
 }
 
-fn render_tag_list(tags: &[String]) -> String {
-    if tags.is_empty() {
-        return String::new();
-    }
-    let tags = tags
-        .iter()
-        .map(|tag| format!(r#"<span class="tag">{}</span>"#, escape_html(tag)))
-        .collect::<Vec<_>>()
-        .join("");
-    format!(r#"<div class="tags">{tags}</div>"#)
-}
-
 fn render_rich_text(
     text: &str,
     site: &str,
@@ -1217,62 +1205,6 @@ fn escape_html(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn render_page_shell_with_ogp(
-    title: &str,
-    header_title: &str,
-    nav_links: &str,
-    body: &str,
-    og_tags: &str,
-) -> String {
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
-  {og_tags}
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 0; background: #f6f7fb; color: #1f2933; line-height: 1.75; }}
-    header {{ position: sticky; top: 0; background: #111827; color: #fff; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.12); }}
-    header h1 {{ margin: 0 0 8px; font-size: 1.1rem; }}
-    header nav {{ display: flex; flex-wrap: wrap; gap: 10px; font-size: .92rem; }}
-    header a {{ color: #dbeafe; text-decoration: none; }}
-    main {{ max-width: 920px; margin: 0 auto; padding: 20px; }}
-    .meta-panel, .episode, .episode-list, .raw-json {{ background: #fff; border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-    .meta {{ margin: 0 0 8px; color: #6b7280; font-size: .92rem; }}
-    .summary {{ margin: 0 0 10px; white-space: pre-wrap; }}
-    .episode-block {{ margin-top: 14px; }}
-    .episode-block > :first-child {{ margin-top: 0; }}
-    .episode-text, .episode-block.text {{ white-space: pre-wrap; }}
-    pre {{ white-space: pre-wrap; overflow-x: auto; }}
-    .tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }}
-    .tag {{ background: #e5eefc; color: #1d4ed8; border-radius: 999px; padding: 2px 10px; font-size: .82rem; }}
-    .episode-summary {{ margin: 0; padding-left: 1.4rem; }}
-    .episode-summary li {{ margin: 0 0 12px; }}
-    .episode-summary .summary {{ color: #4b5563; }}
-    img {{ max-width: 100%; height: auto; }}
-    figure {{ margin: 0; }}
-    hr.page-break {{ border: 0; border-top: 1px solid #d1d5db; margin: 1.5rem 0; }}
-    ruby rt {{ font-size: .7em; }}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>{header_title}</h1>
-    <nav>{nav_links}</nav>
-  </header>
-  <main>{body}</main>
-</body>
-</html>"#,
-        title = escape_html(title),
-        header_title = escape_html(header_title),
-        nav_links = nav_links,
-        body = body,
-        og_tags = og_tags
-    )
-}
-
 fn build_og_tags(title: &str, description: &str, og_type: &str, url: &str, image: &str) -> String {
     let mut tags = String::new();
 
@@ -1328,19 +1260,6 @@ fn escape_html_attr(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
-}
-
-fn truncate_text(text: &str, max_len: usize) -> String {
-    if text.len() <= max_len {
-        text.to_string()
-    } else {
-        text.chars()
-            .take(max_len)
-            .collect::<String>()
-            .trim_end()
-            .to_string()
-            + "..."
-    }
 }
 
 fn format_canonical_url(host_name: &str, path: &str) -> String {
