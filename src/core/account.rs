@@ -1,6 +1,7 @@
 use crate::core::atomic_io::atomic_write;
 use crate::core::model::{AccountFile, AccountRecord};
 use anyhow::{Result, anyhow};
+use regex::Regex;
 use serde::Deserialize;
 use serde::de::{self, Deserializer};
 use serde_json::{Map, Value};
@@ -23,7 +24,24 @@ pub fn load_account_file(path: &Path) -> Result<AccountFile> {
     Ok(serde_json::from_str(&content)?)
 }
 
-pub fn validate_account_file(_site: &str, _account: &AccountFile) -> Result<()> {
+pub fn validate_account_file(site: &str, account: &AccountFile) -> Result<()> {
+    if site != "pixiv" {
+        return Ok(());
+    }
+
+    let phpsessid = account
+        .cookies
+        .as_object()
+        .and_then(|cookies| cookies.get("PHPSESSID"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("必須クッキー (PHPSESSID) がありません"))?;
+
+    let re = Regex::new(r"^\d+_[A-Za-z0-9]+$").expect("valid pixiv PHPSESSID regex");
+    if !re.is_match(phpsessid) {
+        return Err(anyhow!("PHPSESSID が不正な形式です"));
+    }
+
     Ok(())
 }
 
@@ -207,5 +225,40 @@ mod tests {
         );
         assert_eq!(account.user_agent.as_deref(), Some("legacy-ua"));
         assert_eq!(account.display_name, None);
+    }
+
+    #[test]
+    fn validates_pixiv_cookie_successfully() {
+        let account = AccountFile {
+            cookies: json!({"PHPSESSID": "12345_abcdefXYZ"}),
+            user_agent: Some("ua".to_string()),
+            display_name: Some("pixiv".to_string()),
+        };
+
+        assert!(validate_account_file("pixiv", &account).is_ok());
+    }
+
+    #[test]
+    fn rejects_missing_pixiv_phpsessid() {
+        let account = AccountFile {
+            cookies: json!({"device_token": "token"}),
+            user_agent: None,
+            display_name: None,
+        };
+
+        let err = validate_account_file("pixiv", &account).unwrap_err();
+        assert_eq!(err.to_string(), "必須クッキー (PHPSESSID) がありません");
+    }
+
+    #[test]
+    fn rejects_invalid_pixiv_phpsessid_format() {
+        let account = AccountFile {
+            cookies: json!({"PHPSESSID": "invalid"}),
+            user_agent: None,
+            display_name: None,
+        };
+
+        let err = validate_account_file("pixiv", &account).unwrap_err();
+        assert_eq!(err.to_string(), "PHPSESSID が不正な形式です");
     }
 }
