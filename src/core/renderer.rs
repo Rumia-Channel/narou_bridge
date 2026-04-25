@@ -1,6 +1,7 @@
 use crate::core::model::{EpisodeIndexEntry, SiteIndexEntry, WorkRecord};
 use crate::core::storage::Store;
 use anyhow::{Context, Result, bail};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -520,7 +521,6 @@ fn render_work_info(
     host_name: &str,
 ) -> String {
     let work = &rendered.work;
-    let raw_json = serde_json::to_string_pretty(&rendered.raw_json).unwrap_or_default();
     let first_episode = rendered
         .episodes
         .first()
@@ -536,45 +536,7 @@ fn render_work_info(
         reader_url = escape_html(&reader_url(host_name, site, work_key))
     );
 
-    let body = format!(
-        r#"<section class="meta-panel">
-  <p class="meta">{author} · {serialization} · {work_key}</p>
-  <p class="meta">version: {version} / get_date: {get_date}</p>
-  <p class="meta">ID: {id} / NID: {nid}</p>
-  <p class="meta">URL: {url}</p>
-  <p class="meta">作者ID: {author_id}</p>
-  <p class="meta">作者URL: {author_url}</p>
-  <p class="meta">作品種別: {work_type} / 話数: {episode_count} / 総話数: {all_episodes}</p>
-  <p class="meta">文字数: {total_characters} / 総文字数: {all_characters}</p>
-  <p class="meta">作成: {create_date} / 更新: {update_date}</p>
-  <p class="summary">{caption}</p>
-  {tags}
-</section>
-<section class="raw-json">
-  <h2>raw.json</h2>
-  <pre>{raw_json}</pre>
-</section>"#,
-        author = escape_html(&work.author),
-        serialization = escape_html(&work.serialization),
-        work_key = escape_html(work_key),
-        version = rendered.work.version,
-        get_date = escape_html(&rendered.work.get_date),
-        id = escape_html(&rendered.work.id),
-        nid = escape_html(&rendered.work.nid),
-        url = escape_html(&rendered.work.url),
-        author_id = escape_html(work.author_id.as_deref().unwrap_or("-")),
-        author_url = escape_html(work.author_url.as_deref().unwrap_or("-")),
-        work_type = escape_html(&work.work_type),
-        episode_count = rendered.work.total_episodes,
-        all_episodes = rendered.work.all_episodes,
-        total_characters = work.total_characters,
-        all_characters = work.all_characters,
-        create_date = escape_html(&work.create_date),
-        update_date = escape_html(&work.update_date),
-        caption = escape_html(&work.caption),
-        tags = render_tag_list(&work.all_tags),
-        raw_json = escape_html(&raw_json)
-    );
+    let body = render_info_content(rendered, work_key);
 
     let canonical_url = format_canonical_url(
         host_name,
@@ -1101,6 +1063,74 @@ fn normalize_newlines(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
+fn format_date_jp(iso_date: &str, format: &str) -> String {
+    DateTime::parse_from_rfc3339(iso_date)
+        .map(|date| date.with_timezone(&Utc).format(format).to_string())
+        .unwrap_or_default()
+}
+
+fn render_info_content(rendered: &RenderedWork, _work_key: &str) -> String {
+    let work = &rendered.work;
+    let author_html =
+        if let Some(author_url) = work.author_url.as_deref().filter(|url| !url.is_empty()) {
+            format!(
+                r#"<a href="{author_url}" target="_blank">{author}</a>"#,
+                author_url = escape_html(author_url),
+                author = escape_html(&work.author)
+            )
+        } else {
+            escape_html(&work.author)
+        };
+    let all_tags = if work.all_tags.is_empty() {
+        "\n<span>キーワードが設定されていません</span>\n".to_string()
+    } else {
+        work.all_tags
+            .iter()
+            .map(|tag| escape_html(tag))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let novel_type = if work.serialization == "短編" {
+        r#"<div><span id="noveltype">短編</span></div>"#.to_string()
+    } else {
+        format!(
+            r#"<div><span id="noveltype">{}</span> 全{}エピソード</div>"#,
+            escape_html(&work.serialization),
+            rendered.episodes.len()
+        )
+    };
+    let date_label = if work.serialization == "短編" {
+        "最終更新日"
+    } else if work.serialization == "連載中" {
+        "最新掲載日"
+    } else {
+        "最終掲載日"
+    };
+
+    format!(
+        r#"<h1><a href="{url}" target="_blank">{title}</a></h1>
+{novel_type}
+<table>
+<tr><th class="ex">あらすじ</th><td class="ex">{caption}</td></tr>
+<tr><th>作者名</th><td>{author}</td></tr>
+<tr><th>キーワード</th><td>{all_tags}</td></tr>
+<tr><th>掲載日</th><td>{create_date}</td></tr>
+<tr><th>{date_label}</th><td>{update_date}</td></tr>
+<tr><th>文字数</th><td>{total_characters}文字</td></tr>
+</table>"#,
+        url = escape_html(&work.url),
+        title = escape_html(&work.title),
+        novel_type = novel_type,
+        caption = escape_html(&work.caption),
+        author = author_html,
+        all_tags = all_tags,
+        create_date = escape_html(&format_date_jp(&work.create_date, "%Y年 %m月%d日 %H時%M分")),
+        date_label = date_label,
+        update_date = escape_html(&format_date_jp(&work.update_date, "%Y年 %m月%d日 %H時%M分")),
+        total_characters = work.total_characters,
+    )
+}
+
 fn is_standalone_markup(line: &str) -> bool {
     line.starts_with("[image](") || line.starts_with("[ruby:<") || line.starts_with("[jump:")
 }
@@ -1499,5 +1529,23 @@ mod tests {
             "../../images",
         );
         assert_eq!(html, "<ruby>漢字<rp>(</rp><rt>かな</rt><rp>)</rp></ruby>");
+    }
+
+    #[test]
+    fn render_work_info_uses_structured_table_without_raw_dump() {
+        let raw = sample_raw_json();
+        let rendered = build_rendered_work(
+            parse_raw_work(&raw).expect("parse raw"),
+            "narou".to_string(),
+            "n123".to_string(),
+            raw,
+        );
+
+        let html = render_work_info("narou", "n123", &rendered, "");
+
+        assert!(html.contains("<table>"));
+        assert!(html.contains("あらすじ"));
+        assert!(!html.contains("<pre>"));
+        assert!(!html.contains("version:"));
     }
 }
