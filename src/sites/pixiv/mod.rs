@@ -181,7 +181,16 @@ impl Site for PixivSite {
                 SiteActionResult::skipped(self.id(), action, "login moved to separate helper")
             }
             "re_download" => {
-                SiteActionResult::skipped(self.id(), action, "pixiv redownload placeholder")
+                match pixiv_update(
+                    store,
+                    &context.data_dir,
+                    &context.cookie_dir,
+                    &context.host_name,
+                    &context.img_url,
+                ) {
+                    Ok(message) => SiteActionResult::success(self.id(), action, message),
+                    Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
+                }
             }
             _ => SiteActionResult::skipped(self.id(), action, "unsupported"),
         }
@@ -1904,5 +1913,41 @@ mod tests {
         };
 
         assert!(reason.contains("total_episodes"));
+    }
+
+    #[test]
+    fn re_download_is_supported_and_not_a_placeholder() {
+        let site = site();
+        assert!(site.supported_actions().contains(&"re_download"));
+
+        let root = test_dir("pixiv-redownload-support");
+        let data_dir = root.join("data");
+        let cookie_dir = root.join("cookie");
+        let queue_dir = root.join("queue");
+        let pdf_dir = root.join("pdf");
+        let archive_dir = root.join("archive");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&cookie_dir).unwrap();
+
+        let mut store = Store::open_in_memory().expect("store");
+        let context = crate::sites::SiteActionContext {
+            host_name: String::new(),
+            img_url: String::new(),
+            data_dir: data_dir.to_string_lossy().to_string(),
+            cookie_dir: cookie_dir.to_string_lossy().to_string(),
+            queue_dir: queue_dir.to_string_lossy().to_string(),
+            pdf_dir: pdf_dir.to_string_lossy().to_string(),
+            archive_dir: archive_dir.to_string_lossy().to_string(),
+            request: crate::core::model::RequestData::default(),
+        };
+
+        let result = site.execute("re_download", "pixiv", &context, &mut store);
+        assert!(
+            !result.message.contains("placeholder"),
+            "re_download should not return placeholder message: {}",
+            result.message
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

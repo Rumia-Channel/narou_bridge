@@ -1,6 +1,7 @@
 use crate::core::account::{
     rewrite_cookie_site_mirror as rewrite_cookie_site_mirror_impl, validate_account_file,
 };
+use crate::core::atomic_io::atomic_write;
 use crate::core::migration::{MigrationPlan, migrate_legacy_tree};
 use crate::core::model::{
     AccountFile, AccountRecord, AppConfig, ImageRecord, RequestData, TaskRecord, TaskStatus,
@@ -2073,10 +2074,14 @@ async fn recover_queued_runtime_state(state: &RuntimeState) -> Result<()> {
 }
 
 async fn sync_queue_state(state: &RuntimeState) -> Result<()> {
-    let _ = {
+    let task_state = {
         let store = state.store.lock().await;
         store.task_state()?
     };
+    let task_json = serde_json::to_string_pretty(&task_state)?;
+    let path = state.config.queue_task_json_path();
+    tokio::task::spawn_blocking(move || atomic_write(&path, task_json))
+        .await??;
     Ok(())
 }
 
@@ -2553,7 +2558,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_cookie_site_mirror_is_noop_for_db_only_runtime() {
+    fn rewrite_cookie_site_mirror_writes_account_files_and_removes_stale() {
         let root = test_dir("runtime-account-mirror");
         let cookie_root = root.join("cookie");
         let site_dir = cookie_root.join("pixiv");
@@ -2571,16 +2576,18 @@ mod tests {
 
         rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
 
-        assert!(site_dir.join("stale.json").exists());
-        assert!(!site_dir.join("alpha.json").exists());
-        assert!(!site_dir.join("beta.json").exists());
-        assert!(!site_dir.join("login.json").exists());
+        assert!(!site_dir.join("stale.json").exists(), "stale files should be removed");
+        assert!(site_dir.join("alpha.json").exists(), "alpha account file should be written");
+        assert!(site_dir.join("beta.json").exists(), "beta account file should be written");
+        assert!(site_dir.join("login.json").exists(), "login mirror should be written for active account");
+        let login_content = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
+        assert!(login_content.contains("beta"), "login.json should contain active account data");
 
         stdfs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn rewrite_cookie_site_mirror_leaves_existing_files_untouched() {
+    fn rewrite_cookie_site_mirror_replaces_existing_files() {
         let root = test_dir("runtime-account-mirror-replace");
         let cookie_root = root.join("cookie");
         let site_dir = cookie_root.join("pixiv");
@@ -2605,11 +2612,49 @@ mod tests {
 
         rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
 
-        assert!(site_dir.join("alpha.json").exists());
-        assert!(site_dir.join("stale.json").exists());
-        assert!(!site_dir.join("beta.json").exists());
+        assert!(!site_dir.join("alpha.json").exists(), "alpha not in accounts should be removed");
+        assert!(!site_dir.join("stale.json").exists(), "stale files should be removed");
+        assert!(site_dir.join("beta.json").exists(), "beta account file should be written");
         let active_login = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
-        assert!(active_login.contains("old-login"));
+        assert!(active_login.contains("beta"), "login.json should contain active account data");
+
+        stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sync_queue_state_writes_task_json_after_enqueue() {
+        let root = test_dir("runtime-sync-queue-write");
+        let config = smoke_test_config(&root);
+        let store = Store::open_in_memory().expect("store");
+        let state = build_runtime_state(config, store, crate::core::registry::build_registry())
+            .await
+            .expect("runtime state");
+
+        let task = TaskRecord {
+            id: 0,
+            request_id: "req-sync-test".to_string(),
+            action: "download".to_string(),
+            param: "https://example.com/work".to_string(),
+            request: RequestData {
+                request_id: "req-sync-test".to_string(),
+                add: Some("https://example.com/work".to_string()),
+                ..RequestData::default()
+            },
+            status: TaskStatus::Queued,
+            error: None,
+            created_at: now_string(),
+            updated_at: now_string(),
+        };
+        enqueue_task_record(&state, task, false)
+            .await
+            .expect("enqueue task");
+
+        let task_json_path = state.config.queue_task_json_path();
+        assert!(task_json_path.exists(), "queue/task.json should be written");
+
+        let content = stdfs::read_to_string(&task_json_path).expect("read task.json");
+        assert!(content.contains("req-sync-test"));
+        assert!(content.contains("current_task"));
 
         stdfs::remove_dir_all(root).unwrap();
     }

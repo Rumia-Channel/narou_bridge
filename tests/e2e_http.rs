@@ -199,7 +199,7 @@ async fn key_http_endpoints_respond_in_process() {
             .and_then(Value::as_str)
             .is_some_and(|request_id| !request_id.is_empty())
     );
-    assert!(!root.join("queue").join("task.json").exists());
+    assert!(root.join("queue").join("task.json").exists());
 
     let migrate_query = serde_urlencoded::to_string([(
         "source_root",

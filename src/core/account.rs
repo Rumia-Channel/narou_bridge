@@ -44,18 +44,65 @@ pub fn validate_account_file(site: &str, account: &AccountFile) -> Result<()> {
 }
 
 pub fn rewrite_cookie_site_mirror(
-    _cookie_root: &Path,
-    _site: &str,
-    _accounts: &[AccountRecord],
+    cookie_root: &Path,
+    site: &str,
+    accounts: &[AccountRecord],
 ) -> Result<()> {
+    let site_dir = cookie_root.join(site);
+    fs::create_dir_all(&site_dir)?;
+
+    let mut expected_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for account in accounts {
+        let file_name = format!("{}.json", account.name);
+        expected_files.insert(file_name.clone());
+
+        let account_json = serde_json::json!({
+            "cookies": account.account.cookies,
+            "user_agent": account.account.user_agent,
+            "display_name": account.account.display_name,
+        });
+        let content = serde_json::to_string_pretty(&account_json)?;
+        let path = site_dir.join(&file_name);
+        fs::write(&path, &content)?;
+
+        if account.active {
+            let login_path = site_dir.join("login.json");
+            expected_files.insert("login.json".to_string());
+            fs::write(&login_path, &content)?;
+        }
+    }
+
+    let entries = fs::read_dir(&site_dir)?;
+    for entry in entries {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy().to_string();
+        if name.ends_with(".json") && !expected_files.contains(&name) {
+            fs::remove_file(entry.path())?;
+        }
+    }
+
     Ok(())
 }
 
 pub fn write_login_account_mirror(
-    _cookie_root: &Path,
-    _site: &str,
-    _account: &AccountFile,
+    cookie_root: &Path,
+    site: &str,
+    account: &AccountFile,
 ) -> Result<()> {
+    let site_dir = cookie_root.join(site);
+    fs::create_dir_all(&site_dir)?;
+
+    let account_json = serde_json::json!({
+        "cookies": account.cookies,
+        "user_agent": account.user_agent,
+        "display_name": account.display_name,
+    });
+    let content = serde_json::to_string_pretty(&account_json)?;
+    let login_path = site_dir.join("login.json");
+    fs::write(&login_path, content)?;
+
     Ok(())
 }
 
