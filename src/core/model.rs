@@ -228,6 +228,30 @@ pub struct WorkRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkSummary {
+    pub site: String,
+    pub work_key: String,
+    pub title: String,
+    pub author: String,
+    pub author_id: Option<String>,
+    pub author_url: Option<String>,
+    pub r#type: String,
+    pub serialization: String,
+    pub caption: String,
+    pub create_date: String,
+    pub update_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkListPage {
+    pub site: Option<String>,
+    pub limit: usize,
+    pub offset: usize,
+    pub total: usize,
+    pub works: Vec<WorkSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ImageRecord {
     pub logical_name: String,
     pub hash: String,

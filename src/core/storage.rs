@@ -1,10 +1,11 @@
 use crate::core::model::{
     AccountRecord, ImageRecord, MigrationSummary, RequestData, SiteDocumentRecord, TaskRecord,
-    TaskState, TaskStatus, WorkRecord,
+    TaskState, TaskStatus, WorkListPage, WorkRecord, WorkSummary,
 };
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,31 @@ struct StoreInner {
 
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const MARK_TASK_STATUS_RETRY_ATTEMPTS: usize = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkListSort {
+    UpdatedDesc,
+    UpdatedAsc,
+    TitleAsc,
+    TitleDesc,
+    AuthorAsc,
+    AuthorDesc,
+}
+
+impl WorkListSort {
+    fn order_by(self) -> &'static str {
+        match self {
+            Self::UpdatedDesc => "update_date DESC, title COLLATE NOCASE ASC, work_key ASC",
+            Self::UpdatedAsc => "update_date ASC, title COLLATE NOCASE ASC, work_key ASC",
+            Self::TitleAsc => "title COLLATE NOCASE ASC, work_key ASC",
+            Self::TitleDesc => "title COLLATE NOCASE DESC, work_key ASC",
+            Self::AuthorAsc => "author COLLATE NOCASE ASC, title COLLATE NOCASE ASC, work_key ASC",
+            Self::AuthorDesc => {
+                "author COLLATE NOCASE DESC, title COLLATE NOCASE ASC, work_key ASC"
+            }
+        }
+    }
+}
 const MARK_TASK_STATUS_RETRY_DELAY: Duration = Duration::from_millis(100);
 const STALE_RUNNING_THRESHOLD: ChronoDuration = ChronoDuration::hours(1);
 const STALE_RUNNING_RECOVERY_INTERVAL: Duration = Duration::from_secs(60);
@@ -177,6 +203,18 @@ impl Store {
             )?;
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_request_id ON tasks(request_id)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_update_date ON works(site, update_date DESC, work_key)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_title ON works(site, title COLLATE NOCASE, work_key)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_author ON works(site, author COLLATE NOCASE, title COLLATE NOCASE, work_key)",
                 [],
             )?;
             ensure_column_exists(conn, "tasks", "started_at", "TEXT")?;
@@ -647,6 +685,90 @@ impl Store {
                 }
             }
             Ok(works)
+        })
+    }
+
+    pub fn list_work_summaries(
+        &self,
+        site: Option<&str>,
+        limit: usize,
+        offset: usize,
+        search: Option<&str>,
+        sort: WorkListSort,
+    ) -> Result<WorkListPage> {
+        let limit = limit.clamp(1, i64::MAX as usize);
+        let offset = offset.min(i64::MAX as usize);
+        let search = search.map(str::trim).filter(|value| !value.is_empty());
+
+        self.with_conn(|conn| {
+            let mut where_parts = Vec::new();
+            let mut params = Vec::new();
+
+            if let Some(site) = site {
+                where_parts.push("site = ?");
+                params.push(SqlValue::Text(site.to_string()));
+            }
+
+            if let Some(search) = search {
+                where_parts.push(
+                    "(title LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\' OR work_key LIKE ? ESCAPE '\\')",
+                );
+                let pattern = format!("%{}%", escape_like_pattern(search));
+                params.push(SqlValue::Text(pattern.clone()));
+                params.push(SqlValue::Text(pattern.clone()));
+                params.push(SqlValue::Text(pattern));
+            }
+
+            let where_sql = if where_parts.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", where_parts.join(" AND "))
+            };
+
+            let count_sql = format!("SELECT COUNT(*) FROM works{where_sql}");
+            let total = conn.query_row(&count_sql, params_from_iter(params.iter()), |row| {
+                row.get::<_, i64>(0)
+            })? as usize;
+
+            let mut page_params = params;
+            page_params.push(SqlValue::Integer(limit as i64));
+            page_params.push(SqlValue::Integer(offset as i64));
+            let sql = format!(
+                r#"SELECT site, work_key, title, author, author_id, author_url, type, serialization, caption, create_date, update_date
+                   FROM works{where_sql}
+                   ORDER BY {}
+                   LIMIT ? OFFSET ?"#,
+                sort.order_by()
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params_from_iter(page_params.iter()), |row| {
+                Ok(WorkSummary {
+                    site: row.get(0)?,
+                    work_key: row.get(1)?,
+                    title: row.get(2)?,
+                    author: row.get(3)?,
+                    author_id: row.get(4)?,
+                    author_url: row.get(5)?,
+                    r#type: row.get(6)?,
+                    serialization: row.get(7)?,
+                    caption: row.get(8)?,
+                    create_date: row.get(9)?,
+                    update_date: row.get(10)?,
+                })
+            })?;
+
+            let mut works = Vec::new();
+            for row in rows {
+                works.push(row?);
+            }
+
+            Ok(WorkListPage {
+                site: site.map(str::to_string),
+                limit,
+                offset,
+                total,
+                works,
+            })
         })
     }
 
@@ -1255,6 +1377,17 @@ fn task_with_started_at_from_row(
     Ok((task_record_from_row(row)?, row.get(9)?))
 }
 
+fn escape_like_pattern(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1280,6 +1413,60 @@ mod tests {
             created_at: "2025-01-01T00:00:00Z".to_string(),
             updated_at: "2025-01-01T00:00:00Z".to_string(),
         }
+    }
+
+    fn sample_work(site: &str, work_key: &str, title: &str, author: &str) -> WorkRecord {
+        WorkRecord {
+            site: site.to_string(),
+            work_key: work_key.to_string(),
+            title: title.to_string(),
+            author: author.to_string(),
+            author_id: Some(format!("{author}-id")),
+            author_url: Some(format!("https://example.invalid/users/{author}")),
+            r#type: "novel".to_string(),
+            serialization: "短編".to_string(),
+            caption: format!("{title} caption"),
+            create_date: "2025-01-01T00:00:00Z".to_string(),
+            update_date: format!("2025-01-0{}T00:00:00Z", &work_key[1..]),
+            raw_json: serde_json::json!({
+                "title": title,
+                "id": work_key,
+                "nid": work_key,
+                "author": author,
+                "type": "novel",
+                "serialization": "短編",
+                "episodes": {}
+            }),
+        }
+    }
+
+    #[test]
+    fn list_work_summaries_pages_sorts_and_searches_without_raw_json() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .upsert_work(&sample_work("pixiv", "n1", "Alpha Work", "Zeta"))
+            .expect("upsert first work");
+        store
+            .upsert_work(&sample_work("pixiv", "n2", "Beta Match", "Alpha"))
+            .expect("upsert second work");
+        store
+            .upsert_work(&sample_work("pixiv", "n3", "Gamma Match", "Beta"))
+            .expect("upsert third work");
+        store
+            .upsert_work(&sample_work("narou", "n4", "Other Match", "Other"))
+            .expect("upsert other site work");
+
+        let page = store
+            .list_work_summaries(Some("pixiv"), 1, 1, Some("Match"), WorkListSort::TitleAsc)
+            .expect("list work summaries");
+
+        assert_eq!(page.site.as_deref(), Some("pixiv"));
+        assert_eq!(page.total, 2);
+        assert_eq!(page.limit, 1);
+        assert_eq!(page.offset, 1);
+        assert_eq!(page.works.len(), 1);
+        assert_eq!(page.works[0].work_key, "n3");
+        assert_eq!(page.works[0].title, "Gamma Match");
     }
 
     fn sample_account(site: &str, name: &str, active: bool) -> AccountRecord {

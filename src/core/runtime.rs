@@ -9,7 +9,7 @@ use crate::core::model::{
 };
 use crate::core::renderer;
 use crate::core::static_bootstrap::write_static_bootstrap;
-use crate::core::storage::Store;
+use crate::core::storage::{Store, WorkListSort};
 use crate::sites::SiteRegistry;
 use anyhow::{Context, Result};
 use axum::Router;
@@ -75,6 +75,15 @@ struct MigrationQuery {
 #[derive(Debug, Deserialize, Default)]
 struct WorksQuery {
     site: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LibraryWorksQuery {
+    site: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    search: Option<String>,
+    sort: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -223,6 +232,7 @@ pub fn build_app(state: RuntimeState) -> Router {
         .route("/api/health", get(health))
         .route("/api/tasks", get(list_tasks))
         .route("/api/works", get(list_works_query))
+        .route("/api/library/works", get(list_library_works_query))
         .route("/images/database.json", get(image_database_json))
         .route("/images/cover.json", get(image_cover_json))
         .route("/{site}/", get(site_index_html))
@@ -283,6 +293,48 @@ async fn list_works_query(
     match store.list_works(query.site.as_deref()) {
         Ok(works) => Json(json!({"site": query.site, "works": works})).into_response(),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn list_library_works_query(
+    State(state): State<RuntimeState>,
+    Query(query): Query<LibraryWorksQuery>,
+) -> Response {
+    let site = query
+        .site
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(site) = site
+        && !is_known_site(&state, site)
+    {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let offset = query.offset.unwrap_or(0);
+    let search = query
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let sort = parse_work_list_sort(query.sort.as_deref());
+
+    let store = state.store.lock().await;
+    match store.list_work_summaries(site, limit, offset, search, sort) {
+        Ok(page) => create_json_response(StatusCode::OK, &json!(page)),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+fn parse_work_list_sort(sort: Option<&str>) -> WorkListSort {
+    match sort.map(str::trim) {
+        Some("updated_asc") => WorkListSort::UpdatedAsc,
+        Some("title_asc") => WorkListSort::TitleAsc,
+        Some("title_desc") => WorkListSort::TitleDesc,
+        Some("author_asc") => WorkListSort::AuthorAsc,
+        Some("author_desc") => WorkListSort::AuthorDesc,
+        _ => WorkListSort::UpdatedDesc,
     }
 }
 

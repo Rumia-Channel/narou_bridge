@@ -130,6 +130,32 @@ fn sample_work_record() -> WorkRecord {
     }
 }
 
+fn sample_library_work_record(
+    work_key: &str,
+    title: &str,
+    author: &str,
+    update_date: &str,
+) -> WorkRecord {
+    let mut work = sample_work_record();
+    work.work_key = work_key.to_string();
+    work.title = title.to_string();
+    work.author = author.to_string();
+    work.update_date = update_date.to_string();
+
+    let raw = work.raw_json.as_object_mut().expect("raw object");
+    raw.insert("title".to_string(), json!(title));
+    raw.insert("id".to_string(), json!(work_key));
+    raw.insert("nid".to_string(), json!(work_key));
+    raw.insert(
+        "url".to_string(),
+        json!(format!("https://example.com/{work_key}")),
+    );
+    raw.insert("author".to_string(), json!(author));
+    raw.insert("updateDate".to_string(), json!(update_date));
+
+    work
+}
+
 fn write_legacy_data_root(data_root: &Path) {
     std::fs::create_dir_all(data_root.join("pixiv").join("n123").join("raw"))
         .expect("create work raw dir");
@@ -378,6 +404,68 @@ async fn db_backed_json_routes_respond_without_persisted_json_files() {
             .join("raw.json")
             .exists()
     );
+}
+
+#[tokio::test]
+async fn library_works_api_pages_db_summaries_without_raw_json() {
+    let root = test_root("e2e-http-library-works");
+    let config = test_config(&root);
+    let seed_store = Store::open(config.db_path_buf()).expect("open seed store");
+    seed_store
+        .upsert_work(&sample_library_work_record(
+            "n101",
+            "Alpha Library",
+            "Zeta",
+            "2025-01-01T00:00:00Z",
+        ))
+        .expect("upsert alpha work");
+    seed_store
+        .upsert_work(&sample_library_work_record(
+            "n102",
+            "Beta Library",
+            "Alpha",
+            "2025-01-02T00:00:00Z",
+        ))
+        .expect("upsert beta work");
+    seed_store
+        .upsert_work(&sample_library_work_record(
+            "n103",
+            "Gamma Other",
+            "Beta",
+            "2025-01-03T00:00:00Z",
+        ))
+        .expect("upsert gamma work");
+
+    let state = build_runtime_state(
+        config.clone(),
+        Store::open(config.db_path_buf()).expect("reopen store"),
+        build_registry(),
+    )
+    .await
+    .expect("runtime state");
+    let app = build_app(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/library/works?site=pixiv&search=Library&sort=title_asc&limit=1&offset=1")
+                .body(Body::empty())
+                .expect("library works request"),
+        )
+        .await
+        .expect("library works response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let parsed = response_json(response).await;
+
+    assert_eq!(parsed["site"].as_str(), Some("pixiv"));
+    assert_eq!(parsed["total"].as_u64(), Some(2));
+    assert_eq!(parsed["limit"].as_u64(), Some(1));
+    assert_eq!(parsed["offset"].as_u64(), Some(1));
+    let works = parsed["works"].as_array().expect("works array");
+    assert_eq!(works.len(), 1);
+    assert_eq!(works[0]["work_key"].as_str(), Some("n102"));
+    assert_eq!(works[0]["title"].as_str(), Some("Beta Library"));
+    assert!(works[0].get("raw_json").is_none());
 }
 
 #[tokio::test]
