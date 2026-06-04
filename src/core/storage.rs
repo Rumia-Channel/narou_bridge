@@ -54,6 +54,17 @@ impl WorkListSort {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WorkListFilters<'a> {
+    pub site: Option<&'a str>,
+    pub search: Option<&'a str>,
+    pub author_id: Option<&'a str>,
+    pub author: Option<&'a str>,
+    pub work_type: Option<&'a str>,
+    pub serialization: Option<&'a str>,
+}
+
 const MARK_TASK_STATUS_RETRY_DELAY: Duration = Duration::from_millis(100);
 const STALE_RUNNING_THRESHOLD: ChronoDuration = ChronoDuration::hours(1);
 const STALE_RUNNING_RECOVERY_INTERVAL: Duration = Duration::from_secs(60);
@@ -690,15 +701,19 @@ impl Store {
 
     pub fn list_work_summaries(
         &self,
-        site: Option<&str>,
+        filters: WorkListFilters<'_>,
         limit: usize,
         offset: usize,
-        search: Option<&str>,
         sort: WorkListSort,
     ) -> Result<WorkListPage> {
         let limit = limit.clamp(1, i64::MAX as usize);
         let offset = offset.min(i64::MAX as usize);
-        let search = search.map(str::trim).filter(|value| !value.is_empty());
+        let site = trimmed_filter(filters.site);
+        let search = trimmed_filter(filters.search);
+        let author_id = trimmed_filter(filters.author_id);
+        let author = trimmed_filter(filters.author);
+        let work_type = trimmed_filter(filters.work_type);
+        let serialization = trimmed_filter(filters.serialization);
 
         self.with_conn(|conn| {
             let mut where_parts = Vec::new();
@@ -717,6 +732,26 @@ impl Store {
                 params.push(SqlValue::Text(pattern.clone()));
                 params.push(SqlValue::Text(pattern.clone()));
                 params.push(SqlValue::Text(pattern));
+            }
+
+            if let Some(author_id) = author_id {
+                where_parts.push("author_id = ?");
+                params.push(SqlValue::Text(author_id.to_string()));
+            }
+
+            if let Some(author) = author {
+                where_parts.push("author = ?");
+                params.push(SqlValue::Text(author.to_string()));
+            }
+
+            if let Some(work_type) = work_type {
+                where_parts.push("type = ?");
+                params.push(SqlValue::Text(work_type.to_string()));
+            }
+
+            if let Some(serialization) = serialization {
+                where_parts.push("serialization = ?");
+                params.push(SqlValue::Text(serialization.to_string()));
             }
 
             let where_sql = if where_parts.is_empty() {
@@ -1377,6 +1412,10 @@ fn task_with_started_at_from_row(
     Ok((task_record_from_row(row)?, row.get(9)?))
 }
 
+fn trimmed_filter(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
 fn escape_like_pattern(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -1457,7 +1496,16 @@ mod tests {
             .expect("upsert other site work");
 
         let page = store
-            .list_work_summaries(Some("pixiv"), 1, 1, Some("Match"), WorkListSort::TitleAsc)
+            .list_work_summaries(
+                WorkListFilters {
+                    site: Some("pixiv"),
+                    search: Some("Match"),
+                    ..WorkListFilters::default()
+                },
+                1,
+                1,
+                WorkListSort::TitleAsc,
+            )
             .expect("list work summaries");
 
         assert_eq!(page.site.as_deref(), Some("pixiv"));
@@ -1467,6 +1515,23 @@ mod tests {
         assert_eq!(page.works.len(), 1);
         assert_eq!(page.works[0].work_key, "n3");
         assert_eq!(page.works[0].title, "Gamma Match");
+
+        let author_page = store
+            .list_work_summaries(
+                WorkListFilters {
+                    site: Some("pixiv"),
+                    author_id: Some("Alpha-id"),
+                    work_type: Some("novel"),
+                    serialization: Some("短編"),
+                    ..WorkListFilters::default()
+                },
+                10,
+                0,
+                WorkListSort::UpdatedDesc,
+            )
+            .expect("list filtered work summaries");
+        assert_eq!(author_page.total, 1);
+        assert_eq!(author_page.works[0].work_key, "n2");
     }
 
     fn sample_account(site: &str, name: &str, active: bool) -> AccountRecord {

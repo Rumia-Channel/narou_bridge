@@ -140,6 +140,8 @@ fn sample_library_work_record(
     work.work_key = work_key.to_string();
     work.title = title.to_string();
     work.author = author.to_string();
+    work.author_id = Some(format!("{author}-id"));
+    work.author_url = Some(format!("https://example.com/users/{author}"));
     work.update_date = update_date.to_string();
 
     let raw = work.raw_json.as_object_mut().expect("raw object");
@@ -151,6 +153,11 @@ fn sample_library_work_record(
         json!(format!("https://example.com/{work_key}")),
     );
     raw.insert("author".to_string(), json!(author));
+    raw.insert("author_id".to_string(), json!(format!("{author}-id")));
+    raw.insert(
+        "author_url".to_string(),
+        json!(format!("https://example.com/users/{author}")),
+    );
     raw.insert("updateDate".to_string(), json!(update_date));
 
     work
@@ -446,6 +453,7 @@ async fn library_works_api_pages_db_summaries_without_raw_json() {
     let app = build_app(state);
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/library/works?site=pixiv&search=Library&sort=title_asc&limit=1&offset=1")
@@ -466,6 +474,21 @@ async fn library_works_api_pages_db_summaries_without_raw_json() {
     assert_eq!(works[0]["work_key"].as_str(), Some("n102"));
     assert_eq!(works[0]["title"].as_str(), Some("Beta Library"));
     assert!(works[0].get("raw_json").is_none());
+
+    let filtered_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/library/works?site=pixiv&author_id=Alpha-id&type=novel&serialization=%E7%9F%AD%E7%B7%A8&limit=10")
+                .body(Body::empty())
+                .expect("filtered library works request"),
+        )
+        .await
+        .expect("filtered library works response");
+    assert_eq!(filtered_response.status(), StatusCode::OK);
+    let filtered = response_json(filtered_response).await;
+    assert_eq!(filtered["total"].as_u64(), Some(1));
+    let filtered_works = filtered["works"].as_array().expect("filtered works array");
+    assert_eq!(filtered_works[0]["work_key"].as_str(), Some("n102"));
 }
 
 #[tokio::test]

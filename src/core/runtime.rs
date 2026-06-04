@@ -9,7 +9,7 @@ use crate::core::model::{
 };
 use crate::core::renderer;
 use crate::core::static_bootstrap::write_static_bootstrap;
-use crate::core::storage::{Store, WorkListSort};
+use crate::core::storage::{Store, WorkListFilters, WorkListSort};
 use crate::sites::SiteRegistry;
 use anyhow::{Context, Result};
 use axum::Router;
@@ -83,6 +83,11 @@ struct LibraryWorksQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     search: Option<String>,
+    author_id: Option<String>,
+    author: Option<String>,
+    #[serde(rename = "type")]
+    work_type: Option<String>,
+    serialization: Option<String>,
     sort: Option<String>,
 }
 
@@ -318,13 +323,33 @@ async fn list_library_works_query(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let author_id = trimmed_query_value(query.author_id.as_deref());
+    let author = trimmed_query_value(query.author.as_deref());
+    let work_type = trimmed_query_value(query.work_type.as_deref());
+    let serialization = trimmed_query_value(query.serialization.as_deref());
     let sort = parse_work_list_sort(query.sort.as_deref());
 
     let store = state.store.lock().await;
-    match store.list_work_summaries(site, limit, offset, search, sort) {
+    match store.list_work_summaries(
+        WorkListFilters {
+            site,
+            search,
+            author_id,
+            author,
+            work_type,
+            serialization,
+        },
+        limit,
+        offset,
+        sort,
+    ) {
         Ok(page) => create_json_response(StatusCode::OK, &json!(page)),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
+}
+
+fn trimmed_query_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn parse_work_list_sort(sort: Option<&str>) -> WorkListSort {
