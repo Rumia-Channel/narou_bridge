@@ -237,6 +237,14 @@ pub fn build_app(state: RuntimeState) -> Router {
         .route("/api/health", get(health))
         .route("/api/tasks", get(list_tasks))
         .route("/api/works", get(list_works_query))
+        .route(
+            "/api/library/works/{site}/{work}/raw",
+            get(library_work_raw_json),
+        )
+        .route(
+            "/api/library/works/{site}/{work}/episodes/{episode}",
+            get(library_work_episode_json),
+        )
         .route("/api/library/works", get(list_library_works_query))
         .route("/images/database.json", get(image_database_json))
         .route("/images/cover.json", get(image_cover_json))
@@ -360,6 +368,77 @@ fn parse_work_list_sort(sort: Option<&str>) -> WorkListSort {
         Some("author_asc") => WorkListSort::AuthorAsc,
         Some("author_desc") => WorkListSort::AuthorDesc,
         _ => WorkListSort::UpdatedDesc,
+    }
+}
+
+async fn library_work_raw_json(
+    State(state): State<RuntimeState>,
+    AxumPath((site, work)): AxumPath<(String, String)>,
+) -> Response {
+    if !is_known_site(&state, &site) {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let store = state.store.lock().await;
+    match store.get_work(&site, &work) {
+        Ok(Some(work_record)) => create_json_response(StatusCode::OK, &work_record.raw_json),
+        Ok(None) => create_error(
+            StatusCode::NOT_FOUND,
+            format!("work not found: {site}/{work}"),
+        ),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn library_work_episode_json(
+    State(state): State<RuntimeState>,
+    AxumPath((site, work, episode)): AxumPath<(String, String, String)>,
+) -> Response {
+    if !is_known_site(&state, &site) {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let store = state.store.lock().await;
+    match store.get_work(&site, &work) {
+        Ok(Some(work_record)) => match find_raw_episode(&work_record.raw_json, &episode) {
+            Some(episode_json) => create_json_response(StatusCode::OK, &episode_json),
+            None => create_error(
+                StatusCode::NOT_FOUND,
+                format!("episode not found: {site}/{work}/{episode}"),
+            ),
+        },
+        Ok(None) => create_error(
+            StatusCode::NOT_FOUND,
+            format!("work not found: {site}/{work}"),
+        ),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+fn find_raw_episode(raw_json: &Value, episode: &str) -> Option<Value> {
+    let episodes = raw_json
+        .get("episodes")
+        .or_else(|| raw_json.get("episodes_data"))?
+        .as_object()?;
+    if let Some(value) = episodes.get(episode) {
+        return Some(value.clone());
+    }
+
+    episodes
+        .values()
+        .find(|value| {
+            value
+                .get("id")
+                .is_some_and(|id| json_scalar_matches(id, episode))
+        })
+        .cloned()
+}
+
+fn json_scalar_matches(value: &Value, expected: &str) -> bool {
+    match value {
+        Value::String(text) => text == expected,
+        Value::Number(number) => number.to_string() == expected,
+        _ => false,
     }
 }
 

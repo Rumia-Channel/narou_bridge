@@ -492,6 +492,53 @@ async fn library_works_api_pages_db_summaries_without_raw_json() {
 }
 
 #[tokio::test]
+async fn library_work_api_reads_raw_and_episode_from_db() {
+    let root = test_root("e2e-http-library-work");
+    let config = test_config(&root);
+    let seed_store = Store::open(config.db_path_buf()).expect("open seed store");
+    seed_store
+        .upsert_work(&sample_work_record())
+        .expect("upsert work");
+
+    let state = build_runtime_state(
+        config.clone(),
+        Store::open(config.db_path_buf()).expect("reopen store"),
+        build_registry(),
+    )
+    .await
+    .expect("runtime state");
+    let app = build_app(state);
+
+    let raw_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/library/works/pixiv/n123/raw")
+                .body(Body::empty())
+                .expect("library raw request"),
+        )
+        .await
+        .expect("library raw response");
+    assert_eq!(raw_response.status(), StatusCode::OK);
+    let raw = response_json(raw_response).await;
+    assert_eq!(raw["title"].as_str(), Some("DB-backed work"));
+
+    let episode_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/library/works/pixiv/n123/episodes/1")
+                .body(Body::empty())
+                .expect("library episode request"),
+        )
+        .await
+        .expect("library episode response");
+    assert_eq!(episode_response.status(), StatusCode::OK);
+    let episode = response_json(episode_response).await;
+    assert_eq!(episode["title"].as_str(), Some("Episode 1"));
+    assert_eq!(episode["text"].as_str(), Some("text"));
+}
+
+#[tokio::test]
 async fn build_runtime_state_bootstraps_empty_db_from_external_data_dir() {
     let root = test_root("e2e-http-external-data");
     let external_data_root = root.join("external-data");
