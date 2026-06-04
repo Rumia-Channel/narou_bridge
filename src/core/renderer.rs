@@ -406,40 +406,7 @@ fn render_work_from_raw(
         .with_context(|| format!("failed to parse raw work for {work_key}"))?;
     let rendered = build_rendered_work(raw_work, site.to_string(), work_key.to_string(), raw_json);
 
-    let work_root_html = if rendered.work.serialization == "短編" {
-        if let Some((episode_key, episode)) = rendered.episodes.first() {
-            render_episode_page(
-                &rendered.site,
-                &rendered.work_key,
-                &rendered,
-                episode_key,
-                episode,
-                None,
-                None,
-                host_name,
-                img_url,
-                images,
-            )
-        } else {
-            render_work_index(
-                &rendered.site,
-                &rendered.work_key,
-                &rendered,
-                host_name,
-                img_url,
-                images,
-            )
-        }
-    } else {
-        render_work_index(
-            &rendered.site,
-            &rendered.work_key,
-            &rendered,
-            host_name,
-            img_url,
-            images,
-        )
-    };
+    let work_root_html = render_work_root_html(&rendered, host_name, img_url, images);
     atomic_write(&work_dir.join("index.html"), work_root_html)?;
     atomic_write(
         &info_dir.join("index.html"),
@@ -541,6 +508,10 @@ fn write_site_index(
     img_url: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> Result<()> {
+    atomic_write(
+        &site_dir.join("index.json"),
+        serde_json::to_string_pretty(&build_site_index_json(works))?,
+    )?;
     atomic_write(
         &site_dir.join("index.html"),
         render_site_index(site, works, host_name, img_url, images),
@@ -683,6 +654,105 @@ pub fn build_site_index_json_from_store(store: &Store, site: &str) -> Result<ser
     Ok(build_site_index_json(&rendered))
 }
 
+pub fn render_site_index_html_from_store(
+    store: &Store,
+    site: &str,
+    host_name: &str,
+    img_url: &str,
+) -> Result<String> {
+    let works = store.list_works(Some(site))?;
+    let rendered = works
+        .iter()
+        .map(rendered_work_from_record)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(render_site_index(
+        site,
+        &rendered,
+        host_name,
+        img_url,
+        &HashMap::new(),
+    ))
+}
+
+pub fn render_work_root_html_from_store(
+    store: &Store,
+    site: &str,
+    work_key: &str,
+    host_name: &str,
+    img_url: &str,
+) -> Result<Option<String>> {
+    let Some(work) = store.get_work(site, work_key)? else {
+        return Ok(None);
+    };
+    let rendered = rendered_work_from_record(&work)?;
+    let images = load_image_assets(store)?;
+    Ok(Some(render_work_root_html(
+        &rendered, host_name, img_url, &images,
+    )))
+}
+
+pub fn render_work_info_html_from_store(
+    store: &Store,
+    site: &str,
+    work_key: &str,
+    host_name: &str,
+    img_url: &str,
+) -> Result<Option<String>> {
+    let Some(work) = store.get_work(site, work_key)? else {
+        return Ok(None);
+    };
+    let rendered = rendered_work_from_record(&work)?;
+    let images = load_image_assets(store)?;
+    Ok(Some(render_work_info(
+        &rendered.site,
+        &rendered.work_key,
+        &rendered,
+        host_name,
+        img_url,
+        &images,
+    )))
+}
+
+pub fn render_episode_html_from_store(
+    store: &Store,
+    site: &str,
+    work_key: &str,
+    episode_id: &str,
+    host_name: &str,
+    img_url: &str,
+) -> Result<Option<String>> {
+    let Some(work) = store.get_work(site, work_key)? else {
+        return Ok(None);
+    };
+    let rendered = rendered_work_from_record(&work)?;
+    let Some((index, episode_key, episode)) = find_episode_for_route(&rendered, episode_id) else {
+        return Ok(None);
+    };
+    let images = load_image_assets(store)?;
+    let prev = index.checked_sub(1).and_then(|idx| {
+        rendered
+            .episodes
+            .get(idx)
+            .map(|(_, episode)| episode.id.as_str())
+    });
+    let next = rendered
+        .episodes
+        .get(index + 1)
+        .map(|(_, episode)| episode.id.as_str());
+    Ok(Some(render_episode_page(
+        &rendered.site,
+        &rendered.work_key,
+        &rendered,
+        episode_key,
+        episode,
+        prev,
+        next,
+        host_name,
+        img_url,
+        &images,
+    )))
+}
+
 fn render_site_index(
     site: &str,
     _works: &[RenderedWork],
@@ -691,6 +761,51 @@ fn render_site_index(
     _images: &HashMap<String, ImageAsset>,
 ) -> String {
     SITE_INDEX_TEMPLATE.replace("{site_name}", &escape_html(site))
+}
+
+fn render_work_root_html(
+    rendered: &RenderedWork,
+    host_name: &str,
+    img_url: &str,
+    images: &HashMap<String, ImageAsset>,
+) -> String {
+    if rendered.work.serialization == "短編" {
+        if let Some((episode_key, episode)) = rendered.episodes.first() {
+            return render_episode_page(
+                &rendered.site,
+                &rendered.work_key,
+                rendered,
+                episode_key,
+                episode,
+                None,
+                None,
+                host_name,
+                img_url,
+                images,
+            );
+        }
+    }
+
+    render_work_index(
+        &rendered.site,
+        &rendered.work_key,
+        rendered,
+        host_name,
+        img_url,
+        images,
+    )
+}
+
+fn find_episode_for_route<'a>(
+    rendered: &'a RenderedWork,
+    episode_id: &str,
+) -> Option<(usize, &'a str, &'a RawEpisode)> {
+    rendered
+        .episodes
+        .iter()
+        .enumerate()
+        .find(|(_, (episode_key, episode))| episode_key == episode_id || episode.id == episode_id)
+        .map(|(index, (episode_key, episode))| (index, episode_key.as_str(), episode))
 }
 
 fn render_work_index(
@@ -1565,6 +1680,12 @@ mod tests {
 
         render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", "", None)
             .expect("render site");
+
+        let site_index = fs::read_to_string(data_dir.join("pixiv").join("index.json"))
+            .expect("read site index json");
+        let site_index: serde_json::Value =
+            serde_json::from_str(&site_index).expect("parse site index json");
+        assert_eq!(site_index["n123"]["title"].as_str(), Some("Example Title"));
 
         let (_, cover) = build_image_manifest_jsons(&store).expect("build cover manifest");
         assert_eq!(

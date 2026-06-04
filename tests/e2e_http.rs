@@ -66,6 +66,16 @@ async fn response_json(response: axum::response::Response) -> Value {
     serde_json::from_slice(&body).expect("json body")
 }
 
+async fn response_text(response: axum::response::Response) -> String {
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    String::from_utf8(body.to_vec()).expect("utf-8 body")
+}
+
 fn sample_work_record() -> WorkRecord {
     let raw_json = json!({
         "version": 0,
@@ -443,4 +453,104 @@ async fn build_runtime_state_bootstraps_empty_db_from_external_data_dir() {
     assert_eq!(raw_response.status(), StatusCode::OK);
     let raw_json = response_json(raw_response).await;
     assert_eq!(raw_json["title"].as_str(), Some("DB-backed work"));
+}
+
+#[tokio::test]
+async fn db_backed_html_routes_respond_without_persisted_work_html() {
+    let root = test_root("e2e-http-db-html");
+    let config = test_config(&root);
+    let seed_store = Store::open(config.db_path_buf()).expect("open seed store");
+    seed_store
+        .upsert_work(&sample_work_record())
+        .expect("upsert work");
+    seed_store
+        .upsert_image(&ImageRecord {
+            logical_name: "pixiv_n123_cover.jpg".to_string(),
+            hash: "deadbeefcafebabe".to_string(),
+            ext: "jpg".to_string(),
+            kind: "cover".to_string(),
+        })
+        .expect("upsert image");
+
+    let state = build_runtime_state(
+        config.clone(),
+        Store::open(config.db_path_buf()).expect("reopen store"),
+        build_registry(),
+    )
+    .await
+    .expect("build runtime state");
+    let app = build_app(state);
+
+    assert!(
+        !root
+            .join("data")
+            .join("pixiv")
+            .join("n123")
+            .join("index.html")
+            .exists()
+    );
+
+    let site_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/index.html")
+                .body(Body::empty())
+                .expect("site html request"),
+        )
+        .await
+        .expect("site html response");
+    assert_eq!(site_response.status(), StatusCode::OK);
+    assert_eq!(
+        site_response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    let site_html = response_text(site_response).await;
+    assert!(site_html.contains("pixiv Index"));
+
+    let work_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/n123/index.html")
+                .body(Body::empty())
+                .expect("work html request"),
+        )
+        .await
+        .expect("work html response");
+    assert_eq!(work_response.status(), StatusCode::OK);
+    let work_html = response_text(work_response).await;
+    assert!(work_html.contains("DB-backed work"));
+    assert!(work_html.contains("text"));
+
+    let info_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/n123/info/index.html")
+                .body(Body::empty())
+                .expect("info html request"),
+        )
+        .await
+        .expect("info html response");
+    assert_eq!(info_response.status(), StatusCode::OK);
+    let info_html = response_text(info_response).await;
+    assert!(info_html.contains("caption"));
+
+    let episode_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/n123/1/index.html")
+                .body(Body::empty())
+                .expect("episode html request"),
+        )
+        .await
+        .expect("episode html response");
+    assert_eq!(episode_response.status(), StatusCode::OK);
+    let episode_html = response_text(episode_response).await;
+    assert!(episode_html.contains("Episode 1"));
+    assert!(episode_html.contains("text"));
 }

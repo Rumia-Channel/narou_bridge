@@ -225,7 +225,15 @@ pub fn build_app(state: RuntimeState) -> Router {
         .route("/api/works", get(list_works_query))
         .route("/images/database.json", get(image_database_json))
         .route("/images/cover.json", get(image_cover_json))
+        .route("/{site}/", get(site_index_html))
+        .route("/{site}/index.html", get(site_index_html))
         .route("/{site}/index.json", get(site_index_json))
+        .route("/{site}/{work}/", get(work_index_html))
+        .route("/{site}/{work}/index.html", get(work_index_html))
+        .route("/{site}/{work}/info/", get(work_info_html))
+        .route("/{site}/{work}/info/index.html", get(work_info_html))
+        .route("/{site}/{work}/{episode}/", get(episode_html))
+        .route("/{site}/{work}/{episode}/index.html", get(episode_html))
         .route("/{site}/{work}/raw/raw.json", get(work_raw_json))
         .route(
             "/api/account",
@@ -278,11 +286,31 @@ async fn list_works_query(
     }
 }
 
+async fn site_index_html(
+    State(state): State<RuntimeState>,
+    AxumPath(site): AxumPath<String>,
+) -> Response {
+    if !is_known_site(&state, &site) {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let store = state.store.lock().await;
+    match renderer::render_site_index_html_from_store(
+        &store,
+        &site,
+        &state.config.host_name,
+        &state.config.img_url,
+    ) {
+        Ok(html) => create_html_response(StatusCode::OK, html),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
 async fn site_index_json(
     State(state): State<RuntimeState>,
     AxumPath(site): AxumPath<String>,
 ) -> Response {
-    if !state.registry.site_names().iter().any(|name| name == &site) {
+    if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
     }
 
@@ -309,11 +337,87 @@ async fn image_cover_json(State(state): State<RuntimeState>) -> Response {
     }
 }
 
+async fn work_index_html(
+    State(state): State<RuntimeState>,
+    AxumPath((site, work)): AxumPath<(String, String)>,
+) -> Response {
+    if !is_known_site(&state, &site) {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let store = state.store.lock().await;
+    match renderer::render_work_root_html_from_store(
+        &store,
+        &site,
+        &work,
+        &state.config.host_name,
+        &state.config.img_url,
+    ) {
+        Ok(Some(html)) => create_html_response(StatusCode::OK, html),
+        Ok(None) => create_error(
+            StatusCode::NOT_FOUND,
+            format!("work not found: {site}/{work}"),
+        ),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn work_info_html(
+    State(state): State<RuntimeState>,
+    AxumPath((site, work)): AxumPath<(String, String)>,
+) -> Response {
+    if !is_known_site(&state, &site) {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let store = state.store.lock().await;
+    match renderer::render_work_info_html_from_store(
+        &store,
+        &site,
+        &work,
+        &state.config.host_name,
+        &state.config.img_url,
+    ) {
+        Ok(Some(html)) => create_html_response(StatusCode::OK, html),
+        Ok(None) => create_error(
+            StatusCode::NOT_FOUND,
+            format!("work not found: {site}/{work}"),
+        ),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn episode_html(
+    State(state): State<RuntimeState>,
+    AxumPath((site, work, episode)): AxumPath<(String, String, String)>,
+) -> Response {
+    if !is_known_site(&state, &site) {
+        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
+    }
+
+    let store = state.store.lock().await;
+    match renderer::render_episode_html_from_store(
+        &store,
+        &site,
+        &work,
+        &episode,
+        &state.config.host_name,
+        &state.config.img_url,
+    ) {
+        Ok(Some(html)) => create_html_response(StatusCode::OK, html),
+        Ok(None) => create_error(
+            StatusCode::NOT_FOUND,
+            format!("episode not found: {site}/{work}/{episode}"),
+        ),
+        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
 async fn work_raw_json(
     State(state): State<RuntimeState>,
     AxumPath((site, work)): AxumPath<(String, String)>,
 ) -> Response {
-    if !state.registry.site_names().iter().any(|name| name == &site) {
+    if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
     }
 
@@ -985,6 +1089,20 @@ fn create_error(status: StatusCode, message: String) -> Response {
     (status, Json(json!({"status": "error", "message": message}))).into_response()
 }
 
+fn create_html_response(status: StatusCode, html: String) -> Response {
+    let mut response = (status, html).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-cache"),
+    );
+    response
+}
+
 fn create_json_response(status: StatusCode, value: &Value) -> Response {
     let payload = match serde_json::to_vec_pretty(value) {
         Ok(payload) => payload,
@@ -1021,6 +1139,10 @@ fn create_json_response(status: StatusCode, value: &Value) -> Response {
         headers.insert(header::ETAG, value);
     }
     response
+}
+
+fn is_known_site(state: &RuntimeState, site: &str) -> bool {
+    state.registry.site_names().iter().any(|name| name == site)
 }
 
 async fn ensure_html_utf8_charset(mut response: Response) -> Response {
