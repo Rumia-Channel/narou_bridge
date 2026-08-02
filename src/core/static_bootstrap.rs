@@ -39,7 +39,17 @@ async fn write_root_index(config: &AppConfig, sites: &[String]) -> Result<()> {
 
 async fn write_reader_index(config: &AppConfig, sites: &[String]) -> Result<()> {
     let site_list_json = serde_json::to_string(sites)?;
-    let html = READER_TEMPLATE.replace("{site_list_json}", &site_list_json);
+    let image_base_url = if config.img_url.trim().is_empty() {
+        "/images"
+    } else {
+        config.img_url.trim_end_matches('/')
+    };
+    let html = READER_TEMPLATE
+        .replace("{site_list_json}", &site_list_json)
+        .replace(
+            "{image_base_url_json}",
+            &serde_json::to_string(image_base_url)?,
+        );
     write_text_if_changed(&config.data_reader_dir().join("index.html"), &html).await
 }
 
@@ -213,11 +223,17 @@ mod tests {
     }
 
     #[test]
-    fn reader_bootstrap_embeds_site_list_json() {
-        let html = READER_TEMPLATE.replace(
-            "{site_list_json}",
-            &serde_json::to_string(&vec!["pixiv".to_string(), "narou".to_string()]).unwrap(),
-        );
+    fn reader_bootstrap_embeds_site_list_and_image_base_url() {
+        let html = READER_TEMPLATE
+            .replace(
+                "{site_list_json}",
+                &serde_json::to_string(&vec!["pixiv".to_string(), "narou".to_string()]).unwrap(),
+            )
+            .replace(
+                "{image_base_url_json}",
+                &serde_json::to_string("https://images.example.com").unwrap(),
+            );
         assert!(html.contains(r#"const sources = ["pixiv","narou"];"#));
+        assert!(html.contains(r#"const IMAGE_BASE_URL = "https://images.example.com";"#));
     }
 }

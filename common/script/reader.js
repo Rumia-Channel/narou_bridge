@@ -801,7 +801,7 @@ function formatText(text, novel = null, episode = null) {
 
     // 画像表示
     .replace(/\[image\]\(([^)]+)\)/g, (_, filename) =>
-      `<img src="/images/${filename}" class="inline-image" alt="">`
+      `<img src="${IMAGE_BASE_URL}/${encodeURIComponent(filename)}" class="inline-image" alt="">`
     )
 
     // 改行

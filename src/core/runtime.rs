@@ -21,6 +21,7 @@ use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::fs as stdfs;
@@ -405,7 +406,12 @@ async fn library_work_episode_json(
     let store = state.store.lock().await;
     match store.get_work(&site, &work) {
         Ok(Some(work_record)) => match find_raw_episode(&work_record.raw_json, &episode) {
-            Some(episode_json) => create_cacheable_json_response(&headers, &episode_json),
+            Some(mut episode_json) => {
+                if let Err(err) = resolve_episode_image_names(&store, &mut episode_json) {
+                    return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                }
+                create_cacheable_json_response(&headers, &episode_json)
+            }
             None => create_error(
                 StatusCode::NOT_FOUND,
                 format!("episode not found: {site}/{work}/{episode}"),
@@ -417,6 +423,54 @@ async fn library_work_episode_json(
         ),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
+}
+
+fn resolve_episode_image_names(store: &Store, episode: &mut Value) -> Result<()> {
+    let Some(fields) = episode.as_object_mut() else {
+        return Ok(());
+    };
+    for field in ["introduction", "text", "postscript"] {
+        let Some(text) = fields.get(field).and_then(Value::as_str) else {
+            continue;
+        };
+        if let Cow::Owned(resolved) = resolve_image_markup_names(store, text)? {
+            fields.insert(field.to_string(), Value::String(resolved));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_image_markup_names<'a>(store: &Store, text: &'a str) -> Result<Cow<'a, str>> {
+    const IMAGE_PREFIX: &str = "[image](";
+    if !text.contains(IMAGE_PREFIX) {
+        return Ok(Cow::Borrowed(text));
+    }
+    let mut output = String::with_capacity(text.len());
+    let mut remainder = text;
+    while let Some(start) = remainder.find(IMAGE_PREFIX) {
+        let name_start = start + IMAGE_PREFIX.len();
+        let Some(end_offset) = remainder[name_start..].find(')') else {
+            break;
+        };
+        let name_end = name_start + end_offset;
+        let logical_name = &remainder[name_start..name_end];
+        output.push_str(&remainder[..name_start]);
+        match store.get_image(logical_name)? {
+            Some(image) => {
+                output.push_str(&image.hash);
+                output.push('.');
+                output.push_str(&image.ext);
+            }
+            None => output.push_str(logical_name),
+        }
+        output.push(')');
+        remainder = &remainder[name_end + 1..];
+    }
+    if output.is_empty() {
+        return Ok(Cow::Borrowed(text));
+    }
+    output.push_str(remainder);
+    Ok(Cow::Owned(output))
 }
 
 fn find_raw_episode(raw_json: &Value, episode: &str) -> Option<Value> {

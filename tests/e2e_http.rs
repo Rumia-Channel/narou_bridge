@@ -524,9 +524,17 @@ async fn library_work_api_reads_metadata_then_episode_from_db() {
     let root = test_root("e2e-http-library-work");
     let config = test_config(&root);
     let seed_store = Store::open(config.db_path_buf()).expect("open seed store");
+    let mut work = sample_work_record();
+    work.raw_json["episodes"]["1"]["text"] = json!("before [image](logical-image.jpg) after");
+    seed_store.upsert_work(&work).expect("upsert work");
     seed_store
-        .upsert_work(&sample_work_record())
-        .expect("upsert work");
+        .upsert_image(&ImageRecord {
+            logical_name: "logical-image.jpg".to_string(),
+            hash: "resolved-image-hash".to_string(),
+            ext: "webp".to_string(),
+            kind: "image".to_string(),
+        })
+        .expect("upsert inline image");
 
     let state = build_runtime_state(
         config.clone(),
@@ -565,7 +573,10 @@ async fn library_work_api_reads_metadata_then_episode_from_db() {
     assert_eq!(episode_response.status(), StatusCode::OK);
     let episode = response_json(episode_response).await;
     assert_eq!(episode["title"].as_str(), Some("Episode 1"));
-    assert_eq!(episode["text"].as_str(), Some("text"));
+    assert_eq!(
+        episode["text"].as_str(),
+        Some("before [image](resolved-image-hash.webp) after")
+    );
 }
 
 #[tokio::test]
