@@ -5,61 +5,18 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 const ROOT_SETTING_FILE: &str = "setting.ini";
-const RUNTIME_SETTING_DIR: &str = "setting";
-const RUNTIME_SETTING_FILE: &str = "setting.ini";
 
 pub fn load_app_config(repo_root: &Path) -> Result<AppConfig> {
-    let runtime_setting_path = repo_root
-        .join(RUNTIME_SETTING_DIR)
-        .join(RUNTIME_SETTING_FILE);
-    let source_setting_path = repo_root.join(ROOT_SETTING_FILE);
-
-    // Python 版互換: 正本は `setting/setting.ini`。ルート `setting.ini` は初回起動時の
-    // テンプレートとしてのみ使い、コピー後は `setting/setting.ini` のみを読み込む。
-    if !runtime_setting_path.exists() {
-        if source_setting_path.exists() {
-            ensure_runtime_setting_copy(&source_setting_path, &runtime_setting_path)?;
-        } else {
-            bail!(
-                "missing setting.ini at {} or {}",
-                source_setting_path.display(),
-                runtime_setting_path.display()
-            );
-        }
+    let setting_path = repo_root.join(ROOT_SETTING_FILE);
+    if !setting_path.exists() {
+        bail!("missing setting.ini at {}", setting_path.display());
     }
-
-    let document = IniDocument::from_file(&runtime_setting_path)?;
+    let document = IniDocument::from_file(&setting_path)?;
     Ok(build_app_config(repo_root, &document))
-}
-
-fn ensure_runtime_setting_copy(source_path: &Path, runtime_path: &Path) -> Result<()> {
-    if runtime_path.exists() {
-        return Ok(());
-    }
-
-    let runtime_dir = runtime_path
-        .parent()
-        .context("runtime setting path has no parent directory")?;
-    std::fs::create_dir_all(runtime_dir).with_context(|| {
-        format!(
-            "failed to create runtime setting directory {}",
-            runtime_dir.display()
-        )
-    })?;
-    std::fs::copy(source_path, runtime_path).with_context(|| {
-        format!(
-            "failed to copy {} to {}",
-            source_path.display(),
-            runtime_path.display()
-        )
-    })?;
-    Ok(())
 }
 
 fn build_app_config(repo_root: &Path, document: &IniDocument) -> AppConfig {
     let data_dir = resolve_runtime_dir(repo_root, document.get("setting", "data"), "data");
-    let cookie_dir = resolve_runtime_dir(repo_root, document.get("setting", "cookie"), "cookie");
-    let queue_dir = resolve_runtime_dir(repo_root, document.get("setting", "queue"), "queue");
     let pdf_dir = resolve_runtime_dir(repo_root, document.get("setting", "pdf"), "pdf");
     let log_dir = resolve_runtime_dir(repo_root, document.get("setting", "log"), "log");
     let img_url = document
@@ -80,21 +37,17 @@ fn build_app_config(repo_root: &Path, document: &IniDocument) -> AppConfig {
 
     AppConfig {
         data_dir: data_dir.to_string_lossy().to_string(),
-        cookie_dir: cookie_dir.to_string_lossy().to_string(),
-        queue_dir: queue_dir.to_string_lossy().to_string(),
         pdf_dir: pdf_dir.to_string_lossy().to_string(),
         log_dir: log_dir.to_string_lossy().to_string(),
         db_path: data_dir
             .join("runtime.sqlite3")
             .to_string_lossy()
             .to_string(),
-        archive_dir: repo_root.join("archive").to_string_lossy().to_string(),
         bind_addr,
         host_name,
         img_url,
         auto_update: parse_bool(document.get("setting", "auto_update")),
         auto_update_interval: parse_u64(document.get("setting", "auto_update_interval"), 43_200),
-        legacy_root: Some(repo_root.join("sample").to_string_lossy().to_string()),
     }
 }
 
@@ -314,13 +267,12 @@ mod tests {
     }
 
     #[test]
-    fn build_config_reads_legacy_sections() {
+    fn build_config_reads_runtime_sections() {
         let root = Path::new(r"C:\repo");
         let document = IniDocument::parse(
             r#"
 [setting]
 data=
-cookie=D:\runtime
 auto_update=1
 auto_update_interval=600
 
@@ -334,19 +286,11 @@ use_proxy=0
 
         let config = build_app_config(root, &document);
         assert_eq!(config.data_dir, root.join("data").to_string_lossy());
-        assert_eq!(
-            config.cookie_dir,
-            Path::new(r"D:\runtime").to_string_lossy()
-        );
         assert_eq!(config.bind_addr, "127.0.0.1:9000");
         assert_eq!(config.host_name, "http://localhost:9000");
         assert_eq!(config.img_url, "");
         assert!(config.auto_update);
         assert_eq!(config.auto_update_interval, 600);
-        assert_eq!(
-            config.legacy_root,
-            Some(root.join("sample").to_string_lossy().into_owned())
-        );
     }
 
     #[test]
@@ -356,8 +300,6 @@ use_proxy=0
             r#"
 [setting]
 data=C:\Users\user\Documents\Webnovel\narou_bridge
-cookie=C:\Users\user\Documents\Webnovel\cookie
-queue=C:\Users\user\Documents\Webnovel\queue
 pdf=C:\Users\user\Documents\Webnovel\pdf
 log=C:\Users\user\Documents\Webnovel\log
 
@@ -378,14 +320,6 @@ port=8080
             Path::new(r"C:\Users\user\Documents\Webnovel\narou_bridge")
                 .join("runtime.sqlite3")
                 .to_string_lossy()
-        );
-        assert_eq!(
-            config.cookie_dir,
-            Path::new(r"C:\Users\user\Documents\Webnovel\cookie").to_string_lossy()
-        );
-        assert_eq!(
-            config.queue_dir,
-            Path::new(r"C:\Users\user\Documents\Webnovel\queue").to_string_lossy()
         );
     }
 

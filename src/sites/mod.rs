@@ -18,10 +18,7 @@ pub struct SiteActionContext {
     pub host_name: String,
     pub img_url: String,
     pub data_dir: String,
-    pub cookie_dir: String,
-    pub queue_dir: String,
     pub pdf_dir: String,
-    pub archive_dir: String,
     pub request: RequestData,
 }
 

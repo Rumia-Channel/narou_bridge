@@ -1,5 +1,4 @@
 use crate::core::model::{ImageRecord, WorkRecord};
-use crate::core::renderer;
 use crate::core::storage::Store;
 use crate::sites::{Site, SiteActionContext, SiteActionResult, SiteId};
 use anyhow::{Result, anyhow};
@@ -25,7 +24,6 @@ use repair::repair_pixiv;
 use update::pixiv_update;
 
 const VERSION: i64 = 0;
-const USER_CONFIG_VERSION: i64 = 5;
 const ENABLED_FLAG: &str = "enable";
 pub const PIXIV_SITE_DOCUMENT_SCOPE: &str = "pixiv";
 const TRACKED_USER_KEY_PREFIX: &str = "tracked_users/";
@@ -129,7 +127,6 @@ impl Site for PixivSite {
                     value,
                     store,
                     &context.data_dir,
-                    &context.cookie_dir,
                     &context.host_name,
                     &context.img_url,
                 ) {
@@ -137,13 +134,7 @@ impl Site for PixivSite {
                     Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
                 }
             }
-            "update" => match pixiv_update(
-                store,
-                &context.data_dir,
-                &context.cookie_dir,
-                &context.host_name,
-                &context.img_url,
-            ) {
+            "update" => match pixiv_update(store, &context.data_dir) {
                 Ok(message) => SiteActionResult::success(self.id(), action, message),
                 Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
             },
@@ -180,18 +171,10 @@ impl Site for PixivSite {
             "login" => {
                 SiteActionResult::skipped(self.id(), action, "login moved to separate helper")
             }
-            "re_download" => {
-                match pixiv_update(
-                    store,
-                    &context.data_dir,
-                    &context.cookie_dir,
-                    &context.host_name,
-                    &context.img_url,
-                ) {
-                    Ok(message) => SiteActionResult::success(self.id(), action, message),
-                    Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
-                }
-            }
+            "re_download" => match pixiv_update(store, &context.data_dir) {
+                Ok(message) => SiteActionResult::success(self.id(), action, message),
+                Err(err) => SiteActionResult::failed(self.id(), action, err.to_string()),
+            },
             _ => SiteActionResult::skipped(self.id(), action, "unsupported"),
         }
     }
@@ -205,62 +188,43 @@ fn pixiv_download(
     url: &str,
     store: &mut Store,
     data_dir: &str,
-    cookie_dir: &str,
-    host_name: &str,
-    img_url: &str,
+    _host_name: &str,
+    _img_url: &str,
 ) -> Result<String> {
     let img_path = PathBuf::from(data_dir).join("images");
     fs::create_dir_all(&img_path)?;
-    let folder_path = PathBuf::from(data_dir).join("pixiv");
-    fs::create_dir_all(&folder_path)?;
 
-    let client = build_client(store, cookie_dir)?;
+    let client = build_client(store)?;
     let target = parse_pixiv_url(url).ok_or_else(|| anyhow!("unsupported pixiv url: {url}"))?;
 
-    let (message, deferred_error, target_work) = match target {
+    let (message, deferred_error) = match target {
         PixivUrlTarget::Novel(id) => {
             info!("Pixiv download: novel id={id}");
-            let record = download_novel(&client, &id, &folder_path, &img_path, store)?;
+            let record = download_novel(&client, &id, &img_path, store)?;
             persist_work_record(store, &record, &img_path)?;
-            (
-                format!("stored {}", record.work_key),
-                None,
-                Some(record.work_key),
-            )
+            (format!("stored {}", record.work_key), None)
         }
         PixivUrlTarget::Series(id) => {
             info!("Pixiv download: novel series id={id}");
-            let record = download_series(&client, &id, &folder_path, &img_path, store)?;
+            let record = download_series(&client, &id, &img_path, store)?;
             persist_work_record(store, &record, &img_path)?;
-            (
-                format!("stored {}", record.work_key),
-                None,
-                Some(record.work_key),
-            )
+            (format!("stored {}", record.work_key), None)
         }
         PixivUrlTarget::Art(id) => {
             info!("Pixiv download: artwork id={id}");
-            let record = download_art(&client, &id, &folder_path, &img_path, store)?;
+            let record = download_art(&client, &id, &img_path, store)?;
             persist_work_record(store, &record, &img_path)?;
-            (
-                format!("stored {}", record.work_key),
-                None,
-                Some(record.work_key),
-            )
+            (format!("stored {}", record.work_key), None)
         }
         PixivUrlTarget::Comic(id) => {
             info!("Pixiv download: comic series id={id}");
-            let record = download_comic(&client, &id, &folder_path, &img_path, store)?;
+            let record = download_comic(&client, &id, &img_path, store)?;
             persist_work_record(store, &record, &img_path)?;
-            (
-                format!("stored {}", record.work_key),
-                None,
-                Some(record.work_key),
-            )
+            (format!("stored {}", record.work_key), None)
         }
         PixivUrlTarget::User(user_id) => {
             info!("Pixiv download: user id={user_id}");
-            let summary = download_user(&client, &user_id, &folder_path, &img_path, store, false)?;
+            let summary = download_user(&client, &user_id, &img_path, store, false)?;
             let user_name = summary.user_name.as_deref().unwrap_or(&summary.user_id);
             let deferred_error = (!summary.failures.is_empty()).then(|| {
                 anyhow!(
@@ -276,19 +240,10 @@ fn pixiv_download(
                     user_name, summary.user_id, summary.downloaded_works
                 ),
                 deferred_error,
-                None,
             )
         }
     };
 
-    renderer::render_site_from_store(
-        store,
-        "pixiv",
-        data_dir,
-        host_name,
-        img_url,
-        target_work.as_deref(),
-    )?;
     if let Some(err) = deferred_error {
         return Err(err);
     }
@@ -641,17 +596,6 @@ fn looks_like_legacy_hex_hash(hash: &str) -> bool {
 // User config paths
 // ---------------------------------------------------------------------------
 
-fn user_config_path(folder_path: &Path) -> PathBuf {
-    folder_path.join("user.json")
-}
-
-fn snapshot_path(folder_path: &Path, user_id: &str) -> PathBuf {
-    folder_path
-        .join("snapshots")
-        .join("illust_ids")
-        .join(format!("{user_id}.json"))
-}
-
 fn enabled_flag_string() -> String {
     ENABLED_FLAG.to_string()
 }
@@ -669,29 +613,11 @@ fn tracked_user_id_from_config_key(key: &str) -> Option<&str> {
         .strip_suffix(TRACKED_USER_CONFIG_SUFFIX)
 }
 
-fn load_legacy_user_config_document(folder_path: &Path) -> Result<Map<String, Value>> {
-    let path = user_config_path(folder_path);
-    let mut document = if path.exists() {
-        let content = fs::read_to_string(&path)?;
-        serde_json::from_str::<Value>(&content)
-            .ok()
-            .and_then(|value| value.as_object().cloned())
-            .unwrap_or_default()
-    } else {
-        Map::new()
-    };
-    document.insert("version".to_string(), json!(USER_CONFIG_VERSION));
-    Ok(document)
-}
-
 fn tracked_user_entry_from_value(value: Value) -> PixivTrackedUserEntry {
     serde_json::from_value(value).unwrap_or_default()
 }
 
-fn list_tracked_user_entries(
-    store: &Store,
-    folder_path: &Path,
-) -> Result<Vec<(String, PixivTrackedUserEntry)>> {
+fn list_tracked_user_entries(store: &Store) -> Result<Vec<(String, PixivTrackedUserEntry)>> {
     let mut entries = store
         .list_site_document_records(PIXIV_SITE_DOCUMENT_SCOPE, Some(TRACKED_USER_KEY_PREFIX))?
         .into_iter()
@@ -704,97 +630,37 @@ fn list_tracked_user_entries(
             })
         })
         .collect::<Vec<_>>();
-    if entries.is_empty() {
-        import_legacy_tracked_user_documents(store, folder_path)?;
-        entries = store
-            .list_site_document_records(PIXIV_SITE_DOCUMENT_SCOPE, Some(TRACKED_USER_KEY_PREFIX))?
-            .into_iter()
-            .filter_map(|record| {
-                tracked_user_id_from_config_key(&record.key).map(|user_id| {
-                    (
-                        user_id.to_string(),
-                        tracked_user_entry_from_value(record.document),
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-    }
     entries.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(entries)
 }
 
-fn sync_tracked_user_config_mirror(_store: &Store, _folder_path: &Path) -> Result<()> {
-    Ok(())
-}
-
-fn import_legacy_tracked_user_documents(store: &Store, folder_path: &Path) -> Result<usize> {
-    let path = user_config_path(folder_path);
-    if !path.exists() {
-        return Ok(0);
-    }
-
-    let document = load_legacy_user_config_document(folder_path)?;
-    let updated_at = file_modified_string(&path).unwrap_or_else(now_string);
-    let mut imported = 0;
-    for (user_id, value) in document {
-        if user_id == "version" {
-            continue;
-        }
-        let entry = tracked_user_entry_from_value(value);
-        store.upsert_site_document(
-            PIXIV_SITE_DOCUMENT_SCOPE,
-            &tracked_user_config_key(&user_id),
-            &entry,
-            &updated_at,
-        )?;
-        imported += 1;
-    }
-    Ok(imported)
-}
-
-pub fn ensure_tracked_user(
-    store: &Store,
-    folder_path: &Path,
-    user_id: &str,
-) -> Result<PixivTrackedUserEntry> {
+pub fn ensure_tracked_user(store: &Store, user_id: &str) -> Result<PixivTrackedUserEntry> {
     let key = tracked_user_config_key(user_id);
-    if let Some(record) = store.get_site_document_record(PIXIV_SITE_DOCUMENT_SCOPE, &key)? {
-        return Ok(tracked_user_entry_from_value(record.document));
-    }
-
-    import_legacy_tracked_user_documents(store, folder_path)?;
     if let Some(record) = store.get_site_document_record(PIXIV_SITE_DOCUMENT_SCOPE, &key)? {
         return Ok(tracked_user_entry_from_value(record.document));
     }
 
     let entry = PixivTrackedUserEntry::default();
     store.upsert_site_document(PIXIV_SITE_DOCUMENT_SCOPE, &key, &entry, &now_string())?;
-    sync_tracked_user_config_mirror(store, folder_path)?;
     Ok(entry)
 }
 
-pub fn update_tracked_user<F>(
-    store: &Store,
-    folder_path: &Path,
-    user_id: &str,
-    mut updater: F,
-) -> Result<()>
+pub fn update_tracked_user<F>(store: &Store, user_id: &str, mut updater: F) -> Result<()>
 where
     F: FnMut(&mut PixivTrackedUserEntry),
 {
-    let mut entry = ensure_tracked_user(store, folder_path, user_id)?;
+    let mut entry = ensure_tracked_user(store, user_id)?;
     updater(&mut entry);
     store.upsert_site_document(
         PIXIV_SITE_DOCUMENT_SCOPE,
         &tracked_user_config_key(user_id),
         &entry,
         &now_string(),
-    )?;
-    sync_tracked_user_config_mirror(store, folder_path)
+    )
 }
 
-pub fn tracked_user_ids(store: &Store, folder_path: &Path) -> Result<Vec<String>> {
-    let mut ids = list_tracked_user_entries(store, folder_path)?
+pub fn tracked_user_ids(store: &Store) -> Result<Vec<String>> {
+    let mut ids = list_tracked_user_entries(store)?
         .into_iter()
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
@@ -814,62 +680,18 @@ pub fn action_enabled(entry: &PixivTrackedUserEntry, key: &str) -> bool {
 // Snapshot helpers
 // ---------------------------------------------------------------------------
 
-pub fn load_legacy_illust_snapshot(folder_path: &Path, user_id: &str) -> Result<BTreeSet<String>> {
-    let path = snapshot_path(folder_path, user_id);
-    if !path.exists() {
-        return Ok(BTreeSet::new());
-    }
-    let content = fs::read_to_string(&path)?;
-    let value = serde_json::from_str::<Value>(&content).unwrap_or(Value::Null);
-    let snapshot = value
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| match item {
-                    Value::String(value) => Some(value.clone()),
-                    Value::Number(value) => Some(value.to_string()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Ok(snapshot)
-}
-
-pub fn load_illust_snapshot(
-    store: &Store,
-    folder_path: &Path,
-    user_id: &str,
-) -> Result<BTreeSet<String>> {
-    if let Some(snapshot) = store.get_site_document::<PixivIllustSnapshotDocument>(
-        PIXIV_SITE_DOCUMENT_SCOPE,
-        &tracked_user_snapshot_key(user_id),
-    )? {
-        return Ok(snapshot.illust_ids);
-    }
-
-    let legacy_snapshot = load_legacy_illust_snapshot(folder_path, user_id)?;
-    if legacy_snapshot.is_empty() {
-        return Ok(legacy_snapshot);
-    }
-
-    let updated_at =
-        file_modified_string(&snapshot_path(folder_path, user_id)).unwrap_or_else(now_string);
-    store.upsert_site_document(
-        PIXIV_SITE_DOCUMENT_SCOPE,
-        &tracked_user_snapshot_key(user_id),
-        &PixivIllustSnapshotDocument {
-            illust_ids: legacy_snapshot.clone(),
-        },
-        &updated_at,
-    )?;
-    Ok(legacy_snapshot)
+pub fn load_illust_snapshot(store: &Store, user_id: &str) -> Result<BTreeSet<String>> {
+    Ok(store
+        .get_site_document::<PixivIllustSnapshotDocument>(
+            PIXIV_SITE_DOCUMENT_SCOPE,
+            &tracked_user_snapshot_key(user_id),
+        )?
+        .map(|snapshot| snapshot.illust_ids)
+        .unwrap_or_default())
 }
 
 pub fn save_illust_snapshot(
     store: &Store,
-    _folder_path: &Path,
     user_id: &str,
     ids: &BTreeSet<String>,
 ) -> Result<String> {
@@ -901,12 +723,6 @@ pub fn hash_ids<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
 // ---------------------------------------------------------------------------
 // JSON serialization helpers
 // ---------------------------------------------------------------------------
-
-fn file_modified_string(path: &Path) -> Option<String> {
-    let modified = fs::metadata(path).ok()?.modified().ok()?;
-    let dt: chrono::DateTime<chrono::Utc> = modified.into();
-    Some(dt.to_rfc3339())
-}
 
 pub fn now_string() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -1624,10 +1440,9 @@ mod tests {
     }
 
     #[test]
-    fn ensure_tracked_user_creates_compat_entry() {
-        let dir = test_dir("pixiv-user-config");
+    fn ensure_tracked_user_creates_sqlite_document() {
         let store = Store::open_in_memory().unwrap();
-        let entry = ensure_tracked_user(&store, &dir, "12345").unwrap();
+        let entry = ensure_tracked_user(&store, "12345").unwrap();
 
         assert_eq!(entry.novel, "enable");
         assert_eq!(entry.comic, "enable");
@@ -1639,62 +1454,41 @@ mod tests {
             stored.document.get("novel").and_then(Value::as_str),
             Some("enable")
         );
-        assert!(!dir.join("user.json").exists());
-
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn ensure_tracked_user_preserves_existing_flags_and_snapshot_helpers_are_stable() {
-        let dir = test_dir("pixiv-user-snapshot");
+    fn tracked_user_documents_and_snapshot_helpers_use_sqlite() {
         let store = Store::open_in_memory().unwrap();
-        fs::write(
-            dir.join("user.json"),
-            r#"{
-  "version": 1,
-  "12345": {
-    "novel": "disable"
-  }
-}"#,
-        )
-        .unwrap();
+        store
+            .upsert_site_document(
+                PIXIV_SITE_DOCUMENT_SCOPE,
+                &tracked_user_config_key("12345"),
+                &PixivTrackedUserEntry {
+                    novel: "disable".to_string(),
+                    ..PixivTrackedUserEntry::default()
+                },
+                "2025-01-01T00:00:00Z",
+            )
+            .unwrap();
 
-        let entry = ensure_tracked_user(&store, &dir, "12345").unwrap();
+        let entry = ensure_tracked_user(&store, "12345").unwrap();
         assert_eq!(entry.novel, "disable");
         assert_eq!(entry.comic, "enable");
 
         let ids = ["30".to_string(), "10".to_string(), "20".to_string()]
             .into_iter()
             .collect::<BTreeSet<_>>();
-        let hash = save_illust_snapshot(&store, &dir, "12345", &ids).unwrap();
-        let loaded = load_illust_snapshot(&store, &dir, "12345").unwrap();
+        let hash = save_illust_snapshot(&store, "12345", &ids).unwrap();
+        let loaded = load_illust_snapshot(&store, "12345").unwrap();
         assert_eq!(loaded, ids);
         assert_eq!(hash, hash_ids(["20", "10", "30"]));
 
-        let tracked = tracked_user_ids(&store, &dir).unwrap();
+        let tracked = tracked_user_ids(&store).unwrap();
         assert_eq!(tracked, vec!["12345".to_string()]);
-        assert!(!snapshot_path(&dir, "12345").exists());
-
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn resolve_active_pixiv_account_uses_sqlite_only() {
-        let root = test_dir("pixiv-active-account");
-        let cookie_root = root.join("cookie");
-        let pixiv_cookie_dir = cookie_root.join("pixiv");
-        fs::create_dir_all(&pixiv_cookie_dir).unwrap();
-        fs::write(
-            pixiv_cookie_dir.join("login.json"),
-            serde_json::to_string_pretty(&AccountFile {
-                cookies: json!({"session": "file"}),
-                user_agent: Some("file-ua".to_string()),
-                display_name: Some("file".to_string()),
-            })
-            .unwrap(),
-        )
-        .unwrap();
-
         let store = Store::open_in_memory().unwrap();
         store
             .upsert_account(&crate::core::model::AccountRecord {
@@ -1717,8 +1511,6 @@ mod tests {
             Some("db")
         );
         assert!(source.contains("sqlite accounts table"));
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1922,22 +1714,15 @@ mod tests {
 
         let root = test_dir("pixiv-redownload-support");
         let data_dir = root.join("data");
-        let cookie_dir = root.join("cookie");
-        let queue_dir = root.join("queue");
         let pdf_dir = root.join("pdf");
-        let archive_dir = root.join("archive");
         fs::create_dir_all(&data_dir).unwrap();
-        fs::create_dir_all(&cookie_dir).unwrap();
 
         let mut store = Store::open_in_memory().expect("store");
         let context = crate::sites::SiteActionContext {
             host_name: String::new(),
             img_url: String::new(),
             data_dir: data_dir.to_string_lossy().to_string(),
-            cookie_dir: cookie_dir.to_string_lossy().to_string(),
-            queue_dir: queue_dir.to_string_lossy().to_string(),
             pdf_dir: pdf_dir.to_string_lossy().to_string(),
-            archive_dir: archive_dir.to_string_lossy().to_string(),
             request: crate::core::model::RequestData::default(),
         };
 

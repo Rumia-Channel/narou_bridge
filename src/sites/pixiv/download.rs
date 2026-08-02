@@ -4,7 +4,6 @@ use anyhow::{Result, anyhow};
 use reqwest::blocking::Client;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs;
 use std::path::Path;
 use tracing::{info, warn};
 
@@ -23,7 +22,6 @@ use super::{
 pub fn download_novel(
     client: &Client,
     novel_id: &str,
-    folder_path: &Path,
     img_path: &Path,
     store: &Store,
 ) -> Result<WorkRecord> {
@@ -33,8 +31,6 @@ pub fn download_novel(
     )?;
 
     let work_key = format!("n{novel_id}");
-    let novel_path = folder_path.join(&work_key);
-    fs::create_dir_all(novel_path.join("raw"))?;
 
     // Text
     let raw_text = body
@@ -128,7 +124,6 @@ pub fn download_novel(
 pub fn download_series(
     client: &Client,
     series_id: &str,
-    folder_path: &Path,
     img_path: &Path,
     store: &Store,
 ) -> Result<WorkRecord> {
@@ -138,8 +133,6 @@ pub fn download_series(
     )?;
 
     let work_key = format!("s{series_id}");
-    let series_path = folder_path.join(&work_key);
-    fs::create_dir_all(series_path.join("raw"))?;
 
     // TOC (content_titles)
     let toc_body = fetch_body_json(
@@ -325,7 +318,6 @@ pub fn download_series(
 pub fn download_art(
     client: &Client,
     art_id: &str,
-    folder_path: &Path,
     img_path: &Path,
     store: &Store,
 ) -> Result<WorkRecord> {
@@ -335,8 +327,6 @@ pub fn download_art(
     )?;
 
     let work_key = format!("a{art_id}");
-    let art_path = folder_path.join(&work_key);
-    fs::create_dir_all(art_path.join("raw"))?;
 
     // Pages
     let pages_body = fetch_body_json(
@@ -447,13 +437,10 @@ pub fn download_art(
 pub fn download_comic(
     client: &Client,
     comic_id: &str,
-    folder_path: &Path,
     img_path: &Path,
     store: &Store,
 ) -> Result<WorkRecord> {
     let work_key = format!("c{comic_id}");
-    let comic_dir = folder_path.join(&work_key);
-    fs::create_dir_all(comic_dir.join("raw"))?;
 
     // Collect all artwork IDs across pages
     let mut arts: BTreeMap<i64, String> = BTreeMap::new();
@@ -736,12 +723,11 @@ pub fn download_comic(
 pub fn download_user(
     client: &Client,
     user_id: &str,
-    folder_path: &Path,
     img_path: &Path,
     store: &mut Store,
     update: bool,
 ) -> Result<super::UserDownloadSummary> {
-    let user_conf = ensure_tracked_user(store, folder_path, user_id)?;
+    let user_conf = ensure_tracked_user(store, user_id)?;
     let persist_record = |store: &Store, record: &WorkRecord, img_path: &Path| -> Result<bool> {
         if update {
             persist_work_record_for_update(store, record, img_path)
@@ -817,7 +803,7 @@ pub fn download_user(
 
     if action_enabled(&user_conf, "novel") {
         for series_id in &novel_series {
-            match download_series(client, series_id, folder_path, img_path, store) {
+            match download_series(client, series_id, img_path, store) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
@@ -829,7 +815,7 @@ pub fn download_user(
             }
         }
         for novel_id in &novels {
-            match download_novel(client, novel_id, folder_path, img_path, store) {
+            match download_novel(client, novel_id, img_path, store) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
@@ -842,7 +828,7 @@ pub fn download_user(
 
     if action_enabled(&user_conf, "comic") {
         for series_id in &comic_series {
-            match download_comic(client, series_id, folder_path, img_path, store) {
+            match download_comic(client, series_id, img_path, store) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
@@ -861,7 +847,7 @@ pub fn download_user(
             }
         }
 
-        let previous_snapshot = load_illust_snapshot(store, folder_path, user_id)?;
+        let previous_snapshot = load_illust_snapshot(store, user_id)?;
         let mut new_art_ids = Vec::new();
         for art_id in &target_art_ids {
             if !update || !previous_snapshot.contains(art_id) {
@@ -873,7 +859,7 @@ pub fn download_user(
         // Failed fetches must stay out of the snapshot so later updates retry them.
         let mut successful_art_ids = BTreeSet::new();
         for art_id in &new_art_ids {
-            match download_art(client, art_id, folder_path, img_path, store) {
+            match download_art(client, art_id, img_path, store) {
                 Ok(record) => {
                     if persist_record(store, &record, img_path)? {
                         summary.downloaded_works += 1;
@@ -886,16 +872,16 @@ pub fn download_user(
 
         let successful_snapshot_ids =
             snapshot_success_ids(&previous_snapshot, successful_art_ids.iter().cloned());
-        let hash = save_illust_snapshot(store, folder_path, user_id, &successful_snapshot_ids)?;
+        let hash = save_illust_snapshot(store, user_id, &successful_snapshot_ids)?;
         summary.tracked_artworks = successful_snapshot_ids.len();
-        super::update_tracked_user(store, folder_path, user_id, |entry| {
+        super::update_tracked_user(store, user_id, |entry| {
             entry.illust_ids_snapshot_hash = Some(hash.clone());
             if let Some(user_name) = summary.user_name.clone() {
                 entry.name = Some(user_name);
             }
         })?;
     } else if summary.user_name.is_some() {
-        super::update_tracked_user(store, folder_path, user_id, |entry| {
+        super::update_tracked_user(store, user_id, |entry| {
             if let Some(user_name) = summary.user_name.clone() {
                 entry.name = Some(user_name);
             }

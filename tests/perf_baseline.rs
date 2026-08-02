@@ -1,5 +1,5 @@
 use narou_bridge::core::model::WorkRecord;
-use narou_bridge::core::renderer::render_site_from_store;
+use narou_bridge::core::renderer::validate_site_from_store;
 use narou_bridge::core::storage::Store;
 use serde_json::json;
 use std::path::PathBuf;
@@ -62,14 +62,12 @@ fn synthetic_raw(work_key: &str, episode_count: usize) -> serde_json::Value {
     })
 }
 
-/// Light-weight perf smoke: build N synthetic works, render the site, print elapsed.
+/// Light-weight perf smoke: build N synthetic works and validate DB-backed rendering data.
 /// Acts as a baseline anchor — fails only if catastrophically slow (>30s for 100 works).
 #[test]
 fn perf_baseline_render_site() {
     let root = unique_root("perf-baseline");
     let db_path = root.join("perf.db");
-    let data_dir = root.join("data");
-    std::fs::create_dir_all(&data_dir).expect("create data dir");
 
     let store = Store::open(&db_path).expect("open store");
 
@@ -99,15 +97,7 @@ fn perf_baseline_render_site() {
     let insert_elapsed = insert_start.elapsed();
 
     let render_start = Instant::now();
-    render_site_from_store(
-        &store,
-        "pixiv",
-        data_dir.to_str().unwrap(),
-        "http://127.0.0.1:0",
-        "",
-        None,
-    )
-    .expect("render site");
+    validate_site_from_store(&store, "pixiv", None).expect("validate site");
     let render_elapsed = render_start.elapsed();
 
     eprintln!(
@@ -119,6 +109,4 @@ fn perf_baseline_render_site() {
         render_elapsed.as_secs() < 30,
         "render too slow: {render_elapsed:?}"
     );
-    let index_html = data_dir.join("pixiv").join("index.html");
-    assert!(index_html.exists(), "site index html not generated");
 }

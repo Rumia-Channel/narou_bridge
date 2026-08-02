@@ -685,6 +685,24 @@ rt {
   }
 }
 
+/* --- Library Pagination --- */
+.reader-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.reader-pagination button {
+  min-width: 5rem;
+}
+
+.reader-pagination span {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- Print Styles --- */
 @media print {
   header,

@@ -1,5 +1,4 @@
 use crate::core::auto_updater::AccountRotation;
-use crate::core::renderer;
 use crate::core::storage::Store;
 use anyhow::Result;
 use chrono::Utc;
@@ -15,37 +14,22 @@ use super::fetch::{
 };
 
 /// Update all tracked Pixiv users' works
-pub fn pixiv_update(
-    store: &mut Store,
-    data_dir: &str,
-    cookie_dir: &str,
-    host_name: &str,
-    img_url: &str,
-) -> Result<String> {
+pub fn pixiv_update(store: &mut Store, data_dir: &str) -> Result<String> {
     let img_path = PathBuf::from(data_dir).join("images");
     fs::create_dir_all(&img_path)?;
-    let folder_path = PathBuf::from(data_dir).join("pixiv");
-    fs::create_dir_all(&folder_path)?;
 
-    let tracked_users = super::tracked_user_ids(store, &folder_path)?;
+    let tracked_users = super::tracked_user_ids(store)?;
     if tracked_users.is_empty() {
-        renderer::render_site_from_store(store, "pixiv", data_dir, host_name, img_url, None)?;
-        return Ok(
-            "pixiv update rendered existing works; no tracked users in user.json".to_string(),
-        );
+        return Ok("pixiv update skipped; no tracked users in stored settings".to_string());
     }
 
-    let candidates = resolve_pixiv_account_candidates(store, cookie_dir);
+    let candidates = resolve_pixiv_account_candidates(store);
     if candidates.is_empty() {
         return run_pixiv_update_with_client(
             store,
-            &build_client(store, cookie_dir)?,
+            &build_client(store)?,
             tracked_users,
-            &folder_path,
             &img_path,
-            data_dir,
-            host_name,
-            img_url,
         );
     }
 
@@ -63,18 +47,9 @@ pub fn pixiv_update(
             .expect("candidate exists for current rotation entry");
         let client = build_client_for_account(Some(&candidate.account), Some(&candidate.source))?;
 
-        match run_pixiv_update_with_client(
-            store,
-            &client,
-            tracked_users.clone(),
-            &folder_path,
-            &img_path,
-            data_dir,
-            host_name,
-            img_url,
-        ) {
+        match run_pixiv_update_with_client(store, &client, tracked_users.clone(), &img_path) {
             Ok(message) => {
-                persist_active_candidate(store, cookie_dir, candidate)?;
+                persist_active_candidate(store, candidate)?;
                 return Ok(message);
             }
             Err(err) if is_authentication_error(&err) => {
@@ -101,18 +76,14 @@ fn run_pixiv_update_with_client(
     store: &mut Store,
     client: &Client,
     tracked_users: Vec<String>,
-    folder_path: &Path,
     img_path: &Path,
-    data_dir: &str,
-    host_name: &str,
-    img_url: &str,
 ) -> Result<String> {
     let mut updated_users = 0usize;
     let mut downloaded_works = 0usize;
     let mut failures = Vec::new();
 
     for user_id in tracked_users {
-        match download_user(client, &user_id, folder_path, img_path, store, true) {
+        match download_user(client, &user_id, img_path, store, true) {
             Ok(summary) => {
                 if summary
                     .failures
@@ -139,8 +110,6 @@ fn run_pixiv_update_with_client(
         }
     }
 
-    renderer::render_site_from_store(store, "pixiv", data_dir, host_name, img_url, None)?;
-
     if !failures.is_empty() {
         return Err(anyhow::anyhow!(
             "pixiv update refreshed {updated_users} tracked users and stored {downloaded_works} works, but some updates failed: {}",
@@ -153,14 +122,7 @@ fn run_pixiv_update_with_client(
     ))
 }
 
-fn persist_active_candidate(
-    store: &Store,
-    _cookie_dir: &str,
-    candidate: &PixivAccountCandidate,
-) -> Result<()> {
-    if !candidate.backed_by_store {
-        return Ok(());
-    }
+fn persist_active_candidate(store: &Store, candidate: &PixivAccountCandidate) -> Result<()> {
     let updated_at = Utc::now().to_rfc3339();
     let _ = store.set_active_account("pixiv", &candidate.name, &updated_at)?;
     Ok(())

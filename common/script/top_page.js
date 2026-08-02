@@ -152,9 +152,9 @@ function submitReDownload(key) {
 // データ修復用
 function submitRepair(key) {
   showModal({
-    title: 'データ修復',
-    message: 'データ修復を実行しますか？\n一次ファイルを削除し、全てのraw.jsonからデータを再構築します。',
-    confirmText: '修復を実行',
+    title: 'DBデータ検証',
+    message: 'SQLiteに保存された作品データの整合性を検証しますか？',
+    confirmText: '検証を実行',
     confirmStyle: 'warning'
   }).then(function (ok) {
     if (!ok) return;

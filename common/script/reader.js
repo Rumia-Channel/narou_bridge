@@ -60,17 +60,6 @@ if (!Object.entries) {
   };
 }
 
-// スクリプト冒頭で Map を用意
-var coverUrlMap = new Map();
-// BlobのSHA-256ハッシュ → ObjectURL の共有マップ
-var coverHashMap = new Map();
-
-// Cache Storage 名
-var CACHE_NAME = 'cover-images';
-//var INDEX_CACHE = 'index-json-cache';
-
-// cover.json のデータを保持するグローバル変数
-var globalCoverJson = null;
 
 /**
  * 本棚画面用：ヘッダーに「トップページに戻る」ボタンを追加
@@ -90,7 +79,7 @@ function initNavOnLibrary() {
 
 /**
  * リーダー画面用：ヘッダーに「本棚に戻る／目次に戻る」ボタンを追加
- * @param {object} novelData raw.json から読み込んだ小説データ（.serialization を使う）
+ * @param {object} novelData DB API から読み込んだ作品データ（.serialization を使う）
  * @param {{site:string,nid:string,eid?:string}} query URL パラメータ
  */
 function initNavOnReader(novelData, query) {
@@ -142,151 +131,18 @@ function initNavOnReader(novelData, query) {
   }
 }
 
-/**
- * 同時接続数を制限しつつ preloadAndMapCover を呼び出す
- * @param {Array}  novelsList     - 小説オブジェクトの配列
- * @param {Cache}  coverCache     - Cache Storage オブジェクト
- * @param {Function} onComplete   - 1 件ダウンロード完了ごとに呼ぶコールバック
- * @param {number} concurrencyLimit - 同時に処理する coverDL の上限
- */
-async function preloadAllCoversWithLimit(novelsList, coverCache, onComplete, concurrencyLimit) {
-  let i = 0;
-  const executing = [];
-
-  async function enqueue() {
-    if (i === novelsList.length) {
-      return Promise.resolve();
-    }
-
-    const novel = novelsList[i];
-    const taskPromise = preloadAndMapCover(novel, coverCache)
-      .then(() => {
-        executing.splice(executing.indexOf(taskPromise), 1);
-        onComplete();
-      })
-      .catch(() => {
-        executing.splice(executing.indexOf(taskPromise), 1);
-        onComplete();
-      });
-
-    executing.push(taskPromise);
-    i++;
-
-    let next = Promise.resolve();
-    if (executing.length >= concurrencyLimit) {
-      // いずれかのタスクが終わるまで待つ
-      next = Promise.race(executing);
-    }
-    return next.then(enqueue);
-  }
-
-  await enqueue();
-}
 
 
 
 document.addEventListener('DOMContentLoaded', async () => {
   const query = getQueryParams();
 
-  // --------------------------------------------------------
-  // cover.json を先行して読み込む
-  try {
-    // キャッシュ対策でタイムスタンプを付けるか、あるいは fetch の cache: 'no-cache' を推奨
-    const res = await fetch('/images/cover.json', { cache: 'no-store' });
-    if (res.ok) {
-      globalCoverJson = await res.json();
-    }
-  } catch (e) {
-    console.warn('cover.json could not be loaded:', e);
-  }
-  // --------------------------------------------------------
-
-  // ──────────── 「同時ダウンロード数」入力フィールドの生成 ────────────
-  // header 要素を取得
-  const header = document.querySelector('header');
-  // wrapper <div> を作成し、横並び (inline-block) に設定
-  const wrapper = document.createElement('div');
-  wrapper.style.display = 'inline-block';
-  wrapper.style.marginRight = '1em';
-  wrapper.style.fontSize = '0.9em';
-
-  // ラベルを作成
-  const label = document.createElement('label');
-  label.htmlFor = 'concurrency-input';
-  label.textContent = '同時ダウンロード数：';
-
-  // 数値入力フィールドを作成
-  const input = document.createElement('input');
-  input.id = 'concurrency-input';
-  input.type = 'number';
-  input.min = '1';
-  input.max = '10';
-  input.step = '1';
-  input.style.width = '3em';
-  input.style.marginLeft = '0.5em';
-
-  // localStorage から前回値を復元（なければ「4」を初期値に）
-  const stored = parseInt(localStorage.getItem('concurrencyLimit'), 10);
-  if (!Number.isInteger(stored) || stored < 1) {
-    input.value = '4';
-  } else {
-    input.value = String(stored);
-  }
-
-  // 値が変わったら即座に localStorage に保存
-  input.addEventListener('change', () => {
-    let v = parseInt(input.value, 10);
-    if (!Number.isInteger(v) || v < 1) v = 1;
-    else if (v > 10) v = 10;
-    input.value = String(v);
-    localStorage.setItem('concurrencyLimit', String(v));
-  });
-
-  wrapper.appendChild(label);
-  wrapper.appendChild(input);
-
-  // ヘッダー内の最初の <button>（通常はキャッシュクリア）がある場所を取得
-  const h1 = header.querySelector('h1');
-  if (h1) {
-    header.insertBefore(wrapper, h1);
-  } else {
-    header.appendChild(wrapper);
-  }
-  // ──────────────────────────────────────────────────────────
-
-  // ───── 「キャッシュクリア」ボタンのクリック処理 ─────
   const btnClear = document.getElementById('btn-clear-cache');
-  btnClear.addEventListener('click', async () => {
-    // (A) Cover 画像キャッシュを削除
-    await caches.delete(CACHE_NAME);
-
-    // (B) index.json 用の Cache Storage も削除
-    await caches.delete(INDEX_CACHE);
-
-    // (C) localStorage 中の coverFail_* をすべて削除
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('coverFail_')) {
-        localStorage.removeItem(key);
-      }
-    });
-
-    // (D) localStorage 中の indexETag_* をすべて削除
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith(INDEX_ETAG_KEY_PREFIX)) {
-        localStorage.removeItem(key);
-      }
-    });
-
-    // (E) メモリ上の Map もクリア
-    coverUrlMap.clear();
-    coverHashMap.clear();
-
-    showToast('キャッシュをクリアしました。ページを再読み込みします。', { type: 'success', duration: 1500 });
-    setTimeout(function () { window.location.reload(); }, 1500);
+  btnClear.addEventListener('click', () => {
+    showToast('ページを再読み込みします。', { type: 'success', duration: 800 });
+    setTimeout(function () { window.location.reload(); }, 800);
   });
-  // ────────────────────────────────────────────────────────
 
-  // 「リーダー画面かどうか」を判定し、リーダーならそちらの処理へ
   if (query.site && query.nid) {
     initWidthSelector();
     const pcReader = document.getElementById('progress-container');
@@ -295,7 +151,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // ─── ライブラリ画面フロー ───
   initWidthSelector();
   initNavOnLibrary();
   const app = document.getElementById('app');
@@ -303,466 +158,134 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pb = document.getElementById('progress-bar');
   const pi = document.getElementById('progress-info');
 
-  //
-  // (1) index.json 取得フェーズ
-  //
-  if (pc) pc.style.display = 'block';
-  let completedIndex = 0;
-  const totalIndex = sources.length;
+  async function showLibraryPage(requestedPage) {
+    if (pc) pc.style.display = 'block';
+    if (pb) pb.style.width = '0%';
+    if (pi) pi.textContent = '作品一覧をDBから読み込み中…';
 
-  function updateIndexBar() {
-    const pct = totalIndex > 0 ? (completedIndex / totalIndex * 100) : 0;
-    pb.style.width = pct + '%';
-    pi.textContent = `index.json を取得中: ${pct.toFixed(2)}% (${completedIndex}/${totalIndex})`;
-  }
-  updateIndexBar();
-
-  const indexPromises = sources.map(async (src) => {
-    const arr = await loadIndexWithCache(src);
-    completedIndex++;
-    updateIndexBar();
-    return arr.map(item => ({ ...item, source: src }));
-  });
-  const allArrays = await Promise.all(indexPromises);
-
-  // novelsList にまとめる
-  const novelsList = [];
-  allArrays.forEach(arr => novelsList.push(...arr));
-
-  //
-  // (2) 目次構築中フェーズ
-  //
-  // index.json 取得が終わったので、一度バーを 100% にして短時間表示
-  pi.textContent = '目次を読み込み中…';
-  pb.style.width = '100%';
-  await new Promise(r => setTimeout(r, 200));
-
-  //
-  // (3) カバーキャッシュチェック → キャッシュ済みは coverUrlMap に登録、未キャッシュは needFetchList へ
-  //
-  const coverCache = await caches.open(CACHE_NAME);
-  const needFetchList = [];
-
-  for (const novel of novelsList) {
-    const key = `${novel.source}_${novel.id}`;
-    const base = `../${novel.source}/${novel.id}/`;
-    let foundInCache = false;
-
-    // 「jpg → png → gif」の順でキャッシュを探し、見つかれば ObjectURL を生成して coverUrlMap に登録
-    for (const ext of ['jpg', 'png', 'gif']) {
-      const url = base + `cover.${ext}`;
-      const cachedRs = await coverCache.match(url);
-      if (cachedRs) {
-        const blob = await cachedRs.blob();
-        const objectURL = await dedupeBlob(blob);
-        coverUrlMap.set(key, objectURL);
-        foundInCache = true;
-        break;
-      }
-    }
-
-    // キャッシュが見つからなかった場合だけリストに追加
-    if (!foundInCache) {
-      needFetchList.push(novel);
-    }
-  }
-
-  // (4a) キャッシュミスがゼロなら、バーを隠して一度だけ目次を描画して終了
-  if (needFetchList.length === 0) {
+    const page = await loadLibraryPage(sources, requestedPage, function (completed, total) {
+      if (!pb || !pi) return;
+      const pct = total > 0 ? Math.min(100, completed / total * 100) : 0;
+      pb.style.width = pct + '%';
+      pi.textContent = `作品一覧をDBから読み込み中: ${completed}/${total}`;
+    });
     if (pc) pc.style.display = 'none';
-    await renderLibraryWithProgress(app, novelsList);
-    return;
-  }
+    await renderLibraryWithProgress(app, page.works);
+    renderLibraryPagination(app, page.page, page.totalPages, showLibraryPage);
 
-  //
-  // (4b) キャッシュミス分のカバーDLフェーズ
-  //
-  let completedCover = 0;
-  const totalCover = needFetchList.length;
-
-  function updateCoverBar() {
-    const pct = totalCover > 0 ? (completedCover / totalCover * 100) : 0;
-    pb.style.width = pct + '%';
-    pi.textContent = `カバーをダウンロード中: ${pct.toFixed(2)}% (${completedCover}/${totalCover})`;
-  }
-  // フェーズ開始時にバーと文字を初期化
-  completedCover = 0;
-  updateCoverBar();
-
-  // まず localStorage に保存された同時ダウンロード数を取得
-  let concurrencyLimit = parseInt(localStorage.getItem('concurrencyLimit'), 10);
-
-  // localStorage に正しい値が入っていなければ、input.value を参照
-  if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1) {
-    concurrencyLimit = parseInt(input.value, 10);
-    if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1) {
-      concurrencyLimit = 1;
+    const url = new URL(window.location.href);
+    if (page.page > 1) {
+      url.searchParams.set('page', String(page.page));
+    } else {
+      url.searchParams.delete('page');
     }
+    window.history.replaceState(null, '', url);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  // 上限を設ける（例：最大 10）
-  if (concurrencyLimit > 10) {
-    concurrencyLimit = 10;
-  }
-
-  // ここで preloadAllCoversWithLimit に渡す
-  await preloadAllCoversWithLimit(
-    needFetchList,
-    coverCache,
-    () => {
-      completedCover++;
-      updateCoverBar();
-    },
-    concurrencyLimit
-  );
-
-  // (5) カバーDL完了後、バーを隠して最終的に目次を描画
-  if (pc) pc.style.display = 'none';
-  await renderLibraryWithProgress(app, novelsList);
+  await showLibraryPage(query.page || 1);
 });
 
+const LIBRARY_PAGE_SIZE = 100;
 
-// index.json のソースリスト
-var INDEX_CACHE = 'index-json-cache';              // Cache Storage 名
-var INDEX_ETAG_KEY_PREFIX = 'indexETag_';          // localStorage に ETag を保存する際のキー接頭辞
+async function loadLibraryPage(siteSources, requestedPage, onProgress) {
+  const pageNumber = Math.max(1, requestedPage);
+  const allWorks = [];
+  const totals = [];
+  let completed = 0;
+  let total = 0;
 
-/**
- * キャッシュ付き index.json の読み込み（条件付き GET 版）
- * ※ 「キャッシュが無いのに 304 が返ってくる」ケースを回避する
- * @param {string} source - サイト名またはディレクトリ名
- * @returns {Promise<Array>} - [{ id, source, ...novelObject }, …] の配列
- */
-async function loadIndexWithCache(source) {
-  const url = new URL(`../${source}/index.json`, location.href).toString();
-  const cache = await caches.open(INDEX_CACHE);
-  const etagKey = `${INDEX_ETAG_KEY_PREFIX}${source}`;
-  let storedEtag = localStorage.getItem(etagKey);
-
-  // 1) Cache Storage からキャッシュ済みレスポンスを取得
-  const cachedResp = await cache.match(url);
-  let cachedObj = null;
-  if (cachedResp) {
-    try {
-      cachedObj = await cachedResp.clone().json();
-    } catch {
-      cachedObj = null;
+  for (const source of siteSources) {
+    const offset = (pageNumber - 1) * LIBRARY_PAGE_SIZE;
+    const url = '/api/library/works?site=' + encodeURIComponent(source)
+      + '&sort=updated_desc&limit=' + LIBRARY_PAGE_SIZE + '&offset=' + offset;
+    const response = await fetch(url, { cache: 'default' });
+    if (!response.ok) throw new Error(`作品API ${source}: HTTP ${response.status}`);
+    const page = await response.json();
+    const works = Array.isArray(page.works) ? page.works : [];
+    for (const work of works) {
+      allWorks.push({ ...work, id: work.work_key, source: work.site });
     }
+    totals.push(page.total);
+    completed += Math.min(offset + works.length, page.total);
+    total += page.total;
+    onProgress(completed, total);
   }
 
-  // 2) 条件付き GET 用ヘッダーを準備
-  const headers = {};
-  // 「キャッシュ版（cachedObj）が存在するときだけ ETag を使う」
-  if (storedEtag && cachedObj) {
-    headers['If-None-Match'] = storedEtag;
-  } else {
-    // キャッシュが無いのに ETag が残っている→破棄して再取得させる
-    localStorage.removeItem(etagKey);
-    storedEtag = null;
+  const totalPages = Math.max(1, ...totals.map(value => Math.ceil(value / LIBRARY_PAGE_SIZE)));
+  if (pageNumber > totalPages) {
+    return loadLibraryPage(siteSources, totalPages, onProgress);
   }
-
-  // 3) サーバーへ GET 要請（If-None-Match を付与するかどうか）
-  let resp;
-  try {
-    resp = await fetch(url, {
-      method: 'GET',
-      headers,
-      cache: 'no-store'
-    });
-  } catch (e) {
-    // ネットワークエラーなどで失敗したら、キャッシュ版があればそれを返す
-    if (cachedObj) {
-      return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
-    }
-    console.warn(`Network error for ${url}:`, e);
-    return []; // ネットワークエラー時キャッシュも無ければ空でスキップ
-  }
-
-  // 4) 304 Not Modified：キャッシュが最新なのでキャッシュデータを返す
-  if (resp.status === 304 && cachedObj) {
-    return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
-  }
-
-  // 5) 200 OK：更新があった → JSON をパースしてキャッシュを更新
-  if (resp.status === 200) {
-    let freshObj;
-    try {
-      freshObj = await resp.clone().json();
-    } catch (e) {
-      // JSON パースエラーでもキャッシュ版があればそれを返す
-      if (cachedObj) {
-        return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
-      }
-      console.warn(`JSON parse error for ${url}:`, e);
-      return []; // JSONエラーでキャッシュ無しは空配列
-    }
-
-    // Cache Storage に最新の index.json を保存
-    await cache.put(url, resp.clone());
-
-    // サーバーから返ってきた新しい ETag（または Last-Modified）を localStorage に保存
-    const newEtag = resp.headers.get('ETag') || resp.headers.get('Last-Modified');
-    if (newEtag) {
-      localStorage.setItem(etagKey, newEtag);
-    }
-
-    // オブジェクトを配列に変換して返す
-    return Object.entries(freshObj).map(([id, novel]) => ({ id, source, ...novel }));
-  }
-
-  if (resp.status === 404) {
-    console.warn(`index.json not found (404): ${url}`);
-    return []; // 404の場合はスキップして空の配列を返す
-  }
-
-  // その他のステータス
-  if (cachedObj) {
-    return Object.entries(cachedObj).map(([id, novel]) => ({ id, source, ...novel }));
-  }
-
-  console.warn(`Unhandled response ${resp.status} for ${url}`);
-  return [];
+  return { works: allWorks, page: pageNumber, totalPages };
 }
+
+function renderLibraryPagination(container, page, totalPages, onPage) {
+  if (totalPages <= 1) return;
+  const controls = document.createElement('nav');
+  controls.className = 'reader-pagination';
+  controls.setAttribute('aria-label', '作品一覧ページ');
+
+  const previous = document.createElement('button');
+  previous.type = 'button';
+  previous.textContent = '前へ';
+  previous.disabled = page <= 1;
+  previous.addEventListener('click', () => onPage(page - 1));
+
+  const status = document.createElement('span');
+  status.textContent = `${page} / ${totalPages}`;
+
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.textContent = '次へ';
+  next.disabled = page >= totalPages;
+  next.addEventListener('click', () => onPage(page + 1));
+
+  controls.append(previous, status, next);
+  container.appendChild(controls);
+}
+
+
 
 
 async function loadJSON(path) {
-  const response = await fetch(path);
+  const response = await fetch(path, { cache: 'default' });
+  if (!response.ok) return null;
   return await response.json();
 }
 
-/**
- * 優先順位: cover.json (Hash) -> Local Files -> Default
- * 低解像度化＋重複チェック＋失敗回数管理
- */
-async function preloadAndMapCover(novel, coverCache) {
-  const key = `${novel.source}_${novel.id}`;
-  const defaultUrl = `${window.location.origin}/images/default_cover.png`;
-
-  // 失敗回数チェック（3回以上なら即デフォルト）
-  const failKey = `coverFail_${novel.source}_${novel.id}`;
-  let failCount = parseInt(localStorage.getItem(failKey)) || 0;
-  if (failCount >= 3) {
-    coverUrlMap.set(key, await getDefaultCoverObjectURL(coverCache, defaultUrl));
-    return;
-  }
-
-  // ■ 優先度1: cover.json からハッシュを探す
-  // キー形式: "サイト名_ID_cover.拡張子" (例: pixiv_a133664320_cover.jpg)
-  let targetUrl = null;
-
-  if (globalCoverJson) {
-    const baseJsonInfo = `${novel.source}_${novel.id}_cover`;
-    const extensions = ['jpg', 'png', 'gif', 'webp'];
-    
-    for (const ext of extensions) {
-      const jsonKey = `${baseJsonInfo}.${ext}`;
-      const hash = globalCoverJson[jsonKey];
-      if (hash) {
-        // ハッシュが見つかった場合、画像パスは "/images/ハッシュ.拡張子"
-        targetUrl = `/images/${hash}.${ext}`;
-        break; // 見つかったらループ終了
-      }
-    }
-  }
-
-  // ターゲットが決まった場合の処理（Hash画像を取得）
-  if (targetUrl) {
-    // 1-A. キャッシュ確認
-    const cachedResp = await coverCache.match(targetUrl);
-    if (cachedResp) {
-      const blob = await cachedResp.blob();
-      coverUrlMap.set(key, await dedupeBlob(blob));
-      return;
-    }
-
-    // 1-B. フェッチ＆縮小＆キャッシュ保存
-    try {
-      const resp = await fetch(targetUrl);
-      if (resp.ok) {
-        const origBlob = await resp.blob();
-        // ★ここでも shrinkBlob を通すことで、サーバー上の元画像が大きくてもクライアント負荷を軽減
-        const smallBlob = await shrinkBlob(origBlob, 400, 0.75);
-        
-        // キャッシュに保存
-        await coverCache.put(targetUrl, new Response(smallBlob));
-        // マップに登録
-        coverUrlMap.set(key, await dedupeBlob(smallBlob));
-        return; // 成功したらここで終了
-      }
-    } catch (e) {
-      console.warn(`Hash image fetch failed for ${targetUrl}`, e);
-      // 失敗した場合は、次の「旧ローカルファイル探索」へ進む（フォールバック）
-    }
-  }
-
-
-  // ■ 優先度2: 既存のローカルファイル探索 (../source/id/cover.ext)
-  // ※ cover.json に無かった、または取得に失敗した場合にここに来る
-  const baseLocal = `../${novel.source}/${novel.id}/`;
-
-  // 2-A. キャッシュ確認
-  for (const ext of ['jpg', 'png', 'gif']) {
-    const url = baseLocal + `cover.${ext}`;
-    const cachedResp = await coverCache.match(url);
-    if (cachedResp) {
-      const blob = await cachedResp.blob();
-      coverUrlMap.set(key, await dedupeBlob(blob));
-      return;
-    }
-  }
-
-  // 2-B. HEAD → Fetch → 縮小
-  for (const ext of ['jpg', 'png', 'gif']) {
-    const url = baseLocal + `cover.${ext}`;
-    try {
-      const head = await fetch(url, { method: 'HEAD' });
-      if (!head.ok) continue;
-
-      const origBlob = await (await fetch(url)).blob();
-      const smallBlob = await shrinkBlob(origBlob, 400, 0.75);
-      
-      await coverCache.put(url, new Response(smallBlob));
-      coverUrlMap.set(key, await dedupeBlob(smallBlob));
-      return;
-    } catch {
-      // 次の拡張子へ
-    }
-  }
-
-
-  // ■ 優先度3: 全滅 → デフォルト画像
-  failCount++;
-  localStorage.setItem(failKey, String(failCount));
-  coverUrlMap.set(key, await getDefaultCoverObjectURL(coverCache, defaultUrl));
-}
-
-/** 
- * default_cover.png を一度 Cache Storage に ensure → blob→ObjectURL を返す
- */
-async function getDefaultCoverObjectURL(coverCache, defaultUrl) {
-  // 絶対URL の Request オブジェクトを生成しておく
-  const req = new Request(defaultUrl, { method: 'GET' });
-
-  // キャッシュに無ければ fetch＆put
-  let cachedDef = await coverCache.match(req);
-  if (!cachedDef) {
-    const resp = await fetch(req);
-    if (!resp.ok) {
-      console.error('default cover fetch failed:', resp.status, defaultUrl);
-      throw new Error('default cover not found');
-    }
-    await coverCache.put(req, resp.clone());
-    cachedDef = resp;
-  }
-
-  // blob → ObjectURL
-  const blob = await (await coverCache.match(req)).blob();
-  return URL.createObjectURL(blob);
-}
 
 function getReadStatus(novel) {
-  // episodes_data があればそちらを優先、なければ episodes を利用
-  const episodes = novel.episodes_data || novel.episodes || {};
-  const keys = Object.keys(episodes);
-  if (keys.length === 0) {
-    return 'unread';
-  }
+  const episodeIds = Array.isArray(novel.episode_ids)
+    ? novel.episode_ids.map(String)
+    : Object.keys(novel.episodes_data || novel.episodes || {}).map(function (key) {
+        const episode = (novel.episodes_data || novel.episodes)[key];
+        return String(episode.id);
+      });
+  if (episodeIds.length === 0) return 'unread';
 
-  // 完読済みエピソード一覧を取得
   const epDoneKey = `epFinished_${novel.source}_${novel.id}`;
-  const doneSet = new Set(JSON.parse(localStorage.getItem(epDoneKey) || '[]'));
-
+  const doneSet = new Set(JSON.parse(localStorage.getItem(epDoneKey) || '[]').map(String));
   let anyProgress = false;
   let finishedCount = 0;
 
-  // 各エピソードについて判定
-  for (const key of keys) {
-    // episodes_data[key].id を実際のエピソードIDとして利用
-    const epId = episodes[key].id;
-
-    // 完読済みであればカウント
-    if (doneSet.has(String(epId))) {
+  for (const epId of episodeIds) {
+    if (doneSet.has(epId)) {
       finishedCount++;
       continue;
     }
-
-    // 途中既読判定用のキー
-    const readKey = `readPage_${novel.source}_${novel.id}_${epId}`;
-    if (localStorage.getItem(readKey)) {
+    if (localStorage.getItem(`readPage_${novel.source}_${novel.id}_${epId}`)) {
       anyProgress = true;
     }
   }
 
-  // すべて完読済み
-  if (finishedCount === keys.length) {
-    return 'finished';
-  }
-  // まったく進捗がない
-  if (!anyProgress && finishedCount === 0) {
-    return 'unread';
-  }
-  // それ以外は途中まで既読
-  return 'read';
+  if (finishedCount === episodeIds.length) return 'finished';
+  if (!anyProgress && finishedCount === 0) return 'unread';
+  return 'reading';
 }
 
-/** * Blob を ImageBitmap と OffscreenCanvas (または canvas) で高速に縮小して JPEG Blob にする*/
-async function shrinkBlob(blob, maxWidth, quality) {
-  // 1. DOMの<img>タグを作らず、生データからビットマップを作成（高速・低負荷）
-  const bitmap = await createImageBitmap(blob);
-
-  // 2. サイズ計算
-  const scale = Math.min(1, maxWidth / bitmap.width);
-  const width = Math.round(bitmap.width * scale);
-  const height = Math.round(bitmap.height * scale);
-
-  // 3. OffscreenCanvas が使えるなら使う（メインスレッドの描画をブロックしない）
-  let canvas;
-  if (typeof OffscreenCanvas !== 'undefined') {
-    canvas = new OffscreenCanvas(width, height);
-  } else {
-    // 非対応ブラウザ用のフォールバック
-    canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-  }
-
-  // 4. 描画
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(bitmap, 0, 0, width, height);
-
-  // 5. メモリ解放（重要）
-  bitmap.close();
-
-  // 6. Blobに変換して返す
-  if (canvas.convertToBlob) {
-    // OffscreenCanvas用
-    return await canvas.convertToBlob({ type: 'image/jpeg', quality });
-  } else {
-    // 通常のCanvas用
-    return await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
-  }
-}
-
-/**
- * Blob を SHA-256 でハッシュし、重複排除＆ObjectURL管理を行うユーティリティ
- */
-async function dedupeBlob(blob) {
-  const buf = await blob.arrayBuffer();
-  const hashBuf = await crypto.subtle.digest('SHA-256', buf);
-  const hashArr = Array.from(new Uint8Array(hashBuf));
-  const hashHex = hashArr.map(b => b.toString(16).padStart(2, '0')).join('');
-  if (coverHashMap.has(hashHex)) {
-    return coverHashMap.get(hashHex);
-  }
-  const url = URL.createObjectURL(blob);
-  coverHashMap.set(hashHex, url);
-  return url;
-}
 
 /**
  * プログレスバーと文字表示を更新する共通関数
- * @param {number} doneCount    - 現在完了している件数
- * @param {number} totalCount   - 全体の件数
- * @param {string} messageLabel - 「○○中:」などの先頭メッセージ
  */
 function updateProgress(doneCount, totalCount, messageLabel) {
   const pc = document.getElementById('progress-container');
@@ -873,8 +396,9 @@ async function renderLibraryWithProgress(container, novelsList) {
       const covCont = document.createElement('div');
       covCont.className = 'cover-container';
       const img = document.createElement('img');
-      const key = `${novel.source}_${novel.id}`;
-      img.src = coverUrlMap.get(key) || '/images/default_cover.png';
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.src = `/covers/${encodeURIComponent(novel.source)}/${encodeURIComponent(novel.id)}`;
       covCont.appendChild(img);
 
       // バッジ表示
@@ -885,7 +409,7 @@ async function renderLibraryWithProgress(container, novelsList) {
       const readStatus = getReadStatus(novel);
       badgeWrap.appendChild(makeBadge('NEW', days <= 7));
       const statusLabel = readStatus === 'unread' ? '未読'
-        : readStatus === 'read' ? '既読'
+        : readStatus === 'reading' ? '既読'
           : '完読';
       badgeWrap.appendChild(makeBadge(statusLabel));
       badgeWrap.appendChild(makeBadge(novel.serialization));
@@ -949,33 +473,6 @@ function createNovelURL(novel, episodeId = null) {
   return url;
 }
 
-// カバー探索 (既存の findCoverImage を流用) 
-async function resolveCoverUrl(novel) {
-  const key = `${novel.source}_${novel.id}`;
-
-  // まずメモリ上 Map にあればそれを返す
-  if (coverUrlMap.has(key)) {
-    return coverUrlMap.get(key);
-  }
-
-  // 無ければ HEAD で確認（最初の一回だけ）
-  const base = `../${novel.source}/${novel.id}/`;
-  for (const ext of ['jpg', 'png', 'gif']) {
-    const url = base + `cover.${ext}`;
-    try {
-      const res = await fetch(url, { method: 'HEAD' });
-      if (res.ok) {
-        coverUrlMap.set(key, url);
-        return url;
-      }
-    } catch { }
-  }
-
-  // デフォルト
-  const def = '../images/default_cover.png';
-  coverUrlMap.set(key, def);
-  return def;
-}
 
 // URLのクエリを解析
 
@@ -1000,8 +497,7 @@ async function renderReaderScreen(query) {
   document.body.classList.add('reader');
   app.innerHTML = '<div class="loading">読み込み中です……</div>';
 
-  // raw.json 読み込み
-  const novelPath = `../${query.site}/${query.nid}/raw/raw.json`;
+  const novelPath = `/api/library/works/${encodeURIComponent(query.site)}/${encodeURIComponent(query.nid)}`;
   const novelData = await loadJSON(novelPath);
   if (!novelData) {
     app.innerHTML = '<div>小説データが見つかりません。</div>';
@@ -1028,30 +524,34 @@ async function renderReaderScreen(query) {
   const hasEpisodeId = Boolean(query.eid);
 
   if (isShort || hasEpisodeId) {
-    // 本文表示パス
-    let episode;
+    let episodeMetadata;
+    let episodeRef;
     if (hasEpisodeId) {
-      // キー or id プロパティで検索
-      episode = episodesObj[query.eid]
+      episodeMetadata = episodesObj[query.eid]
         || episodesArr.find(ep => String(ep.id) === String(query.eid));
+      episodeRef = query.eid;
     } else {
-      episode = episodesArr[0];
-      // ★ 短編エピソードにIDがない場合に補う
-      if (!episode.id) {
-        episode.id = 1; // ← novel.id をエピソードIDとして扱う
-        console.log('[短編補正] episode.id が未定義だったので補正:', episode.id)
-        novel.episodes = { [novel.id]: episode }; // ← key 付きに整える
-      }
+      const firstEpisode = Object.entries(episodesObj)[0];
+      episodeMetadata = firstEpisode && firstEpisode[1];
+      episodeRef = episodeMetadata && episodeMetadata.id
+        ? String(episodeMetadata.id)
+        : firstEpisode && firstEpisode[0];
     }
 
-
-    if (!episode) {
+    if (!episodeMetadata || !episodeRef) {
       app.innerHTML = '<div>指定されたエピソードが見つかりません。</div>';
       return;
     }
 
-    // ここで episodesArr も渡す
-    renderEpisode(app, novelData, episode, episodesArr);
+    const episodePath = `/api/library/works/${encodeURIComponent(query.site)}`
+      + `/${encodeURIComponent(query.nid)}/episodes/${encodeURIComponent(episodeRef)}`;
+    const episode = await loadJSON(episodePath);
+    if (!episode) {
+      app.innerHTML = '<div>エピソード本文を読み込めませんでした。</div>';
+      return;
+    }
+    if (!episode.id) episode.id = episodeMetadata.id || episodeRef;
+    await renderEpisode(app, novelData, episode, episodesArr);
 
   } else {
     // 目次表示パス

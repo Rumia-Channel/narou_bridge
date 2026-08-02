@@ -1,8 +1,8 @@
 use crate::core::model::{
-    AccountRecord, ImageRecord, MigrationSummary, RequestData, SiteDocumentRecord, TaskRecord,
+    AccountRecord, ImageRecord, RequestData, SiteDocumentRecord, StoreSummary, TaskRecord,
     TaskState, TaskStatus, WorkListPage, WorkRecord, WorkSummary,
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
@@ -136,6 +136,95 @@ impl Store {
                 .context("failed to checkpoint sqlite WAL")
         })
     }
+    pub fn vacuum_into(&self, destination: &Path) -> Result<()> {
+        if self.inner.in_memory {
+            bail!("cannot rebuild an in-memory database");
+        }
+        self.checkpoint_wal()?;
+        let destination_text = destination
+            .to_str()
+            .with_context(|| format!("database path is not UTF-8: {}", destination.display()))?;
+        self.with_conn(|conn| {
+            conn.execute("VACUUM INTO ?1", params![destination_text])
+                .with_context(|| {
+                    format!(
+                        "failed to rebuild sqlite database into {}",
+                        destination.display()
+                    )
+                })?;
+            Ok(())
+        })
+    }
+
+    pub fn integrity_check(&self) -> Result<()> {
+        self.with_conn(|conn| {
+            let result: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+            if result == "ok" {
+                Ok(())
+            } else {
+                bail!("sqlite integrity_check failed: {result}")
+            }
+        })
+    }
+    pub fn replace_contents_from(&self, source: &Path) -> Result<()> {
+        if self.inner.in_memory {
+            bail!("cannot replace an in-memory database");
+        }
+        let source_text = source
+            .to_str()
+            .with_context(|| format!("database path is not UTF-8: {}", source.display()))?;
+        self.with_conn(|conn| {
+            conn.execute("ATTACH DATABASE ?1 AS source_store", params![source_text])
+                .with_context(|| format!("failed to attach {}", source.display()))?;
+            let copy_result = (|| -> Result<()> {
+                let tx = conn.unchecked_transaction()?;
+                tx.execute_batch(
+                    r#"
+                    DELETE FROM tasks;
+                    DELETE FROM accounts;
+                    DELETE FROM works;
+                    DELETE FROM images;
+                    DELETE FROM site_documents;
+
+                    INSERT INTO tasks
+                        (id, request_id, action, param, request_json, status, error,
+                         created_at, updated_at, started_at)
+                    SELECT id, request_id, action, param, request_json, status, error,
+                           created_at, updated_at, started_at
+                    FROM source_store.tasks;
+
+                    INSERT INTO accounts
+                        (site, name, display_name, account_json, active, updated_at)
+                    SELECT site, name, display_name, account_json, active, updated_at
+                    FROM source_store.accounts;
+
+                    INSERT INTO works
+                        (site, work_key, title, author, author_id, author_url, type,
+                         serialization, caption, create_date, update_date, raw_json)
+                    SELECT site, work_key, title, author, author_id, author_url, type,
+                           serialization, caption, create_date, update_date, raw_json
+                    FROM source_store.works;
+
+                    INSERT INTO images (logical_name, hash, ext, kind)
+                    SELECT logical_name, hash, ext, kind
+                    FROM source_store.images;
+
+                    INSERT INTO site_documents (site, key, document_json, updated_at)
+                    SELECT site, key, document_json, updated_at
+                    FROM source_store.site_documents
+                    WHERE NOT (site = 'runtime' AND key LIKE 'bootstrap/%');
+                    "#,
+                )?;
+                tx.commit()?;
+                Ok(())
+            })();
+            let detach_result = conn
+                .execute_batch("DETACH DATABASE source_store")
+                .context("failed to detach source database");
+            copy_result.and(detach_result)
+        })?;
+        self.integrity_check()
+    }
 
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let conn = self
@@ -213,13 +302,7 @@ impl Store {
                     PRIMARY KEY(site, key)
                 );
 
-                CREATE TABLE IF NOT EXISTS migrations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_root TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    finished_at TEXT,
-                    summary_json TEXT NOT NULL
-                );
+                DROP TABLE IF EXISTS migrations;
             "#,
             )?;
             conn.execute(
@@ -236,6 +319,30 @@ impl Store {
             )?;
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_works_site_author ON works(site, author COLLATE NOCASE, title COLLATE NOCASE, work_key)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_updated_desc ON works(site, update_date DESC, title COLLATE NOCASE ASC, work_key ASC)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_updated_asc ON works(site, update_date ASC, title COLLATE NOCASE ASC, work_key ASC)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_title_desc ON works(site, title COLLATE NOCASE DESC, work_key ASC)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_author_desc ON works(site, author COLLATE NOCASE DESC, title COLLATE NOCASE ASC, work_key ASC)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_type_serialization ON works(site, type, serialization)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_works_site_serialization_type ON works(site, serialization, type)",
                 [],
             )?;
             ensure_column_exists(conn, "tasks", "started_at", "TEXT")?;
@@ -824,7 +931,7 @@ impl Store {
             page_params.push(SqlValue::Integer(limit as i64));
             page_params.push(SqlValue::Integer(offset as i64));
             let sql = format!(
-                r#"SELECT site, work_key, title, author, author_id, author_url, type, serialization, caption, create_date, update_date
+                r#"SELECT site, work_key, title, author, author_id, author_url, type, serialization, caption, create_date, update_date, raw_json
                    FROM works{where_sql}
                    ORDER BY {}
                    LIMIT ? OFFSET ?"#,
@@ -832,6 +939,14 @@ impl Store {
             );
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(params_from_iter(page_params.iter()), |row| {
+                let raw_json: String = row.get(11)?;
+                let raw_json: serde_json::Value = serde_json::from_str(&raw_json).map_err(|err| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        11,
+                        rusqlite::types::Type::Text,
+                        Box::new(err),
+                    )
+                })?;
                 Ok(WorkSummary {
                     site: row.get(0)?,
                     work_key: row.get(1)?,
@@ -842,6 +957,9 @@ impl Store {
                     r#type: row.get(6)?,
                     serialization: row.get(7)?,
                     caption: row.get(8)?,
+                    tags: json_string_list(&raw_json, "tags"),
+                    all_tags: json_string_list(&raw_json, "all_tags"),
+                    episode_ids: json_episode_ids(&raw_json),
                     create_date: row.get(9)?,
                     update_date: row.get(10)?,
                 })
@@ -1170,22 +1288,6 @@ impl Store {
             .collect()
     }
 
-    pub fn record_migration(
-        &self,
-        source_root: &str,
-        started_at: &str,
-        summary: &MigrationSummary,
-    ) -> Result<()> {
-        self.with_conn(|conn| {
-            conn.execute(
-                r#"INSERT INTO migrations (source_root, started_at, summary_json)
-                   VALUES (?1, ?2, ?3)"#,
-                params![source_root, started_at, serde_json::to_string(summary)?],
-            )?;
-            Ok(())
-        })
-    }
-
     pub fn mark_task_status(
         &self,
         task_id: i64,
@@ -1335,9 +1437,9 @@ impl Store {
         })
     }
 
-    pub fn summary(&self) -> Result<MigrationSummary> {
+    pub fn summary(&self) -> Result<StoreSummary> {
         self.with_conn(|conn| {
-            Ok(MigrationSummary {
+            Ok(StoreSummary {
                 accounts: conn
                     .query_row("SELECT COUNT(*) FROM accounts", [], |row| {
                         row.get::<_, i64>(0)
@@ -1359,7 +1461,6 @@ impl Store {
                         row.get::<_, i64>(0)
                     })
                     .unwrap_or(0) as usize,
-                archived_files: 0,
             })
         })
     }
@@ -1465,6 +1566,39 @@ fn task_with_started_at_from_row(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<(TaskRecord, Option<String>)> {
     Ok((task_record_from_row(row)?, row.get(9)?))
+}
+
+fn json_episode_ids(value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("episodes")
+        .or_else(|| value.get("episodes_data"))
+        .and_then(serde_json::Value::as_object)
+        .map(|episodes| {
+            episodes
+                .values()
+                .filter_map(|episode| episode.get("id"))
+                .filter_map(|id| match id {
+                    serde_json::Value::String(value) => Some(value.clone()),
+                    serde_json::Value::Number(value) => Some(value.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn json_string_list(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn trimmed_filter(value: Option<&str>) -> Option<&str> {
@@ -1651,6 +1785,56 @@ mod tests {
             })
             .expect("journal mode");
         assert_ne!(journal_mode.to_lowercase(), "wal");
+    }
+
+    #[test]
+    fn replace_contents_from_copies_database_and_drops_bootstrap_markers() {
+        let test_dir = unique_test_dir("replace-store");
+        let source_path = test_dir.join("source.sqlite3");
+        let destination_path = test_dir.join("destination.sqlite3");
+        let source = Store::open(&source_path).expect("source");
+        source
+            .upsert_work(&sample_work("pixiv", "source", "Source", "Author"))
+            .expect("source work");
+        source
+            .upsert_site_document(
+                "pixiv",
+                "tracked_users/1/config",
+                &serde_json::json!({"novel": "enable"}),
+                "2025-01-01T00:00:00Z",
+            )
+            .expect("source document");
+        source
+            .upsert_site_document(
+                "runtime",
+                "bootstrap/works/pixiv",
+                &serde_json::json!({"imported": 1}),
+                "2025-01-01T00:00:00Z",
+            )
+            .expect("bootstrap marker");
+
+        let destination = Store::open(&destination_path).expect("destination");
+        destination
+            .upsert_work(&sample_work("pixiv", "old", "Old", "Author"))
+            .expect("old destination work");
+        destination
+            .replace_contents_from(&source_path)
+            .expect("replace contents");
+
+        assert!(destination.get_work("pixiv", "old").unwrap().is_none());
+        assert!(destination.get_work("pixiv", "source").unwrap().is_some());
+        assert!(
+            destination
+                .get_site_document_record("pixiv", "tracked_users/1/config")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            destination
+                .get_site_document_record("runtime", "bootstrap/works/pixiv")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

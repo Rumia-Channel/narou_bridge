@@ -11,8 +11,8 @@ const DEFAULT_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0";
 const SLEEP_MS: u64 = 500;
 
-/// Build an HTTP client with optional Pixiv account cookies
-pub fn build_client(store: &Store, _cookie_dir: &str) -> Result<Client> {
+/// Build an HTTP client with the active Pixiv account stored in SQLite.
+pub fn build_client(store: &Store) -> Result<Client> {
     let account = resolve_active_pixiv_account(store);
     build_client_for_account(
         account.as_ref().map(|(account, _)| account),
@@ -60,7 +60,6 @@ pub struct PixivAccountCandidate {
     pub name: String,
     pub account: AccountFile,
     pub source: String,
-    pub backed_by_store: bool,
 }
 
 pub fn resolve_active_pixiv_account(store: &Store) -> Option<(AccountFile, String)> {
@@ -73,10 +72,7 @@ pub fn resolve_active_pixiv_account(store: &Store) -> Option<(AccountFile, Strin
     None
 }
 
-pub fn resolve_pixiv_account_candidates(
-    store: &Store,
-    _cookie_dir: &str,
-) -> Vec<PixivAccountCandidate> {
+pub fn resolve_pixiv_account_candidates(store: &Store) -> Vec<PixivAccountCandidate> {
     let mut candidates = Vec::new();
 
     if let Ok(accounts) = store.list_accounts("pixiv") {
@@ -85,7 +81,6 @@ pub fn resolve_pixiv_account_candidates(
                 name: account.name.clone(),
                 account: account.account,
                 source: format!("sqlite accounts table (pixiv/{})", account.name),
-                backed_by_store: true,
             });
         }
     }

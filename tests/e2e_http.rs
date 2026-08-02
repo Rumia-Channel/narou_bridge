@@ -28,22 +28,16 @@ fn test_root(name: &str) -> PathBuf {
 }
 
 fn test_config(root: &Path) -> AppConfig {
-    let legacy_root = root.join("legacy-empty");
-    std::fs::create_dir_all(&legacy_root).expect("create legacy root");
     AppConfig {
         data_dir: root.join("data").to_string_lossy().to_string(),
-        cookie_dir: root.join("cookie").to_string_lossy().to_string(),
-        queue_dir: root.join("queue").to_string_lossy().to_string(),
         pdf_dir: root.join("pdf").to_string_lossy().to_string(),
         log_dir: root.join("log").to_string_lossy().to_string(),
         db_path: root.join("narou_bridge.db").to_string_lossy().to_string(),
-        archive_dir: root.join("archive").to_string_lossy().to_string(),
         bind_addr: "127.0.0.1:0".to_string(),
         host_name: "http://127.0.0.1:0".to_string(),
         img_url: String::new(),
         auto_update: false,
         auto_update_interval: 0,
-        legacy_root: Some(legacy_root.to_string_lossy().to_string()),
     }
 }
 
@@ -242,31 +236,19 @@ async fn key_http_endpoints_respond_in_process() {
             .and_then(Value::as_str)
             .is_some_and(|request_id| !request_id.is_empty())
     );
-    assert!(root.join("queue").join("task.json").exists());
 
-    let migrate_query = serde_urlencoded::to_string([(
-        "source_root",
-        root.join("legacy-empty").to_string_lossy().to_string(),
-    )])
-    .expect("migrate query");
     let migrate_response = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/api/migrate?{migrate_query}"))
+                .uri("/api/migrate")
                 .body(Body::empty())
                 .expect("migrate request"),
         )
         .await
         .expect("migrate response");
-    assert_eq!(migrate_response.status(), StatusCode::OK);
-    let migrate_json = response_json(migrate_response).await;
-    assert_eq!(
-        migrate_json.get("status").and_then(Value::as_str),
-        Some("success")
-    );
-    assert!(migrate_json.get("summary").is_some());
+    assert_eq!(migrate_response.status(), StatusCode::NOT_FOUND);
 
     let reader_response = app
         .clone()
@@ -304,8 +286,8 @@ async fn key_http_endpoints_respond_in_process() {
 }
 
 #[tokio::test]
-async fn db_backed_json_routes_respond_without_persisted_json_files() {
-    let root = test_root("e2e-http-db-json");
+async fn legacy_json_routes_are_absent_and_db_routes_are_cacheable() {
+    let root = test_root("e2e-http-db-cutover");
     let config = test_config(&root);
     let seed_store = Store::open(config.db_path_buf()).expect("open seed store");
     seed_store
@@ -327,89 +309,135 @@ async fn db_backed_json_routes_respond_without_persisted_json_files() {
     )
     .await
     .expect("build runtime state");
+    std::fs::write(
+        config
+            .data_dir_path()
+            .join("images")
+            .join("deadbeefcafebabe.jpg"),
+        b"jpg",
+    )
+    .expect("write image file");
+    std::fs::write(
+        config.data_dir_path().join("private.sqlite3"),
+        b"must not be publicly served",
+    )
+    .expect("write private data file");
     let app = build_app(state);
 
-    assert!(!root.join("data").join("pixiv").join("index.json").exists());
-    assert!(!root.join("data").join("images").join("cover.json").exists());
-    assert!(
-        !root
-            .join("data")
-            .join("images")
-            .join("database.json")
-            .exists()
-    );
+    for path in [
+        "/pixiv/index.json",
+        "/images/cover.json",
+        "/images/database.json",
+        "/pixiv/n123/raw/raw.json",
+        "/private.sqlite3",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("legacy request"),
+            )
+            .await
+            .expect("legacy response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+    }
 
-    let index_response = app
+    let metadata_response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/pixiv/index.json")
+                .uri("/api/library/works/pixiv/n123")
                 .body(Body::empty())
-                .expect("index request"),
+                .expect("metadata API request"),
         )
         .await
-        .expect("index response");
-    assert_eq!(index_response.status(), StatusCode::OK);
-    assert!(index_response.headers().contains_key(ETAG));
-    let index_json = response_json(index_response).await;
-    assert_eq!(index_json["n123"]["title"].as_str(), Some("DB-backed work"));
+        .expect("metadata API response");
+    assert_eq!(metadata_response.status(), StatusCode::OK);
+    assert!(metadata_response.headers().contains_key(ETAG));
+    assert!(
+        metadata_response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.contains("s-maxage=300"))
+    );
+    let metadata_etag = metadata_response.headers().get(ETAG).unwrap().clone();
+    let not_modified = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/library/works/pixiv/n123")
+                .header("if-none-match", metadata_etag)
+                .body(Body::empty())
+                .expect("conditional metadata API request"),
+        )
+        .await
+        .expect("conditional metadata API response");
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
 
     let cover_response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/images/cover.json")
+                .uri("/covers/pixiv/n123")
                 .body(Body::empty())
                 .expect("cover request"),
         )
         .await
         .expect("cover response");
-    assert_eq!(cover_response.status(), StatusCode::OK);
-    assert!(cover_response.headers().contains_key(ETAG));
-    let cover_json = response_json(cover_response).await;
+    assert_eq!(cover_response.status(), StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(
-        cover_json["pixiv_n123_cover.jpg"].as_str(),
-        Some("deadbeefcafebabe")
+        cover_response
+            .headers()
+            .get("location")
+            .and_then(|value| value.to_str().ok()),
+        Some("/images/deadbeefcafebabe.jpg")
     );
+    let cover_cache = cover_response
+        .headers()
+        .get("cache-control")
+        .and_then(|value| value.to_str().ok())
+        .expect("cover cache policy");
+    assert!(cover_cache.contains("s-maxage=3600"));
+    assert!(cover_cache.contains("stale-while-revalidate=86400"));
 
-    let database_response = app
+    let image_response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/images/database.json")
+                .uri("/images/deadbeefcafebabe.jpg")
                 .body(Body::empty())
-                .expect("database request"),
+                .expect("image request"),
         )
         .await
-        .expect("database response");
-    assert_eq!(database_response.status(), StatusCode::OK);
-    let database_json = response_json(database_response).await;
+        .expect("image response");
+    assert_eq!(image_response.status(), StatusCode::OK);
     assert_eq!(
-        database_json["pixiv_n123_cover.jpg"].as_str(),
-        Some("deadbeefcafebabe")
+        image_response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok()),
+        Some("public, max-age=31536000, immutable")
     );
 
-    let raw_response = app
+    let static_response = app
         .oneshot(
             Request::builder()
-                .uri("/pixiv/n123/raw/raw.json")
+                .uri("/css/common.css")
                 .body(Body::empty())
-                .expect("raw request"),
+                .expect("static asset request"),
         )
         .await
-        .expect("raw response");
-    assert_eq!(raw_response.status(), StatusCode::OK);
-    assert!(raw_response.headers().contains_key(ETAG));
-    let raw_json = response_json(raw_response).await;
-    assert_eq!(raw_json["title"].as_str(), Some("DB-backed work"));
-    assert!(
-        !root
-            .join("data")
-            .join("pixiv")
-            .join("n123")
-            .join("raw")
-            .join("raw.json")
-            .exists()
+        .expect("static asset response");
+    assert_eq!(static_response.status(), StatusCode::OK);
+    assert_eq!(
+        static_response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok()),
+        Some("public, max-age=300, s-maxage=3600")
     );
 }
 
@@ -492,7 +520,7 @@ async fn library_works_api_pages_db_summaries_without_raw_json() {
 }
 
 #[tokio::test]
-async fn library_work_api_reads_raw_and_episode_from_db() {
+async fn library_work_api_reads_metadata_then_episode_from_db() {
     let root = test_root("e2e-http-library-work");
     let config = test_config(&root);
     let seed_store = Store::open(config.db_path_buf()).expect("open seed store");
@@ -509,20 +537,22 @@ async fn library_work_api_reads_raw_and_episode_from_db() {
     .expect("runtime state");
     let app = build_app(state);
 
-    let raw_response = app
+    let metadata_response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/library/works/pixiv/n123/raw")
+                .uri("/api/library/works/pixiv/n123")
                 .body(Body::empty())
-                .expect("library raw request"),
+                .expect("library metadata request"),
         )
         .await
-        .expect("library raw response");
-    assert_eq!(raw_response.status(), StatusCode::OK);
-    let raw = response_json(raw_response).await;
-    assert_eq!(raw["title"].as_str(), Some("DB-backed work"));
-
+        .expect("library metadata response");
+    assert_eq!(metadata_response.status(), StatusCode::OK);
+    let metadata = response_json(metadata_response).await;
+    assert_eq!(metadata["title"].as_str(), Some("DB-backed work"));
+    assert!(metadata["episodes"]["1"].get("text").is_none());
+    assert!(metadata["episodes"]["1"].get("introduction").is_none());
+    assert!(metadata["episodes"]["1"].get("postscript").is_none());
     let episode_response = app
         .oneshot(
             Request::builder()
@@ -539,7 +569,7 @@ async fn library_work_api_reads_raw_and_episode_from_db() {
 }
 
 #[tokio::test]
-async fn build_runtime_state_bootstraps_empty_db_from_external_data_dir() {
+async fn build_runtime_state_ignores_legacy_json_data() {
     let root = test_root("e2e-http-external-data");
     let external_data_root = root.join("external-data");
     write_legacy_data_root(&external_data_root);
@@ -558,59 +588,22 @@ async fn build_runtime_state_bootstraps_empty_db_from_external_data_dir() {
     )
     .await
     .expect("build runtime state");
-
     {
         let store = state.store.lock().await;
-        assert_eq!(
-            store
-                .get_work("pixiv", "n123")
-                .expect("get work")
-                .map(|work| work.title),
-            Some("DB-backed work".to_string())
-        );
-        assert_eq!(
+        assert!(store.get_work("pixiv", "n123").expect("get work").is_none());
+        assert!(
             store
                 .get_image("pixiv_n123_cover.jpg")
                 .expect("get image")
-                .map(|image| image.hash),
-            Some("deadbeefcafebabe".to_string())
+                .is_none()
         );
-        assert_eq!(
+        assert!(
             store
                 .list_site_document_records("pixiv", Some("tracked_users/"))
                 .expect("list tracked users")
-                .len(),
-            2
+                .is_empty()
         );
     }
-
-    let app = build_app(state);
-    let index_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/pixiv/index.json")
-                .body(Body::empty())
-                .expect("index request"),
-        )
-        .await
-        .expect("index response");
-    assert_eq!(index_response.status(), StatusCode::OK);
-    let index_json = response_json(index_response).await;
-    assert_eq!(index_json["n123"]["title"].as_str(), Some("DB-backed work"));
-
-    let raw_response = app
-        .oneshot(
-            Request::builder()
-                .uri("/pixiv/n123/raw/raw.json")
-                .body(Body::empty())
-                .expect("raw request"),
-        )
-        .await
-        .expect("raw response");
-    assert_eq!(raw_response.status(), StatusCode::OK);
-    let raw_json = response_json(raw_response).await;
-    assert_eq!(raw_json["title"].as_str(), Some("DB-backed work"));
 
     std::fs::write(
         external_data_root
@@ -618,23 +611,24 @@ async fn build_runtime_state_bootstraps_empty_db_from_external_data_dir() {
             .join("n123")
             .join("raw")
             .join("raw.json"),
-        b"{corrupt after completed bootstrap",
+        b"{corrupt legacy data",
     )
-    .expect("corrupt source after bootstrap");
+    .expect("corrupt ignored source");
     let restarted = build_runtime_state(
         config.clone(),
-        Store::open(config.db_path_buf()).expect("reopen bootstrapped store"),
+        Store::open(config.db_path_buf()).expect("reopen store"),
         build_registry(),
     )
     .await
-    .expect("completed bootstrap marker should skip source rescan");
-    let restarted_store = restarted.store.lock().await;
-    assert_eq!(
-        restarted_store
+    .expect("legacy files must not be scanned");
+    assert!(
+        restarted
+            .store
+            .lock()
+            .await
             .get_work("pixiv", "n123")
             .expect("get restarted work")
-            .map(|work| work.title),
-        Some("DB-backed work".to_string())
+            .is_none()
     );
 }
 
@@ -693,6 +687,24 @@ async fn db_backed_html_routes_respond_without_persisted_work_html() {
     );
     let site_html = response_text(site_response).await;
     assert!(site_html.contains("pixiv Index"));
+    assert!(site_html.contains("DB-backed work"));
+    assert!(!site_html.contains("site-index-data"));
+    assert!(!site_html.contains("site_index_table.js"));
+
+    let filtered_site_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/pixiv/?search=missing")
+                .body(Body::empty())
+                .expect("filtered site html request"),
+        )
+        .await
+        .expect("filtered site html response");
+    assert_eq!(filtered_site_response.status(), StatusCode::OK);
+    let filtered_site_html = response_text(filtered_site_response).await;
+    assert!(filtered_site_html.contains("該当する作品はありません。"));
+    assert!(!filtered_site_html.contains("DB-backed work"));
 
     let work_response = app
         .clone()

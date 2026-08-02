@@ -1,11 +1,4 @@
-use crate::core::account::{
-    rewrite_cookie_site_mirror as rewrite_cookie_site_mirror_impl, validate_account_file,
-};
-use crate::core::atomic_io::atomic_write;
-use crate::core::migration::{
-    BOOTSTRAP_DOCUMENT_SCOPE, BOOTSTRAP_IMAGES_KEY, BOOTSTRAP_PIXIV_DOCUMENTS_KEY,
-    BOOTSTRAP_WORKS_KEY_PREFIX, MigrationPlan, migrate_legacy_tree,
-};
+use crate::core::account::validate_account_file;
 use crate::core::model::{
     AccountFile, AccountRecord, AppConfig, ImageRecord, RequestData, TaskRecord, TaskStatus,
     WorkRecord, ZipImportMetadata,
@@ -25,11 +18,11 @@ use axum::routing::{get, post};
 use axum_extra::extract::Multipart;
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
+use std::fmt::Write as _;
 use std::fs as stdfs;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -39,13 +32,14 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::fs;
 use tokio::sync::{Mutex, Notify};
+use tower::Layer;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{error, info, warn};
 
 const AUTO_UPDATE_STARTUP_DELAY: Duration = Duration::from_secs(30);
 const JSON_FORM_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const MULTIPART_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
-const BOOTSTRAP_WORK_BATCH_SIZE: usize = 512;
 
 #[derive(Clone)]
 pub struct RuntimeState {
@@ -72,11 +66,6 @@ struct AccountRenamePayload {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct MigrationQuery {
-    source_root: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 struct WorksQuery {
     site: Option<String>,
 }
@@ -89,6 +78,16 @@ struct LibraryWorksQuery {
     search: Option<String>,
     author_id: Option<String>,
     author: Option<String>,
+    #[serde(rename = "type")]
+    work_type: Option<String>,
+    serialization: Option<String>,
+    sort: Option<String>,
+}
+#[derive(Debug, Deserialize, Default)]
+struct SiteIndexQuery {
+    page: Option<usize>,
+    per_page: Option<usize>,
+    search: Option<String>,
     #[serde(rename = "type")]
     work_type: Option<String>,
     serialization: Option<String>,
@@ -159,90 +158,7 @@ pub async fn build_runtime_state(
 async fn prepare_runtime_state(state: &RuntimeState) -> Result<()> {
     ensure_runtime_dirs(&state.config).await?;
     write_static_bootstrap(&state.config, &state.registry.site_names()).await?;
-    bootstrap_store_from_existing_data(state).await?;
     recover_queued_runtime_state(state).await?;
-    sync_queue_state(state).await?;
-    Ok(())
-}
-
-async fn bootstrap_store_from_existing_data(state: &RuntimeState) -> Result<()> {
-    let data_root = state.config.data_dir_path();
-    let site_names = state.registry.site_names();
-
-    let store = state.store.lock().await;
-    let mut imported_works = 0usize;
-    let mut imported_images = 0usize;
-    let mut imported_pixiv_docs = 0usize;
-
-    for site_name in &site_names {
-        let marker_key = format!("{BOOTSTRAP_WORKS_KEY_PREFIX}{site_name}");
-        if store
-            .get_site_document_record(BOOTSTRAP_DOCUMENT_SCOPE, &marker_key)?
-            .is_some()
-        {
-            continue;
-        }
-        let imported =
-            import_existing_site_records_from_tree(&store, &data_root.join(site_name), site_name)?;
-        imported_works += imported;
-        store.upsert_site_document(
-            BOOTSTRAP_DOCUMENT_SCOPE,
-            &marker_key,
-            &json!({"imported": imported}),
-            &now_string(),
-        )?;
-    }
-
-    if store
-        .get_site_document_record(BOOTSTRAP_DOCUMENT_SCOPE, BOOTSTRAP_IMAGES_KEY)?
-        .is_none()
-    {
-        imported_images = import_existing_image_records(&store, &data_root.join("images"))?;
-        store.upsert_site_document(
-            BOOTSTRAP_DOCUMENT_SCOPE,
-            BOOTSTRAP_IMAGES_KEY,
-            &json!({"imported": imported_images}),
-            &now_string(),
-        )?;
-    }
-
-    if store
-        .get_site_document_record(BOOTSTRAP_DOCUMENT_SCOPE, BOOTSTRAP_PIXIV_DOCUMENTS_KEY)?
-        .is_none()
-    {
-        let pixiv_dir = data_root.join("pixiv");
-        if pixiv_dir.exists() {
-            let tracked_users = crate::sites::pixiv::tracked_user_ids(&store, &pixiv_dir)?;
-            for user_id in &tracked_users {
-                let _ = crate::sites::pixiv::load_illust_snapshot(&store, &pixiv_dir, user_id)?;
-            }
-            imported_pixiv_docs = store
-                .list_site_document_records(
-                    crate::sites::pixiv::PIXIV_SITE_DOCUMENT_SCOPE,
-                    Some("tracked_users/"),
-                )?
-                .len();
-        }
-        store.upsert_site_document(
-            BOOTSTRAP_DOCUMENT_SCOPE,
-            BOOTSTRAP_PIXIV_DOCUMENTS_KEY,
-            &json!({"imported": imported_pixiv_docs}),
-            &now_string(),
-        )?;
-    }
-
-    drop(store);
-
-    if imported_works > 0 || imported_images > 0 || imported_pixiv_docs > 0 {
-        info!(
-            works = imported_works,
-            images = imported_images,
-            pixiv_site_documents = imported_pixiv_docs,
-            data_root = %data_root.display(),
-            "bootstrapped sqlite from existing data directory"
-        );
-    }
-
     Ok(())
 }
 
@@ -255,7 +171,26 @@ fn start_background_tasks(state: &RuntimeState) {
 
 pub fn build_app(state: RuntimeState) -> Router {
     let data_dir = state.config.data_dir_path();
-    let static_files = ServeDir::new(&data_dir).append_index_html_on_directories(true);
+    let css_files = SetResponseHeaderLayer::if_not_present(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("public, max-age=300, s-maxage=3600"),
+    )
+    .layer(ServeDir::new(data_dir.join("css")));
+    let script_files = SetResponseHeaderLayer::if_not_present(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("public, max-age=300, s-maxage=3600"),
+    )
+    .layer(ServeDir::new(data_dir.join("script")));
+    let icon_files = SetResponseHeaderLayer::if_not_present(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("public, max-age=300, s-maxage=3600"),
+    )
+    .layer(ServeDir::new(data_dir.join("icon")));
+    let image_files = SetResponseHeaderLayer::if_not_present(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+    )
+    .layer(ServeDir::new(data_dir.join("images")));
 
     Router::new()
         .route("/health", get(health))
@@ -263,26 +198,31 @@ pub fn build_app(state: RuntimeState) -> Router {
         .route("/api/tasks", get(list_tasks))
         .route("/api/works", get(list_works_query))
         .route(
-            "/api/library/works/{site}/{work}/raw",
-            get(library_work_raw_json),
+            "/api/library/works/{site}/{work}",
+            get(library_work_metadata_json),
         )
         .route(
             "/api/library/works/{site}/{work}/episodes/{episode}",
             get(library_work_episode_json),
         )
         .route("/api/library/works", get(list_library_works_query))
-        .route("/images/database.json", get(image_database_json))
-        .route("/images/cover.json", get(image_cover_json))
+        .route("/covers/{site}/{work}", get(work_cover))
         .route("/{site}/", get(site_index_html))
         .route("/{site}/index.html", get(site_index_html))
-        .route("/{site}/index.json", get(site_index_json))
         .route("/{site}/{work}/", get(work_index_html))
         .route("/{site}/{work}/index.html", get(work_index_html))
         .route("/{site}/{work}/info/", get(work_info_html))
         .route("/{site}/{work}/info/index.html", get(work_info_html))
         .route("/{site}/{work}/{episode}/", get(episode_html))
         .route("/{site}/{work}/{episode}/index.html", get(episode_html))
-        .route("/{site}/{work}/raw/raw.json", get(work_raw_json))
+        .nest_service("/images", image_files)
+        .nest_service("/css", css_files)
+        .nest_service("/script", script_files)
+        .nest_service("/icon", icon_files)
+        .route_service(
+            "/manifest.json",
+            ServeFile::new(data_dir.join("manifest.json")),
+        )
         .route(
             "/api/account",
             get(list_accounts_query)
@@ -295,7 +235,6 @@ pub fn build_app(state: RuntimeState) -> Router {
             "/api/",
             post(handle_post).layer(DefaultBodyLimit::max(MULTIPART_BODY_LIMIT_BYTES)),
         )
-        .route("/api/migrate", post(migrate))
         .route_service("/", ServeFile::new(data_dir.join("index.html")))
         .route_service(
             "/reader",
@@ -305,7 +244,6 @@ pub fn build_app(state: RuntimeState) -> Router {
             "/reader/",
             ServeFile::new(data_dir.join("reader").join("index.html")),
         )
-        .fallback_service(static_files)
         .layer(DefaultBodyLimit::max(JSON_FORM_BODY_LIMIT_BYTES))
         .layer(map_response(ensure_html_utf8_charset))
         .with_state(state)
@@ -337,6 +275,7 @@ async fn list_works_query(
 async fn list_library_works_query(
     State(state): State<RuntimeState>,
     Query(query): Query<LibraryWorksQuery>,
+    headers: HeaderMap,
 ) -> Response {
     let site = query
         .site
@@ -349,7 +288,7 @@ async fn list_library_works_query(
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
     }
 
-    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let limit = query.limit.unwrap_or(100).clamp(1, 5_000);
     let offset = query.offset.unwrap_or(0);
     let search = query
         .search
@@ -376,7 +315,7 @@ async fn list_library_works_query(
         offset,
         sort,
     ) {
-        Ok(page) => create_json_response(StatusCode::OK, &json!(page)),
+        Ok(page) => create_cacheable_json_response(&headers, &json!(page)),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
@@ -396,9 +335,10 @@ fn parse_work_list_sort(sort: Option<&str>) -> WorkListSort {
     }
 }
 
-async fn library_work_raw_json(
+async fn library_work_metadata_json(
     State(state): State<RuntimeState>,
     AxumPath((site, work)): AxumPath<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
@@ -406,7 +346,10 @@ async fn library_work_raw_json(
 
     let store = state.store.lock().await;
     match store.get_work(&site, &work) {
-        Ok(Some(work_record)) => create_json_response(StatusCode::OK, &work_record.raw_json),
+        Ok(Some(work_record)) => {
+            let metadata = work_metadata_json(&work_record.raw_json);
+            create_cacheable_json_response(&headers, &metadata)
+        }
         Ok(None) => create_error(
             StatusCode::NOT_FOUND,
             format!("work not found: {site}/{work}"),
@@ -415,9 +358,45 @@ async fn library_work_raw_json(
     }
 }
 
+fn work_metadata_json(raw_json: &Value) -> Value {
+    let Some(work) = raw_json.as_object() else {
+        return raw_json.clone();
+    };
+    let mut metadata = serde_json::Map::with_capacity(work.len());
+    for (key, value) in work {
+        if key != "episodes" && key != "episodes_data" {
+            metadata.insert(key.clone(), value.clone());
+            continue;
+        }
+        let Some(episodes) = value.as_object() else {
+            metadata.insert(key.clone(), value.clone());
+            continue;
+        };
+        let mut episode_metadata = serde_json::Map::with_capacity(episodes.len());
+        for (episode_key, episode) in episodes {
+            let value = match episode.as_object() {
+                Some(fields) => Value::Object(
+                    fields
+                        .iter()
+                        .filter(|(field, _)| {
+                            !matches!(field.as_str(), "text" | "introduction" | "postscript")
+                        })
+                        .map(|(field, value)| (field.clone(), value.clone()))
+                        .collect(),
+                ),
+                None => episode.clone(),
+            };
+            episode_metadata.insert(episode_key.clone(), value);
+        }
+        metadata.insert(key.clone(), Value::Object(episode_metadata));
+    }
+    Value::Object(metadata)
+}
+
 async fn library_work_episode_json(
     State(state): State<RuntimeState>,
     AxumPath((site, work, episode)): AxumPath<(String, String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
@@ -426,7 +405,7 @@ async fn library_work_episode_json(
     let store = state.store.lock().await;
     match store.get_work(&site, &work) {
         Ok(Some(work_record)) => match find_raw_episode(&work_record.raw_json, &episode) {
-            Some(episode_json) => create_json_response(StatusCode::OK, &episode_json),
+            Some(episode_json) => create_cacheable_json_response(&headers, &episode_json),
             None => create_error(
                 StatusCode::NOT_FOUND,
                 format!("episode not found: {site}/{work}/{episode}"),
@@ -470,57 +449,95 @@ fn json_scalar_matches(value: &Value, expected: &str) -> bool {
 async fn site_index_html(
     State(state): State<RuntimeState>,
     AxumPath(site): AxumPath<String>,
+    Query(query): Query<SiteIndexQuery>,
+    headers: HeaderMap,
 ) -> Response {
     if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
     }
 
+    let options = renderer::SiteIndexRenderOptions {
+        page: query.page.unwrap_or(1),
+        per_page: query.per_page.unwrap_or(25),
+        search: trimmed_query_value(query.search.as_deref()).map(ToOwned::to_owned),
+        work_type: trimmed_query_value(query.work_type.as_deref()).map(ToOwned::to_owned),
+        serialization: trimmed_query_value(query.serialization.as_deref()).map(ToOwned::to_owned),
+        sort: parse_work_list_sort(query.sort.as_deref()),
+    };
     let store = state.store.lock().await;
-    match renderer::render_site_index_html_from_store(
-        &store,
-        &site,
-        &state.config.host_name,
-        &state.config.img_url,
-    ) {
-        Ok(html) => create_html_response(StatusCode::OK, html),
+    match renderer::render_site_index_html_from_store(&store, &site, options) {
+        Ok(html) => create_cacheable_html_response(&headers, html),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
 
-async fn site_index_json(
+async fn work_cover(
     State(state): State<RuntimeState>,
-    AxumPath(site): AxumPath<String>,
+    AxumPath((site, work)): AxumPath<(String, String)>,
 ) -> Response {
     if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
     }
 
     let store = state.store.lock().await;
-    match renderer::build_site_index_json_from_store(&store, &site) {
-        Ok(value) => create_json_response(StatusCode::OK, &value),
-        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    let exists = match store.get_work(&site, &work) {
+        Ok(work) => work.is_some(),
+        Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    };
+    if !exists {
+        return create_error(
+            StatusCode::NOT_FOUND,
+            format!("work not found: {site}/{work}"),
+        );
     }
-}
 
-async fn image_database_json(State(state): State<RuntimeState>) -> Response {
-    let store = state.store.lock().await;
-    match renderer::build_image_manifest_jsons(&store) {
-        Ok((database, _)) => create_json_response(StatusCode::OK, &database),
-        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    const COVER_EXTENSIONS: &[&str] = &[
+        "jpg", "jpeg", "png", "gif", "apng", "webp", "bmp", "avif", "svg",
+    ];
+    let mut target = "/images/default_cover.png".to_string();
+    for ext in COVER_EXTENSIONS {
+        let logical_name = format!("{site}_{work}_cover.{ext}");
+        match store.get_image(&logical_name) {
+            Ok(Some(image)) => {
+                let file_name = format!("{}.{}", image.hash, image.ext);
+                target = if state.config.img_url.trim().is_empty() {
+                    format!("/images/{file_name}")
+                } else {
+                    format!(
+                        "{}/{}",
+                        state.config.img_url.trim_end_matches('/'),
+                        file_name
+                    )
+                };
+                break;
+            }
+            Ok(None) => {}
+            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
     }
-}
+    drop(store);
 
-async fn image_cover_json(State(state): State<RuntimeState>) -> Response {
-    let store = state.store.lock().await;
-    match renderer::build_image_manifest_jsons(&store) {
-        Ok((_, cover)) => create_json_response(StatusCode::OK, &cover),
-        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
+    let mut response = StatusCode::TEMPORARY_REDIRECT.into_response();
+    let Ok(location) = header::HeaderValue::from_str(&target) else {
+        return create_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid cover URL".to_string(),
+        );
+    };
+    response.headers_mut().insert(header::LOCATION, location);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static(
+            "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+        ),
+    );
+    response
 }
 
 async fn work_index_html(
     State(state): State<RuntimeState>,
     AxumPath((site, work)): AxumPath<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
@@ -534,7 +551,7 @@ async fn work_index_html(
         &state.config.host_name,
         &state.config.img_url,
     ) {
-        Ok(Some(html)) => create_html_response(StatusCode::OK, html),
+        Ok(Some(html)) => create_cacheable_html_response(&headers, html),
         Ok(None) => create_error(
             StatusCode::NOT_FOUND,
             format!("work not found: {site}/{work}"),
@@ -546,6 +563,7 @@ async fn work_index_html(
 async fn work_info_html(
     State(state): State<RuntimeState>,
     AxumPath((site, work)): AxumPath<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
@@ -559,7 +577,7 @@ async fn work_info_html(
         &state.config.host_name,
         &state.config.img_url,
     ) {
-        Ok(Some(html)) => create_html_response(StatusCode::OK, html),
+        Ok(Some(html)) => create_cacheable_html_response(&headers, html),
         Ok(None) => create_error(
             StatusCode::NOT_FOUND,
             format!("work not found: {site}/{work}"),
@@ -571,6 +589,7 @@ async fn work_info_html(
 async fn episode_html(
     State(state): State<RuntimeState>,
     AxumPath((site, work, episode)): AxumPath<(String, String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     if !is_known_site(&state, &site) {
         return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
@@ -585,29 +604,10 @@ async fn episode_html(
         &state.config.host_name,
         &state.config.img_url,
     ) {
-        Ok(Some(html)) => create_html_response(StatusCode::OK, html),
+        Ok(Some(html)) => create_cacheable_html_response(&headers, html),
         Ok(None) => create_error(
             StatusCode::NOT_FOUND,
             format!("episode not found: {site}/{work}/{episode}"),
-        ),
-        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-async fn work_raw_json(
-    State(state): State<RuntimeState>,
-    AxumPath((site, work)): AxumPath<(String, String)>,
-) -> Response {
-    if !is_known_site(&state, &site) {
-        return create_error(StatusCode::NOT_FOUND, format!("unknown site: {site}"));
-    }
-
-    let store = state.store.lock().await;
-    match store.get_work(&site, &work) {
-        Ok(Some(work_record)) => create_json_response(StatusCode::OK, &work_record.raw_json),
-        Ok(None) => create_error(
-            StatusCode::NOT_FOUND,
-            format!("work not found: {site}/{work}"),
         ),
         Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
@@ -685,17 +685,9 @@ async fn upload_account_query(
         {
             return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
         }
-        let accounts = match store.list_accounts(&site) {
-            Ok(accounts) => accounts,
-            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-        };
-        if let Err(err) = rewrite_cookie_site_mirror(&state.config, &site, &accounts) {
-            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-        }
         saved_name
     };
-    let file_name = account_file_name(&saved_name);
-    Json(json!({"status": "success", "message": format!("Account {file_name} uploaded successfully"), "site": site, "account": file_name})).into_response()
+    Json(json!({"status": "success", "message": format!("Account {saved_name} uploaded successfully"), "site": site, "account": saved_name})).into_response()
 }
 
 async fn delete_account_query(
@@ -723,16 +715,8 @@ async fn delete_account_query(
         if let Err(err) = store.delete_account(&site, &account_name) {
             return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
         }
-        let accounts = match store.list_accounts(&site) {
-            Ok(accounts) => accounts,
-            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-        };
-        if let Err(err) = rewrite_cookie_site_mirror(&state.config, &site, &accounts) {
-            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-        }
     };
-    let file_name = account_file_name(&account_name);
-    Json(json!({"status": "success", "message": format!("Account {file_name} deleted successfully")})).into_response()
+    Json(json!({"status": "success", "message": format!("Account {account_name} deleted successfully")})).into_response()
 }
 
 async fn switch_account_query(
@@ -757,22 +741,14 @@ async fn switch_account_query(
             Ok(None) => {
                 return create_error(
                     StatusCode::NOT_FOUND,
-                    format!("Account {} not found", account_file_name(&account_name)),
+                    format!("Account {account_name} not found"),
                 );
             }
             Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         };
-        let accounts = match store.list_accounts(&site) {
-            Ok(accounts) => accounts,
-            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-        };
-        if let Err(err) = rewrite_cookie_site_mirror(&state.config, &site, &accounts) {
-            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-        }
         account.name
     };
-    let file_name = account_file_name(&saved_name);
-    Json(json!({"status": "success", "message": format!("Switched to account {file_name}"), "site": site, "account": file_name})).into_response()
+    Json(json!({"status": "success", "message": format!("Switched to account {saved_name}"), "site": site, "account": saved_name})).into_response()
 }
 
 async fn rename_account_query(
@@ -818,10 +794,7 @@ async fn rename_account_query(
             Ok(Some(_)) => {
                 return create_error(
                     StatusCode::CONFLICT,
-                    format!(
-                        "Account name '{}' already exists",
-                        account_file_name(&new_name)
-                    ),
+                    format!("Account name '{new_name}' already exists"),
                 );
             }
             Ok(None) => {}
@@ -830,17 +803,8 @@ async fn rename_account_query(
         if let Err(err) = store.rename_account(&site, &old_name, &new_name, &updated_at) {
             return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
         }
-        let accounts = match store.list_accounts(&site) {
-            Ok(accounts) => accounts,
-            Err(err) => return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-        };
-        if let Err(err) = rewrite_cookie_site_mirror(&state.config, &site, &accounts) {
-            return create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-        }
     };
-    let old_file_name = account_file_name(&old_name);
-    let new_file_name = account_file_name(&new_name);
-    Json(json!({"status": "success", "message": format!("Account renamed from {old_file_name} to {new_file_name}"), "site": site, "old_name": old_file_name, "new_name": new_file_name})).into_response()
+    Json(json!({"status": "success", "message": format!("Account renamed from {old_name} to {new_name}"), "site": site, "old_name": old_name, "new_name": new_name})).into_response()
 }
 
 async fn handle_post(State(state): State<RuntimeState>, request: Request) -> impl IntoResponse {
@@ -902,7 +866,6 @@ async fn enqueue_task_record(
     task: TaskRecord,
     dedupe_incomplete: bool,
 ) -> Result<EnqueueTaskOutcome> {
-    let request_id = task.request_id.clone();
     let action = task.action.clone();
     let param = task.param.clone();
 
@@ -917,9 +880,6 @@ async fn enqueue_task_record(
     };
 
     if matches!(outcome, EnqueueTaskOutcome::Enqueued) {
-        if let Err(err) = sync_queue_state(state).await {
-            warn!(request_id = %request_id, error = %err, "failed to sync queue state after enqueue");
-        }
         state.worker_notify.notify_one();
     }
 
@@ -983,116 +943,6 @@ async fn auto_update_loop(state: RuntimeState) {
             "next auto-update scheduled"
         );
         tokio::time::sleep(interval).await;
-    }
-}
-
-fn validate_migration_source(
-    requested: &str,
-    config: &AppConfig,
-) -> Result<PathBuf, (StatusCode, String)> {
-    let raw = PathBuf::from(requested);
-    // Reject explicit parent traversal segments before canonicalization so symlink
-    // tricks cannot smuggle them past the check.
-    if raw
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "source_root must not contain '..'".to_string(),
-        ));
-    }
-
-    let canonical = stdfs::canonicalize(&raw).map_err(|err| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("source_root could not be resolved: {err}"),
-        )
-    })?;
-
-    // Reject filesystem / drive roots (no parent).
-    if canonical.parent().is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "source_root must not be the filesystem root".to_string(),
-        ));
-    }
-
-    let data_dir_canonical = stdfs::canonicalize(config.data_dir_path()).ok();
-    let legacy_canonical = config
-        .legacy_root_path()
-        .and_then(|p| stdfs::canonicalize(p).ok());
-    let repo_root_canonical = std::env::current_dir()
-        .ok()
-        .and_then(|p| stdfs::canonicalize(p).ok());
-
-    let mut allowed = false;
-
-    if let Some(legacy) = legacy_canonical.as_ref() {
-        if &canonical == legacy {
-            allowed = true;
-        }
-    }
-
-    if !allowed {
-        if let Some(data_dir) = data_dir_canonical.as_ref() {
-            // Allow ancestors of data_dir (i.e. data_dir starts with canonical).
-            if data_dir.starts_with(&canonical) {
-                allowed = true;
-            }
-        }
-    }
-
-    if !allowed {
-        if let Some(repo_root) = repo_root_canonical.as_ref() {
-            if let (Some(repo_parent), Some(src_parent)) = (repo_root.parent(), canonical.parent())
-            {
-                if repo_parent == src_parent {
-                    allowed = true;
-                }
-            }
-        }
-    }
-
-    if !allowed {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "source_root is not within an allowed location".to_string(),
-        ));
-    }
-
-    Ok(canonical)
-}
-
-async fn migrate(
-    State(state): State<RuntimeState>,
-    Query(query): Query<MigrationQuery>,
-) -> impl IntoResponse {
-    let requested = query.source_root.unwrap_or_else(|| {
-        state
-            .config
-            .legacy_root
-            .clone()
-            .unwrap_or_else(|| "sample".to_string())
-    });
-
-    let source_root = match validate_migration_source(&requested, &state.config) {
-        Ok(path) => path,
-        Err((status, msg)) => return create_error(status, msg),
-    };
-
-    let plan = MigrationPlan {
-        source_root,
-        archive_root: PathBuf::from(&state.config.archive_dir),
-    };
-    // NOTE: This handler holds the global store mutex for the entire migration,
-    // which can include large filesystem scans and copies. Concurrent /api/
-    // requests will block until completion. Refactor to release the lock
-    // around long-running fs scans if this becomes a DoS concern.
-    let store = state.store.lock().await;
-    match migrate_legacy_tree(&store, plan) {
-        Ok(summary) => Json(json!({"status": "success", "summary": summary})).into_response(),
-        Err(err) => create_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
 
@@ -1166,10 +1016,7 @@ async fn execute_queued_task(state: &RuntimeState, task_id: i64, task: &TaskReco
         host_name: state.config.host_name.clone(),
         img_url: state.config.img_url.clone(),
         data_dir: state.config.data_dir.clone(),
-        cookie_dir: state.config.cookie_dir.clone(),
-        queue_dir: state.config.queue_dir.clone(),
         pdf_dir: state.config.pdf_dir.clone(),
-        archive_dir: state.config.archive_dir.clone(),
         request: task.request.clone(),
     };
 
@@ -1258,6 +1105,70 @@ fn summarize_result_group(results: &[&crate::sites::SiteActionResult]) -> String
         .collect::<Vec<_>>()
         .join("; ")
 }
+fn create_cacheable_html_response(request_headers: &HeaderMap, html: String) -> Response {
+    create_cacheable_response(
+        request_headers,
+        "text/html; charset=utf-8",
+        html.into_bytes(),
+        "public, max-age=0, s-maxage=60, stale-while-revalidate=86400",
+    )
+}
+
+fn create_cacheable_json_response(request_headers: &HeaderMap, value: &Value) -> Response {
+    let payload = match serde_json::to_vec(value) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return create_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to serialize JSON response: {err}"),
+            );
+        }
+    };
+    create_cacheable_response(
+        request_headers,
+        "application/json",
+        payload,
+        "public, max-age=0, s-maxage=300, stale-while-revalidate=86400",
+    )
+}
+
+fn create_cacheable_response(
+    request_headers: &HeaderMap,
+    content_type: &'static str,
+    payload: Vec<u8>,
+    cache_control: &'static str,
+) -> Response {
+    let digest = Sha256::digest(&payload);
+    let mut etag = String::with_capacity(66);
+    etag.push('"');
+    for byte in digest {
+        write!(&mut etag, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    etag.push('"');
+    let not_modified = request_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(',').any(|candidate| candidate.trim() == etag));
+
+    let mut response = if not_modified {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        (StatusCode::OK, payload).into_response()
+    };
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static(content_type),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static(cache_control),
+    );
+    if let Ok(value) = header::HeaderValue::from_str(&etag) {
+        headers.insert(header::ETAG, value);
+    }
+    response
+}
 
 fn site_id_label(site_id: crate::sites::SiteId) -> &'static str {
     match site_id {
@@ -1268,58 +1179,6 @@ fn site_id_label(site_id: crate::sites::SiteId) -> &'static str {
 
 fn create_error(status: StatusCode, message: String) -> Response {
     (status, Json(json!({"status": "error", "message": message}))).into_response()
-}
-
-fn create_html_response(status: StatusCode, html: String) -> Response {
-    let mut response = (status, html).into_response();
-    let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("text/html; charset=utf-8"),
-    );
-    headers.insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-cache"),
-    );
-    response
-}
-
-fn create_json_response(status: StatusCode, value: &Value) -> Response {
-    let payload = match serde_json::to_vec_pretty(value) {
-        Ok(payload) => payload,
-        Err(err) => {
-            return create_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to serialize JSON response: {err}"),
-            );
-        }
-    };
-
-    let mut hasher = Sha256::new();
-    hasher.update(&payload);
-    let digest = hasher.finalize();
-    let etag = format!(
-        "\"{}\"",
-        digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    );
-
-    let mut response = (status, payload).into_response();
-    let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("application/json"),
-    );
-    headers.insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-cache"),
-    );
-    if let Ok(value) = header::HeaderValue::from_str(&etag) {
-        headers.insert(header::ETAG, value);
-    }
-    response
 }
 
 fn is_known_site(state: &RuntimeState, site: &str) -> bool {
@@ -1604,8 +1463,8 @@ fn import_uploaded_zip(
     request: &RequestData,
     data_dir: &str,
     pdf_dir: &str,
-    host_name: &str,
-    img_url: &str,
+    _host_name: &str,
+    _img_url: &str,
 ) -> Result<String> {
     let archive_path =
         queued_zip_path(request, pdf_dir)?.context("queued ZIP upload is missing from pdf/")?;
@@ -1626,23 +1485,8 @@ fn import_uploaded_zip(
             &staging_root.join(&metadata.site_name),
             &metadata.site_name,
         )?;
-        copy_staged_site_payload(
-            &payload_entries,
-            staging_root,
-            data_root,
-            &metadata.site_name,
-        )?;
         copy_staged_zip_images(&payload_entries, staging_root, data_root)?;
         merge_zip_images(store, &metadata)?;
-        renderer::refresh_image_manifests(store, data_dir)?;
-        renderer::render_site_from_store(
-            store,
-            &metadata.site_name,
-            data_dir,
-            host_name,
-            img_url,
-            None,
-        )?;
 
         Ok(format!(
             "imported {} ({imported} works)",
@@ -1784,41 +1628,6 @@ fn prepare_zip_import_staging_dir(request_id: &str) -> Result<TempDir> {
         .with_context(|| {
             format!("failed to create ZIP import staging directory for request {request_id}")
         })
-}
-
-fn copy_staged_site_payload(
-    entries: &[ZipPayloadEntry],
-    staging_root: &Path,
-    data_root: &Path,
-    site_name: &str,
-) -> Result<()> {
-    for entry in entries {
-        let Some(root) = entry
-            .relative
-            .components()
-            .next()
-            .and_then(|component| component.as_os_str().to_str())
-        else {
-            continue;
-        };
-        if root != site_name {
-            continue;
-        }
-
-        let source = staging_root.join(&entry.relative);
-        let target = data_root.join(&entry.relative);
-        if let Some(parent) = target.parent() {
-            stdfs::create_dir_all(parent)?;
-        }
-        stdfs::copy(&source, &target).with_context(|| {
-            format!(
-                "failed to copy staged ZIP payload {} to {}",
-                source.display(),
-                target.display()
-            )
-        })?;
-    }
-    Ok(())
 }
 
 fn copy_staged_zip_images(
@@ -1996,169 +1805,6 @@ fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str
     Ok(count)
 }
 
-fn import_existing_site_records_from_tree(
-    store: &Store,
-    site_dir: &Path,
-    site_name: &str,
-) -> Result<usize> {
-    if !site_dir.exists() {
-        return Ok(0);
-    }
-
-    let work_dirs: Vec<PathBuf> = stdfs::read_dir(site_dir)?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .file_type()
-                .map(|file_type| file_type.is_dir())
-                .unwrap_or(false)
-        })
-        .map(|entry| entry.path())
-        .collect();
-
-    if work_dirs.is_empty() {
-        return Ok(0);
-    }
-
-    let bar = make_progress_bar(work_dirs.len() as u64, &format!("import {site_name}"));
-    let mut imported = 0usize;
-    let mut batch = Vec::with_capacity(BOOTSTRAP_WORK_BATCH_SIZE);
-    for work_path in work_dirs {
-        let work_key = work_path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default();
-        bar.set_message(format!("{site_name}/{work_key}"));
-
-        let raw_path = work_path.join("raw").join("raw.json");
-        let alt_path = work_path.join("data.json");
-        let payload_path = if raw_path.exists() {
-            raw_path
-        } else if alt_path.exists() {
-            alt_path
-        } else {
-            bar.inc(1);
-            continue;
-        };
-
-        let raw_json: Value = serde_json::from_reader(
-            stdfs::File::open(&payload_path)
-                .with_context(|| format!("failed to open {}", payload_path.display()))?,
-        )
-        .with_context(|| format!("failed to parse {}", payload_path.display()))?;
-        batch.push(work_record_from_json(site_name, &work_key, raw_json)?);
-        bar.inc(1);
-
-        if batch.len() == BOOTSTRAP_WORK_BATCH_SIZE {
-            store.bulk_upsert_works(&batch, |_| {})?;
-            imported += batch.len();
-            batch.clear();
-        }
-    }
-    if !batch.is_empty() {
-        store.bulk_upsert_works(&batch, |_| {})?;
-        imported += batch.len();
-    }
-
-    bar.finish_with_message(format!("{site_name}: {imported} works imported"));
-    Ok(imported)
-}
-
-fn make_progress_bar(total: u64, label: &str) -> ProgressBar {
-    let bar = ProgressBar::new(total);
-    let template = format!(
-        "{{spinner:.green}} {label:>16} [{{bar:40.cyan/blue}}] {{pos}}/{{len}} ({{eta}}) {{msg}}"
-    );
-    let style = ProgressStyle::with_template(&template)
-        .unwrap_or_else(|_| ProgressStyle::default_bar())
-        .progress_chars("=>-");
-    bar.set_style(style);
-    bar.enable_steady_tick(Duration::from_millis(200));
-    bar
-}
-
-fn import_existing_image_records(store: &Store, images_dir: &Path) -> Result<usize> {
-    if !images_dir.exists() {
-        return Ok(0);
-    }
-
-    let mut records = BTreeMap::<String, ImageRecord>::new();
-    let database_path = images_dir.join("database.json");
-    if database_path.exists() {
-        let database: Value = serde_json::from_reader(
-            stdfs::File::open(&database_path)
-                .with_context(|| format!("failed to open {}", database_path.display()))?,
-        )
-        .with_context(|| format!("failed to parse {}", database_path.display()))?;
-        if let Some(map) = database.as_object() {
-            for (logical_name, hash_value) in map {
-                let Some(hash) = hash_value.as_str() else {
-                    continue;
-                };
-                let Some(ext) = Path::new(logical_name)
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                else {
-                    continue;
-                };
-                records.insert(
-                    logical_name.clone(),
-                    ImageRecord {
-                        logical_name: logical_name.clone(),
-                        hash: hash.to_string(),
-                        ext: ext.to_string(),
-                        kind: "image".to_string(),
-                    },
-                );
-            }
-        }
-    }
-
-    let cover_path = images_dir.join("cover.json");
-    if cover_path.exists() {
-        let cover: Value = serde_json::from_reader(
-            stdfs::File::open(&cover_path)
-                .with_context(|| format!("failed to open {}", cover_path.display()))?,
-        )
-        .with_context(|| format!("failed to parse {}", cover_path.display()))?;
-        if let Some(map) = cover.as_object() {
-            for (logical_name, hash_value) in map {
-                let Some(hash) = hash_value.as_str() else {
-                    continue;
-                };
-                let Some(ext) = Path::new(logical_name)
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                else {
-                    continue;
-                };
-                records.insert(
-                    logical_name.clone(),
-                    ImageRecord {
-                        logical_name: logical_name.clone(),
-                        hash: hash.to_string(),
-                        ext: ext.to_string(),
-                        kind: "cover".to_string(),
-                    },
-                );
-            }
-        }
-    }
-
-    let imported = records.len();
-    if imported == 0 {
-        return Ok(0);
-    }
-    let bar = make_progress_bar(imported as u64, "import images");
-    let images: Vec<ImageRecord> = records.into_values().collect();
-    let bar_ref = bar.clone();
-    store.bulk_upsert_images(&images, move |done| {
-        bar_ref.set_position(done as u64);
-    })?;
-    bar.finish_with_message(format!("images: {imported} records imported"));
-    Ok(imported)
-}
-
 fn work_record_from_json(site: &str, work_key: &str, raw_json: Value) -> Result<WorkRecord> {
     let payload: ZipWorkPayload =
         serde_json::from_value(raw_json.clone()).context("invalid zip work payload")?;
@@ -2290,13 +1936,10 @@ fn merge_zip_images(store: &Store, metadata: &ZipImportMetadata) -> Result<()> {
 
 async fn ensure_runtime_dirs(config: &AppConfig) -> Result<()> {
     fs::create_dir_all(&config.data_dir).await?;
-    fs::create_dir_all(&config.cookie_dir).await?;
-    fs::create_dir_all(&config.queue_dir).await?;
     fs::create_dir_all(&config.pdf_dir).await?;
     fs::create_dir_all(&config.log_dir).await?;
     fs::create_dir_all(config.data_images_dir()).await?;
     fs::create_dir_all(config.data_reader_dir()).await?;
-    fs::create_dir_all(&config.archive_dir).await?;
     Ok(())
 }
 
@@ -2339,18 +1982,6 @@ fn normalize_account_name(value: &str) -> Option<String> {
     }
 }
 
-fn account_file_name(name: &str) -> String {
-    format!("{name}.json")
-}
-
-fn rewrite_cookie_site_mirror(
-    config: &AppConfig,
-    site: &str,
-    accounts: &[AccountRecord],
-) -> Result<()> {
-    rewrite_cookie_site_mirror_impl(Path::new(&config.cookie_dir), site, accounts)
-}
-
 fn random_account_name() -> String {
     uuid::Uuid::new_v4()
         .simple()
@@ -2383,17 +2014,6 @@ async fn recover_queued_runtime_state(state: &RuntimeState) -> Result<()> {
     Ok(())
 }
 
-async fn sync_queue_state(state: &RuntimeState) -> Result<()> {
-    let task_state = {
-        let store = state.store.lock().await;
-        store.task_state()?
-    };
-    let task_json = serde_json::to_string_pretty(&task_state)?;
-    let path = state.config.queue_task_json_path();
-    tokio::task::spawn_blocking(move || atomic_write(&path, task_json)).await??;
-    Ok(())
-}
-
 async fn worker_loop(state: RuntimeState) {
     loop {
         let task = match claim_next_task(&state).await {
@@ -2410,10 +2030,6 @@ async fn worker_loop(state: RuntimeState) {
             continue;
         };
 
-        if let Err(err) = sync_queue_state(&state).await {
-            error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to sync queue state for running task");
-        }
-
         if let Err(err) = execute_queued_task(&state, task.id, &task).await {
             error!(task_id = task.id, request_id = %task.request_id, error = %err, "queued task failed with runtime error");
             let store = state.store.lock().await;
@@ -2425,10 +2041,6 @@ async fn worker_loop(state: RuntimeState) {
             ) {
                 error!(task_id = task.id, request_id = %task.request_id, error = %mark_err, "failed to persist failed task status");
             }
-        }
-
-        if let Err(err) = sync_queue_state(&state).await {
-            error!(task_id = task.id, request_id = %task.request_id, error = %err, "failed to sync queue state after task completion");
         }
 
         cleanup_uploaded_files_for_request(&state.config, &task.request);
@@ -2464,36 +2076,17 @@ mod tests {
         path
     }
 
-    fn sample_account(site: &str, name: &str, active: bool) -> AccountRecord {
-        AccountRecord {
-            site: site.to_string(),
-            name: name.to_string(),
-            display_name: Some(format!("{name} display")),
-            account: AccountFile {
-                cookies: json!({"session": name}),
-                user_agent: Some(format!("{name}-ua")),
-                display_name: Some(format!("{name} display")),
-            },
-            active,
-            updated_at: "2025-01-01T00:00:00Z".to_string(),
-        }
-    }
-
     fn smoke_test_config(root: &Path) -> AppConfig {
         AppConfig {
             data_dir: root.join("data").to_string_lossy().to_string(),
-            cookie_dir: root.join("cookie").to_string_lossy().to_string(),
-            queue_dir: root.join("queue").to_string_lossy().to_string(),
             pdf_dir: root.join("pdf").to_string_lossy().to_string(),
             log_dir: root.join("log").to_string_lossy().to_string(),
             db_path: root.join("narou_bridge.db").to_string_lossy().to_string(),
-            archive_dir: root.join("archive").to_string_lossy().to_string(),
             bind_addr: "127.0.0.1:0".to_string(),
             host_name: "http://127.0.0.1:0".to_string(),
             img_url: String::new(),
             auto_update: false,
             auto_update_interval: 0,
-            legacy_root: None,
         }
     }
 
@@ -2867,135 +2460,6 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_cookie_site_mirror_writes_account_files_and_removes_stale() {
-        let root = test_dir("runtime-account-mirror");
-        let cookie_root = root.join("cookie");
-        let site_dir = cookie_root.join("pixiv");
-        stdfs::create_dir_all(&site_dir).unwrap();
-        stdfs::write(site_dir.join("stale.json"), "{}").unwrap();
-
-        let config = AppConfig {
-            cookie_dir: cookie_root.to_string_lossy().to_string(),
-            ..AppConfig::default()
-        };
-        let accounts = vec![
-            sample_account("pixiv", "alpha", false),
-            sample_account("pixiv", "beta", true),
-        ];
-
-        rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
-
-        assert!(
-            !site_dir.join("stale.json").exists(),
-            "stale files should be removed"
-        );
-        assert!(
-            site_dir.join("alpha.json").exists(),
-            "alpha account file should be written"
-        );
-        assert!(
-            site_dir.join("beta.json").exists(),
-            "beta account file should be written"
-        );
-        assert!(
-            site_dir.join("login.json").exists(),
-            "login mirror should be written for active account"
-        );
-        let login_content = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
-        assert!(
-            login_content.contains("beta"),
-            "login.json should contain active account data"
-        );
-
-        stdfs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn rewrite_cookie_site_mirror_replaces_existing_files() {
-        let root = test_dir("runtime-account-mirror-replace");
-        let cookie_root = root.join("cookie");
-        let site_dir = cookie_root.join("pixiv");
-        stdfs::create_dir_all(&site_dir).unwrap();
-        stdfs::write(
-            site_dir.join("alpha.json"),
-            r#"{"cookies":{"session":"old-alpha"}}"#,
-        )
-        .unwrap();
-        stdfs::write(
-            site_dir.join("login.json"),
-            r#"{"cookies":{"session":"old-login"}}"#,
-        )
-        .unwrap();
-        stdfs::write(site_dir.join("stale.json"), "{}").unwrap();
-
-        let config = AppConfig {
-            cookie_dir: cookie_root.to_string_lossy().to_string(),
-            ..AppConfig::default()
-        };
-        let accounts = vec![sample_account("pixiv", "beta", true)];
-
-        rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
-
-        assert!(
-            !site_dir.join("alpha.json").exists(),
-            "alpha not in accounts should be removed"
-        );
-        assert!(
-            !site_dir.join("stale.json").exists(),
-            "stale files should be removed"
-        );
-        assert!(
-            site_dir.join("beta.json").exists(),
-            "beta account file should be written"
-        );
-        let active_login = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
-        assert!(
-            active_login.contains("beta"),
-            "login.json should contain active account data"
-        );
-
-        stdfs::remove_dir_all(root).unwrap();
-    }
-
-    #[tokio::test]
-    async fn sync_queue_state_writes_task_json_after_enqueue() {
-        let root = test_dir("runtime-sync-queue-write");
-        let config = smoke_test_config(&root);
-        let store = Store::open_in_memory().expect("store");
-        let state = build_runtime_state(config, store, crate::core::registry::build_registry())
-            .await
-            .expect("runtime state");
-
-        let task = TaskRecord {
-            id: 0,
-            request_id: "req-sync-test".to_string(),
-            action: "download".to_string(),
-            param: "https://example.com/work".to_string(),
-            request: RequestData {
-                request_id: "req-sync-test".to_string(),
-                add: Some("https://example.com/work".to_string()),
-                ..RequestData::default()
-            },
-            status: TaskStatus::Queued,
-            error: None,
-            created_at: now_string(),
-            updated_at: now_string(),
-        };
-        enqueue_task_record(&state, task, false)
-            .await
-            .expect("enqueue task");
-
-        let task_json_path = state.config.queue_task_json_path();
-        assert!(task_json_path.exists(), "queue/task.json should be written");
-
-        let content = stdfs::read_to_string(&task_json_path).expect("read task.json");
-        assert!(content.contains("req-sync-test"));
-        assert!(content.contains("current_task"));
-
-        stdfs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn auto_update_task_targets_update_all() {
         let task = auto_update_task();
         assert_eq!(task.action, "update");
@@ -3126,7 +2590,7 @@ mod tests {
     }
 
     #[test]
-    fn import_uploaded_zip_commits_staged_files_after_validation() {
+    fn import_uploaded_zip_commits_database_and_image_files_only() {
         let root = test_dir("runtime-zip-import-staging-success");
         let data_dir = root.join("data");
         let pdf_dir = root.join("pdf");
@@ -3165,14 +2629,7 @@ mod tests {
 
         assert!(message.contains("imported legacy.zip (1 works)"));
         assert!(data_dir.join("images").join("abc123.png").exists());
-        assert!(
-            data_dir
-                .join("narou")
-                .join("work")
-                .join("raw")
-                .join("raw.json")
-                .exists()
-        );
+        assert!(!data_dir.join("narou").exists());
         assert_eq!(store.list_works(Some("narou")).unwrap().len(), 1);
         assert!(!data_dir.join(".zip-import-staging").exists());
 
@@ -3377,18 +2834,14 @@ mod tests {
         let data_dir = root.join("data");
         let config = AppConfig {
             data_dir: data_dir.to_string_lossy().to_string(),
-            cookie_dir: root.join("cookie").to_string_lossy().to_string(),
-            queue_dir: root.join("queue").to_string_lossy().to_string(),
             pdf_dir: root.join("pdf").to_string_lossy().to_string(),
             log_dir: root.join("log").to_string_lossy().to_string(),
             db_path: root.join("narou_bridge.db").to_string_lossy().to_string(),
-            archive_dir: root.join("archive").to_string_lossy().to_string(),
             bind_addr: "127.0.0.1:0".to_string(),
             host_name: String::new(),
             img_url: String::new(),
             auto_update: false,
             auto_update_interval: 0,
-            legacy_root: None,
         };
         ensure_runtime_dirs(&config).await.expect("runtime dirs");
         write_static_bootstrap(&config, &[])

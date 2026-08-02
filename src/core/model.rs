@@ -3,18 +3,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     pub data_dir: String,
-    pub cookie_dir: String,
-    pub queue_dir: String,
     pub pdf_dir: String,
     pub log_dir: String,
     pub db_path: String,
-    pub archive_dir: String,
     pub bind_addr: String,
     pub host_name: String,
     pub img_url: String,
     pub auto_update: bool,
     pub auto_update_interval: u64,
-    pub legacy_root: Option<String>,
 }
 
 impl AppConfig {
@@ -30,14 +26,6 @@ impl AppConfig {
         std::path::PathBuf::from(&self.db_path)
     }
 
-    pub fn archive_dir_path(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from(&self.archive_dir)
-    }
-
-    pub fn legacy_root_path(&self) -> Option<std::path::PathBuf> {
-        self.legacy_root.as_deref().map(std::path::PathBuf::from)
-    }
-
     pub fn data_images_dir(&self) -> std::path::PathBuf {
         self.data_dir_path().join("images")
     }
@@ -46,16 +34,8 @@ impl AppConfig {
         self.data_dir_path().join("reader")
     }
 
-    pub fn cookie_dir_path(&self, site: &str) -> std::path::PathBuf {
-        std::path::PathBuf::from(&self.cookie_dir).join(site)
-    }
-
     pub fn pdf_dir_path(&self) -> std::path::PathBuf {
         std::path::PathBuf::from(&self.pdf_dir)
-    }
-
-    pub fn queue_task_json_path(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from(&self.queue_dir).join("task.json")
     }
 }
 
@@ -238,6 +218,9 @@ pub struct WorkSummary {
     pub r#type: String,
     pub serialization: String,
     pub caption: String,
+    pub tags: Vec<String>,
+    pub all_tags: Vec<String>,
+    pub episode_ids: Vec<String>,
     pub create_date: String,
     pub update_date: String,
 }
@@ -268,11 +251,10 @@ pub struct SiteDocumentRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MigrationSummary {
+pub struct StoreSummary {
     pub accounts: usize,
     pub tasks: usize,
     pub works: usize,
     pub images: usize,
     pub site_documents: usize,
-    pub archived_files: usize,
 }

@@ -1,10 +1,6 @@
 use anyhow::{Context, Result, bail};
 use narou_bridge::core::bootstrap::load_app_config;
-use narou_bridge::core::migration::{
-    MigrationPlan, import_data_tree, import_operational_state, migrate_legacy_tree,
-};
 use narou_bridge::core::registry::build_registry;
-use narou_bridge::core::renderer;
 use narou_bridge::core::runtime::run;
 use narou_bridge::core::storage::Store;
 use std::fs;
@@ -22,34 +18,17 @@ async fn main() -> Result<()> {
     if args.get(1).map(String::as_str) == Some("rebuild-store") {
         return rebuild_store(&args);
     }
+    if args.get(1).map(String::as_str) == Some("install-store") {
+        return install_store(&args);
+    }
 
     let config = load_app_config(&root)?;
     let _guard = init_logging(&config.log_dir_path());
     fs::create_dir_all(config.data_dir_path())?;
     let store = Store::open(config.db_path_buf())?;
 
-    if args.get(1).map(|s| s.as_str()) == Some("migrate") {
-        let source_root = args
-            .get(2)
-            .map(std::path::PathBuf::from)
-            .or_else(|| config.legacy_root_path())
-            .unwrap_or_else(|| root.join("sample"));
-        let plan = MigrationPlan {
-            source_root,
-            archive_root: config.archive_dir_path(),
-        };
-        let summary = migrate_legacy_tree(&store, plan)?;
-        renderer::refresh_image_manifests(&store, &config.data_dir)?;
-        info!(
-            accounts = summary.accounts,
-            tasks = summary.tasks,
-            works = summary.works,
-            images = summary.images,
-            site_documents = summary.site_documents,
-            archived = summary.archived_files,
-            "migration completed"
-        );
-        return Ok(());
+    if args.get(1).is_some() {
+        bail!("unknown command: {}", args[1]);
     }
 
     let registry = build_registry();
@@ -58,45 +37,66 @@ async fn main() -> Result<()> {
 }
 
 fn rebuild_store(args: &[String]) -> Result<()> {
-    if args.len() != 5 {
-        bail!(
-            "usage: narou_bridge rebuild-store <source-data-dir> <source-runtime-root> <output-db>"
-        );
+    if args.len() != 4 {
+        bail!("usage: narou_bridge rebuild-store <source-db> <output-db>");
     }
 
-    let source_root = std::path::PathBuf::from(&args[2]);
-    let runtime_root = std::path::PathBuf::from(&args[3]);
-    let output_db = std::path::PathBuf::from(&args[4]);
-    if !source_root.is_dir() {
-        bail!(
-            "source data directory does not exist: {}",
-            source_root.display()
-        );
-    }
-    if !runtime_root.is_dir() {
-        bail!(
-            "source runtime directory does not exist: {}",
-            runtime_root.display()
-        );
+    let source_db = std::path::PathBuf::from(&args[2]);
+    let output_db = std::path::PathBuf::from(&args[3]);
+    if !source_db.is_file() {
+        bail!("source database does not exist: {}", source_db.display());
     }
     if output_db.exists() {
         bail!("output database already exists: {}", output_db.display());
     }
-    if output_db.starts_with(&source_root) || output_db.starts_with(&runtime_root) {
-        bail!("output database must be outside the read-only source directories");
+    if source_db == output_db {
+        bail!("output database must differ from the source database");
     }
     if let Some(parent) = output_db.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    let store = Store::open(&output_db)?;
-    let mut summary = import_data_tree(&store, &source_root)?;
-    let operational = import_operational_state(&store, &runtime_root)?;
-    summary.accounts = operational.accounts;
-    summary.tasks = operational.tasks;
-    store.checkpoint_wal()?;
-    println!("{}", serde_json::to_string_pretty(&summary)?);
+    let source = Store::open(&source_db)?;
+    source.integrity_check()?;
+    if let Err(err) = source.vacuum_into(&output_db) {
+        let _ = fs::remove_file(&output_db);
+        return Err(err);
+    }
+
+    let rebuilt = Store::open(&output_db)?;
+    rebuilt.integrity_check()?;
+    rebuilt.checkpoint_wal()?;
+    println!("{}", serde_json::to_string_pretty(&rebuilt.summary()?)?);
+    Ok(())
+}
+
+fn install_store(args: &[String]) -> Result<()> {
+    if args.len() != 4 {
+        bail!("usage: narou_bridge install-store <source-db> <destination-db>");
+    }
+
+    let source_db = std::path::PathBuf::from(&args[2]);
+    let destination_db = std::path::PathBuf::from(&args[3]);
+    if !source_db.is_file() {
+        bail!("source database does not exist: {}", source_db.display());
+    }
+    if !destination_db.is_file() {
+        bail!(
+            "destination database does not exist: {}",
+            destination_db.display()
+        );
+    }
+    if source_db == destination_db {
+        bail!("source and destination databases must differ");
+    }
+
+    let source = Store::open(&source_db)?;
+    source.integrity_check()?;
+    let destination = Store::open(&destination_db)?;
+    destination.replace_contents_from(&source_db)?;
+    destination.checkpoint_wal()?;
+    println!("{}", serde_json::to_string_pretty(&destination.summary()?)?);
     Ok(())
 }
 

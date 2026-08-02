@@ -119,15 +119,7 @@ fn narou_download(
         .filter(|path| path.exists());
 
     if let Some(pdf_path) = pdf_path {
-        let imported = import_pdf_file(
-            store,
-            &pdf_path,
-            &context.request,
-            &context.data_dir,
-            &context.pdf_dir,
-            &context.host_name,
-            &context.img_url,
-        )?;
+        let imported = import_pdf_file(store, &pdf_path, &context.request, &context.pdf_dir)?;
         return Ok(NarouDownloadOutcome::Imported(format!(
             "imported {}",
             imported.work_key
@@ -169,26 +161,11 @@ fn import_pdf_or_render(store: &mut Store, context: &SiteActionContext) -> Resul
         .filter(|path| path.exists());
 
     if let Some(pdf_path) = pdf_path {
-        let imported = import_pdf_file(
-            store,
-            &pdf_path,
-            request,
-            &context.data_dir,
-            &context.pdf_dir,
-            &context.host_name,
-            &context.img_url,
-        )?;
+        let imported = import_pdf_file(store, &pdf_path, request, &context.pdf_dir)?;
         return Ok(format!("imported {}", imported.work_key));
     }
 
-    renderer::render_site_from_store(
-        store,
-        "narou",
-        &context.data_dir,
-        &context.host_name,
-        &context.img_url,
-        None,
-    )?;
+    renderer::validate_site_from_store(store, "narou", None)?;
     Ok(format!(
         "narou {} completed",
         if request.chapter.is_some() {
@@ -203,10 +180,7 @@ fn import_pdf_file(
     store: &mut Store,
     pdf_path: &Path,
     request: &crate::core::model::RequestData,
-    data_dir: &str,
     pdf_dir: &str,
-    host_name: &str,
-    img_url: &str,
 ) -> Result<WorkRecord> {
     let author_id = request.author_id.clone();
     let author_url = request.author_url.clone();
@@ -293,14 +267,6 @@ fn import_pdf_file(
 
     store.upsert_work(&record)?;
     save_pdf_copy(pdf_path, pdf_dir, &work_key)?;
-    renderer::render_site_from_store(
-        store,
-        "narou",
-        data_dir,
-        host_name,
-        img_url,
-        Some(&work_key),
-    )?;
     Ok(record)
 }
 
@@ -1146,10 +1112,7 @@ mod tests {
             host_name: String::new(),
             img_url: String::new(),
             data_dir: data_dir.to_string_lossy().to_string(),
-            cookie_dir: String::new(),
-            queue_dir: String::new(),
             pdf_dir: pdf_dir.to_string_lossy().to_string(),
-            archive_dir: String::new(),
             request,
         };
 
@@ -1235,10 +1198,7 @@ mod tests {
             host_name: String::new(),
             img_url: String::new(),
             data_dir: format!("{root}\\data"),
-            cookie_dir: format!("{root}\\cookie"),
-            queue_dir: format!("{root}\\queue"),
             pdf_dir: format!("{root}\\pdf"),
-            archive_dir: format!("{root}\\archive"),
             request,
         }
     }

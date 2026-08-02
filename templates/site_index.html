@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="ja">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,230 +7,78 @@
     <link rel="stylesheet" href="/css/site_index_modern.css">
     <link rel="icon" href="/icon/favicon.ico">
     <script>fetch('/manifest.json',{method:'HEAD'}).then(function(r){if(r.ok){var l=document.createElement('link');l.rel='manifest';l.href='/manifest.json';document.head.appendChild(l)}}).catch(function(){})</script>
-    <link rel="apple-touch-icon" sizes="180x180" href="/icon/icon_180x180.png">
-    <link rel="apple-touch-icon" sizes="167x167" href="/icon/icon_167x167.png">
-    <link rel="apple-touch-icon" sizes="152x152" href="/icon/icon_152x152.png">
 </head>
-
 <body>
-    <!-- Header -->
     <header class="app-header">
-        <a href="../" class="back-link">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 18 9 12 15 6" />
-            </svg>
-            <span>戻る</span>
-        </a>
+        <a href="../" class="back-link"><span>戻る</span></a>
         <h1>{site_name}</h1>
     </header>
 
-    <div class="container">
-        <!-- Quick Controls (常時表示) -->
-        <div class="card">
+    <main class="container">
+        <form class="card" method="get">
             <div class="card-body">
                 <div class="filter-grid">
                     <div class="filter-group">
-                        <label class="filter-label" for="typeSelect">表示タイプ</label>
-                        <select id="typeSelect" class="filter-select" onchange="filterByType()">
-                            <option value="all">すべて</option>
-                            <option value="novel">小説のみ</option>
-                            <option value="comic">漫画のみ</option>
+                        <label class="filter-label" for="search">検索</label>
+                        <input id="search" name="search" class="filter-select" value="{search_value}" placeholder="タイトル・作者・タグ">
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label" for="type">形式</label>
+                        <select id="type" name="type" class="filter-select">
+                            <option value=""{type_all_selected}>すべて</option>
+                            <option value="novel"{type_novel_selected}>小説</option>
+                            <option value="comic"{type_comic_selected}>漫画</option>
                         </select>
                     </div>
                     <div class="filter-group">
-                        <label class="filter-label" for="rowsPerPageSelect">1ページあたりの行数</label>
-                        <select id="rowsPerPageSelect" class="filter-select" onchange="updateRowsPerPage()">
-                            <option value="10">10</option>
-                            <option value="20">20</option>
-                            <option value="30">30</option>
-                            <option value="50">50</option>
-                            <option value="100">100</option>
-                            <option value="150">150</option>
-                            <option value="200">200</option>
-                            <option value="0">すべて</option>
+                        <label class="filter-label" for="serialization">連載状況</label>
+                        <select id="serialization" name="serialization" class="filter-select">
+                            <option value=""{serialization_all_selected}>すべて</option>
+                            <option value="短編"{serialization_short_selected}>短編</option>
+                            <option value="連載中"{serialization_active_selected}>連載中</option>
+                            <option value="完結済"{serialization_complete_selected}>完結済</option>
                         </select>
                     </div>
                     <div class="filter-group">
-                        <label class="filter-label" for="author-filter-dropdown">作者絞り込み</label>
-                        <div class="filter-row">
-                            <select id="author-filter-dropdown" class="filter-select"
-                                onchange="updateAuthorFilter(this.value)">
-                                <option value="">全て表示</option>
-                            </select>
-                            <button id="reset-author-filter-button" class="btn btn-sm btn-outline">リセット</button>
-                        </div>
+                        <label class="filter-label" for="sort">並び順</label>
+                        <select id="sort" name="sort" class="filter-select">
+                            <option value="updated_desc"{sort_updated_desc_selected}>更新日（新しい順）</option>
+                            <option value="updated_asc"{sort_updated_asc_selected}>更新日（古い順）</option>
+                            <option value="title_asc"{sort_title_asc_selected}>タイトル（昇順）</option>
+                            <option value="title_desc"{sort_title_desc_selected}>タイトル（降順）</option>
+                            <option value="author_asc"{sort_author_asc_selected}>作者（昇順）</option>
+                            <option value="author_desc"{sort_author_desc_selected}>作者（降順）</option>
+                        </select>
                     </div>
-                    <div class="filter-group" id="filter-mode-container">
-                        <!-- フィルターモード切替: JSで動的生成 -->
+                    <div class="filter-group">
+                        <label class="filter-label" for="per_page">表示件数</label>
+                        <select id="per_page" name="per_page" class="filter-select">
+                            <option value="10"{per_page_10_selected}>10</option>
+                            <option value="25"{per_page_25_selected}>25</option>
+                            <option value="50"{per_page_50_selected}>50</option>
+                            <option value="100"{per_page_100_selected}>100</option>
+                        </select>
                     </div>
+                </div>
+                <div class="filter-row" style="margin-top: 0.75rem;">
+                    <button type="submit" class="btn btn-primary">適用</button>
+                    <a class="btn btn-outline" href="./">リセット</a>
                 </div>
             </div>
-        </div>
-        <!-- フィルター Card (共通フィルター + サイト別フィルター) -->
-        <div class="card">
-            <!-- ======== 共通フィルター ======== -->
-            <div id="global-filter-panel">
-                <div class="filter-section-header global-section-header" id="global-section-toggle">
-                    <span class="filter-section-label">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10" />
-                            <line x1="2" y1="12" x2="22" y2="12" />
-                            <path
-                                d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                        </svg>
-                        共通フィルター（全サイト適用）
-                    </span>
-                    <span class="filter-section-icon">▼</span>
-                </div>
-                <div class="section-body" id="global-section-body">
-                    <!-- Global Hidden Authors -->
-                    <div class="filter-row" style="justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span class="filter-label" style="margin-bottom: 0;">共通 非表示作者</span>
-                        <button id="reset-global-hidden-authors-button" class="btn btn-sm btn-outline">リセット</button>
-                    </div>
-                    <div class="hidden-author-container-wrapper">
-                        <span id="global-hidden-author-container"></span>
-                    </div>
+        </form>
 
-                    <!-- Global Tag Filters -->
-                    <div class="tag-filter" id="global-tag-filter-container" style="margin-top: 0.75rem;">
-                        <div id="global-include-tags"></div>
-                        <div id="global-exclude-tags"></div>
-                    </div>
-                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
-                        <button id="reset-global-include-tags-button" class="btn btn-sm btn-outline">共通
-                            含むタグリセット</button>
-                        <button id="reset-global-exclude-tags-button" class="btn btn-sm btn-outline">共通
-                            含まないタグリセット</button>
-                        <button id="reset-global-all-button" class="btn btn-sm btn-danger">共通フィルター全リセット</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ======== サイト別フィルター ======== -->
-            <div id="site-filter-panel">
-                <div class="filter-section-header site-section-header" id="site-section-toggle">
-                    <span class="filter-section-label">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path
-                                d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                        </svg>
-                        サイト別フィルター（このサイトのみ）
-                    </span>
-                    <span class="filter-section-icon">▼</span>
-                </div>
-                <div class="section-body" id="site-section-body">
-                    <!-- Hidden Authors (Site-specific) -->
-                    <div class="filter-row" style="justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span class="filter-label" style="margin-bottom: 0;">サイト別 非表示作者</span>
-                        <button id="reset-hidden-authors-button" class="btn btn-sm btn-outline">リセット</button>
-                    </div>
-                    <div class="hidden-author-container-wrapper">
-                        <span id="hidden-author-container"></span>
-                    </div>
-
-                    <!-- Column Visibility -->
-                    <div id="column-selector-container" style="margin-top: 0.75rem;">
-                        <!-- JSで動的生成 -->
-                    </div>
-
-                    <!-- Tag Filters (Site-specific) -->
-                    <div class="tag-filter" id="tag-filter-container" style="margin-top: 0.75rem;">
-                        <div id="include-tags"></div>
-                        <div id="exclude-tags"></div>
-                    </div>
-                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
-                        <button id="reset-include-tags-button" class="btn btn-sm btn-outline">サイト別 含むタグリセット</button>
-                        <button id="reset-exclude-tags-button" class="btn btn-sm btn-outline">サイト別
-                            含まないタグリセット</button>
-                    </div>
-                </div>
-            </div>
+        <div class="table-wrapper">
+            <table>
+                <thead>{initial_table_head}</thead>
+                <tbody>{initial_table_rows}</tbody>
+            </table>
         </div>
 
-        <!-- Utility Buttons (常時表示) -->
-        <div class="card">
-            <div class="card-body">
-                <div class="filter-row" style="justify-content: space-between;">
-                    <div class="selection-controls">
-                        <span id="selected-count">選択された件数: 0</span>
-                        <button id="copy-selected-button" class="btn btn-sm btn-primary">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                            リンクコピー
-                        </button>
-                    </div>
-                    <button id="reset-localstorage-button" class="btn btn-sm btn-danger">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="1 4 1 10 7 10" />
-                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                        </svg>
-                        LS リセット
-                    </button>
-                </div>
-            </div>
-        </div>
-
-    <!-- Loading Overlay -->
-    <div id="loading-overlay">
-        <div class="spinner"></div>
-    </div>
-
-    <!-- Data Table -->
-    <div class="table-wrapper">
-        <table>
-            <thead id="table-head">
-                <tr></tr>
-            </thead>
-            <tbody id="user-table-body"></tbody>
-        </table>
-    </div>
-
-    <!-- Pagination -->
-    <div class="pagination">
-        <button onclick="prevPage()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
-                <polyline points="15 18 9 12 15 6" />
-            </svg>
-            前へ
-        </button>
-        <span id="page-info">1 / 1</span>
-        <button onclick="nextPage()">
-            次へ
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
-                <polyline points="9 18 15 12 9 6" />
-            </svg>
-        </button>
-    </div>
-    </div>
-
-    <script src="/script/ui_components.js"></script>
-    <script src="/script/tag_filter.js"></script>
-    <script src="/script/site_index_polyfills.js"></script>
-    <script src="/script/site_index_settings.js"></script>
-    <script src="/script/site_index_filters.js"></script>
-    <script src="/script/site_index_table.js"></script>
-    <script src="/script/index.js"></script>
-    <script src="/script/width-selector.js"></script>
-    <script>
-        function toggleFilterPanel() {
-            {
-                var btn = document.getElementById('filter-toggle');
-                var panel = document.getElementById('filter-panel');
-                btn.classList.toggle('collapsed');
-                panel.classList.toggle('expanded');
-            }
-        }
-    </script>
+        <nav class="pagination" aria-label="ページ送り">
+            {previous_page_link}
+            <span id="page-info">{page_info}</span>
+            {next_page_link}
+        </nav>
+    </main>
 </body>
-
 </html>

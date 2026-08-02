@@ -1,12 +1,9 @@
-use crate::core::atomic_io::atomic_write;
-use crate::core::model::{EpisodeIndexEntry, SiteIndexEntry, WorkRecord};
-use crate::core::storage::Store;
-use anyhow::{Context, Result, bail};
+use crate::core::model::WorkRecord;
+use crate::core::storage::{Store, WorkListFilters, WorkListSort};
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
-use std::path::{Path, PathBuf};
 
 const NOVEL_PAGE_TEMPLATE: &str = include_str!("../../templates/novel_page.html");
 const SITE_INDEX_TEMPLATE: &str = include_str!("../../templates/site_index.html");
@@ -103,92 +100,8 @@ struct ImageAsset {
 struct RenderedWork {
     site: String,
     work_key: String,
-    raw_json: serde_json::Value,
     work: RawWork,
-    index_entry: SiteIndexEntry,
     episodes: Vec<(String, RawEpisode)>,
-}
-
-pub fn refresh_image_manifests(store: &Store, data_dir: &str) -> Result<()> {
-    let image_dir = PathBuf::from(data_dir).join("images");
-    fs::create_dir_all(&image_dir).context("failed to create image dir")?;
-    let _ = build_image_manifest_jsons(store)?;
-    Ok(())
-}
-
-pub fn build_image_manifest_jsons(store: &Store) -> Result<(serde_json::Value, serde_json::Value)> {
-    let images = store.list_images()?;
-    let mut database = serde_json::Map::new();
-    let mut cover = serde_json::Map::new();
-
-    for image in &images {
-        database.insert(
-            image.logical_name.clone(),
-            serde_json::Value::String(image.hash.clone()),
-        );
-        if image.kind == "cover" {
-            cover.insert(
-                image.logical_name.clone(),
-                serde_json::Value::String(image.hash.clone()),
-            );
-        }
-    }
-    add_narou_cover_aliases(store, &images, &mut cover)?;
-
-    Ok((
-        serde_json::Value::Object(database),
-        serde_json::Value::Object(cover),
-    ))
-}
-
-fn add_narou_cover_aliases(
-    store: &Store,
-    images: &[crate::core::model::ImageRecord],
-    cover: &mut serde_json::Map<String, serde_json::Value>,
-) -> Result<()> {
-    let image_lookup = images
-        .iter()
-        .map(|image| (image.logical_name.as_str(), image))
-        .collect::<HashMap<_, _>>();
-
-    for work in store.list_works(Some("narou"))? {
-        if has_named_cover_alias(cover, &work.work_key) {
-            continue;
-        }
-
-        let Some(image) = find_narou_cover_image(&work.raw_json, &image_lookup) else {
-            continue;
-        };
-
-        cover.insert(
-            format!("narou_{}_cover.{}", work.work_key, image.ext),
-            serde_json::Value::String(image.hash.clone()),
-        );
-    }
-
-    Ok(())
-}
-
-fn has_named_cover_alias(
-    cover: &serde_json::Map<String, serde_json::Value>,
-    work_key: &str,
-) -> bool {
-    let prefix = format!("narou_{work_key}_cover.");
-    cover
-        .keys()
-        .any(|logical_name| logical_name.starts_with(&prefix))
-}
-
-fn find_narou_cover_image<'a>(
-    raw_json: &serde_json::Value,
-    image_lookup: &HashMap<&'a str, &'a crate::core::model::ImageRecord>,
-) -> Option<&'a crate::core::model::ImageRecord> {
-    let mut candidates = Vec::new();
-    collect_narou_cover_candidates(raw_json, false, &mut candidates);
-    candidates
-        .into_iter()
-        .filter_map(|candidate| image_lookup.get(candidate.as_str()).copied())
-        .find(|image| image.kind == "cover" || logical_name_looks_like_cover(&image.logical_name))
 }
 
 fn collect_narou_cover_candidates(
@@ -250,132 +163,23 @@ fn push_unique_candidate(candidates: &mut Vec<String>, candidate: &str) {
     candidates.push(candidate.to_string());
 }
 
-fn logical_name_looks_like_cover(logical_name: &str) -> bool {
-    logical_name.to_ascii_lowercase().contains("cover")
-}
-
-pub fn render_site_from_store(
+pub fn validate_site_from_store(
     store: &Store,
     site: &str,
-    data_dir: &str,
-    host_name: &str,
-    img_url: &str,
     target_work: Option<&str>,
 ) -> Result<()> {
-    refresh_image_manifests(store, data_dir)?;
-    let works = store.list_works(Some(site))?;
-    let site_dir = PathBuf::from(data_dir).join(site);
-    fs::create_dir_all(&site_dir).context("failed to create site dir")?;
-
-    let image_assets = load_image_assets(store)?;
-    let mut rendered = Vec::with_capacity(works.len());
-    let mut target_found = target_work.is_none();
-
-    for work in works {
-        if target_work
-            .map(|target| target == work.work_key.as_str())
-            .unwrap_or(true)
-        {
-            target_found = true;
-            rendered.push(render_work(
-                &site_dir,
-                &work,
-                host_name,
-                img_url,
-                &image_assets,
-            )?);
-        } else {
-            rendered.push(rendered_work_from_record(&work)?);
-        }
+    if let Some(work_key) = target_work {
+        let work = store
+            .get_work(site, work_key)?
+            .with_context(|| format!("work {work_key} was not found for site {site}"))?;
+        rendered_work_from_record(&work)?;
+        return Ok(());
     }
 
-    if let Some(target_work) = target_work {
-        if !target_found {
-            bail!("work {target_work} was not found for site {site}");
-        }
+    for work in store.list_works(Some(site))? {
+        rendered_work_from_record(&work)?;
     }
-
-    write_site_index(
-        &site_dir,
-        site,
-        &rendered,
-        host_name,
-        img_url,
-        &image_assets,
-    )
-}
-
-pub fn repair_site_from_raw(
-    store: &Store,
-    site: &str,
-    data_dir: &str,
-    host_name: &str,
-    img_url: &str,
-) -> Result<()> {
-    refresh_image_manifests(store, data_dir)?;
-    let site_dir = PathBuf::from(data_dir).join(site);
-    let image_assets = load_image_assets(store)?;
-    fs::create_dir_all(&site_dir).context("failed to create site dir")?;
-    let works = store.list_works(Some(site))?;
-    let mut rendered = Vec::with_capacity(works.len());
-
-    if works.is_empty() {
-        bail!(
-            "repair requires at least one work in sqlite for site {}",
-            site
-        );
-    }
-
-    for work in works {
-        rendered.push(render_work(
-            &site_dir,
-            &work,
-            host_name,
-            img_url,
-            &image_assets,
-        )?);
-    }
-
-    write_site_index(
-        &site_dir,
-        site,
-        &rendered,
-        host_name,
-        img_url,
-        &image_assets,
-    )
-}
-
-fn load_image_assets(store: &Store) -> Result<HashMap<String, ImageAsset>> {
-    let mut images = HashMap::new();
-    for image in store.list_images()? {
-        images.insert(
-            image.logical_name,
-            ImageAsset {
-                hash: image.hash,
-                ext: image.ext,
-            },
-        );
-    }
-    Ok(images)
-}
-
-fn render_work(
-    site_dir: &Path,
-    work: &WorkRecord,
-    host_name: &str,
-    img_url: &str,
-    images: &HashMap<String, ImageAsset>,
-) -> Result<RenderedWork> {
-    render_work_from_raw(
-        site_dir,
-        &work.site,
-        &work.work_key,
-        work.raw_json.clone(),
-        host_name,
-        img_url,
-        images,
-    )
+    Ok(())
 }
 
 fn rendered_work_from_record(work: &WorkRecord) -> Result<RenderedWork> {
@@ -385,288 +189,316 @@ fn rendered_work_from_record(work: &WorkRecord) -> Result<RenderedWork> {
         raw_work,
         work.site.clone(),
         work.work_key.clone(),
-        work.raw_json.clone(),
     ))
 }
 
-fn render_work_from_raw(
-    site_dir: &Path,
-    site: &str,
-    work_key: &str,
-    raw_json: serde_json::Value,
-    host_name: &str,
-    img_url: &str,
-    images: &HashMap<String, ImageAsset>,
-) -> Result<RenderedWork> {
-    let work_dir = site_dir.join(work_key);
-    let info_dir = work_dir.join("info");
-    fs::create_dir_all(&info_dir).context("failed to create info dir")?;
-
-    let raw_work = parse_raw_work(&raw_json)
-        .with_context(|| format!("failed to parse raw work for {work_key}"))?;
-    let rendered = build_rendered_work(raw_work, site.to_string(), work_key.to_string(), raw_json);
-
-    let work_root_html = render_work_root_html(&rendered, host_name, img_url, images);
-    atomic_write(&work_dir.join("index.html"), work_root_html)?;
-    atomic_write(
-        &info_dir.join("index.html"),
-        render_work_info(
-            &rendered.site,
-            &rendered.work_key,
-            &rendered,
-            host_name,
-            img_url,
-            images,
-        ),
-    )?;
-
-    for (index, (episode_key, episode)) in rendered.episodes.iter().enumerate() {
-        let prev = index.checked_sub(1).and_then(|idx| {
-            rendered
-                .episodes
-                .get(idx)
-                .map(|(_, episode)| episode.id.as_str())
-        });
-        let next = rendered
-            .episodes
-            .get(index + 1)
-            .map(|(_, episode)| episode.id.as_str());
-        let episode_path = work_dir.join(&episode.id).join("index.html");
-        if let Some(parent) = episode_path.parent() {
-            fs::create_dir_all(parent).context("failed to create episode dir")?;
-        }
-        atomic_write(
-            &episode_path,
-            render_episode_page(
-                &rendered.site,
-                &rendered.work_key,
-                &rendered,
-                episode_key,
-                episode,
-                prev,
-                next,
-                host_name,
-                img_url,
-                images,
-            ),
-        )?;
-    }
-
-    Ok(rendered)
-}
-
-fn build_rendered_work(
-    raw_work: RawWork,
-    site: String,
-    work_key: String,
-    raw_json: serde_json::Value,
-) -> RenderedWork {
+fn build_rendered_work(raw_work: RawWork, site: String, work_key: String) -> RenderedWork {
     let episodes = sort_episodes(&raw_work.episodes);
-    let index_entry = SiteIndexEntry {
-        title: raw_work.title.clone(),
-        author: raw_work.author.clone(),
-        author_id: raw_work.author_id.clone(),
-        author_url: raw_work.author_url.clone(),
-        r#type: raw_work.work_type.clone(),
-        serialization: raw_work.serialization.clone(),
-        tags: raw_work.tags.clone(),
-        all_tags: raw_work.all_tags.clone(),
-        caption: raw_work.caption.clone(),
-        create_date: raw_work.create_date.clone(),
-        update_date: raw_work.update_date.clone(),
-        episodes_data: episodes
-            .iter()
-            .map(|(key, episode)| {
-                (
-                    key.clone(),
-                    EpisodeIndexEntry {
-                        title: episode.title.clone(),
-                        id: episode.id.clone(),
-                        caption: episode.introduction.clone(),
-                        tags: episode.tags.clone(),
-                    },
-                )
-            })
-            .collect(),
-    };
-
     RenderedWork {
         site,
         work_key,
-        raw_json,
         work: raw_work,
-        index_entry,
         episodes,
     }
 }
 
-fn write_site_index(
-    site_dir: &Path,
-    site: &str,
-    works: &[RenderedWork],
-    host_name: &str,
-    img_url: &str,
-    images: &HashMap<String, ImageAsset>,
-) -> Result<()> {
-    atomic_write(
-        &site_dir.join("index.json"),
-        serde_json::to_string_pretty(&build_site_index_json(works))?,
-    )?;
-    atomic_write(
-        &site_dir.join("index.html"),
-        render_site_index(site, works, host_name, img_url, images),
-    )?;
-    Ok(())
+#[derive(Debug, Clone)]
+struct SiteListEntry {
+    title: String,
+    author: String,
+    author_url: Option<String>,
+    work_type: String,
+    serialization: String,
+    all_tags: Vec<String>,
+    create_date: String,
+    update_date: String,
 }
 
-fn build_site_index_json(works: &[RenderedWork]) -> serde_json::Value {
-    let mut works_json = serde_json::Map::new();
-    for rendered in works {
-        let mut work_json = serde_json::Map::new();
-        work_json.insert(
-            "title".to_string(),
-            serde_json::Value::String(rendered.index_entry.title.clone()),
-        );
-        work_json.insert(
-            "author".to_string(),
-            serde_json::Value::String(rendered.index_entry.author.clone()),
-        );
-        work_json.insert(
-            "author_id".to_string(),
-            serde_json::Value::String(
-                rendered
-                    .index_entry
-                    .author_id
-                    .clone()
-                    .unwrap_or_else(|| "No author_id found".to_string()),
-            ),
-        );
-        work_json.insert(
-            "author_url".to_string(),
-            rendered
-                .index_entry
-                .author_url
-                .clone()
-                .map(serde_json::Value::String)
-                .unwrap_or(serde_json::Value::Null),
-        );
-        work_json.insert(
-            "type".to_string(),
-            serde_json::Value::String(rendered.index_entry.r#type.clone()),
-        );
-        work_json.insert(
-            "serialization".to_string(),
-            serde_json::Value::String(rendered.index_entry.serialization.clone()),
-        );
-        work_json.insert(
-            "tags".to_string(),
-            serde_json::Value::Array(
-                rendered
-                    .index_entry
-                    .tags
-                    .iter()
-                    .cloned()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            ),
-        );
-        work_json.insert(
-            "all_tags".to_string(),
-            serde_json::Value::Array(
-                rendered
-                    .index_entry
-                    .all_tags
-                    .iter()
-                    .cloned()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            ),
-        );
-        work_json.insert(
-            "caption".to_string(),
-            serde_json::Value::String(rendered.index_entry.caption.clone()),
-        );
-        work_json.insert(
-            "create_date".to_string(),
-            serde_json::Value::String(rendered.index_entry.create_date.clone()),
-        );
-        work_json.insert(
-            "update_date".to_string(),
-            serde_json::Value::String(rendered.index_entry.update_date.clone()),
-        );
-
-        let mut episodes_json = serde_json::Map::new();
-        for (episode_key, episode) in &rendered.episodes {
-            let mut episode_json = serde_json::Map::new();
-            episode_json.insert(
-                "title".to_string(),
-                serde_json::Value::String(episode.title.clone()),
-            );
-            episode_json.insert(
-                "id".to_string(),
-                serde_json::Value::String(episode.id.clone()),
-            );
-            episode_json.insert(
-                "caption".to_string(),
-                serde_json::Value::String(episode.introduction.clone()),
-            );
-            episode_json.insert(
-                "tags".to_string(),
-                serde_json::Value::Array(
-                    episode
-                        .tags
-                        .iter()
-                        .cloned()
-                        .map(serde_json::Value::String)
-                        .collect(),
-                ),
-            );
-            episode_json.insert(
-                "chapter".to_string(),
-                serde_json::Value::String(episode.chapter.clone().unwrap_or_default()),
-            );
-            episode_json.insert(
-                "updateDate".to_string(),
-                serde_json::Value::String(episode.update_date.clone()),
-            );
-            episodes_json.insert(episode_key.clone(), serde_json::Value::Object(episode_json));
-        }
-        work_json.insert(
-            "episodes_data".to_string(),
-            serde_json::Value::Object(episodes_json),
-        );
-
-        works_json.insert(
-            rendered.work_key.clone(),
-            serde_json::Value::Object(work_json),
-        );
-    }
-
-    serde_json::Value::Object(works_json)
-}
-
-pub fn build_site_index_json_from_store(store: &Store, site: &str) -> Result<serde_json::Value> {
-    let works = store.list_works(Some(site))?;
-    let rendered = works
-        .iter()
-        .map(rendered_work_from_record)
-        .collect::<Result<Vec<_>>>()?;
-    Ok(build_site_index_json(&rendered))
+#[derive(Debug, Clone)]
+pub struct SiteIndexRenderOptions {
+    pub page: usize,
+    pub per_page: usize,
+    pub search: Option<String>,
+    pub work_type: Option<String>,
+    pub serialization: Option<String>,
+    pub sort: WorkListSort,
 }
 
 pub fn render_site_index_html_from_store(
-    _store: &Store,
+    store: &Store,
     site: &str,
-    host_name: &str,
-    img_url: &str,
+    mut options: SiteIndexRenderOptions,
 ) -> Result<String> {
-    Ok(render_site_index(
-        site,
-        &[],
-        host_name,
-        img_url,
-        &HashMap::new(),
+    options.page = options.page.max(1);
+    options.per_page = match options.per_page {
+        10 | 25 | 50 | 100 => options.per_page,
+        _ => 25,
+    };
+
+    let filters = WorkListFilters {
+        site: Some(site),
+        search: options.search.as_deref(),
+        work_type: options.work_type.as_deref(),
+        serialization: options.serialization.as_deref(),
+        ..WorkListFilters::default()
+    };
+    let mut page = store.list_work_summaries(
+        filters,
+        options.per_page,
+        (options.page - 1).saturating_mul(options.per_page),
+        options.sort,
+    )?;
+    let total_pages = page.total.div_ceil(options.per_page).max(1);
+    if options.page > total_pages {
+        options.page = total_pages;
+        page = store.list_work_summaries(
+            filters,
+            options.per_page,
+            (options.page - 1).saturating_mul(options.per_page),
+            options.sort,
+        )?;
+    }
+
+    let entries = page
+        .works
+        .into_iter()
+        .map(|work| {
+            (
+                work.work_key,
+                SiteListEntry {
+                    title: work.title,
+                    author: work.author,
+                    author_url: work.author_url,
+                    work_type: work.r#type,
+                    serialization: work.serialization,
+                    all_tags: work.all_tags,
+                    create_date: work.create_date,
+                    update_date: work.update_date,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let initial_rows = render_initial_site_rows(&entries);
+    let previous_page_link =
+        render_page_link(&options, options.page - 1, "前へ", options.page > 1)?;
+    let next_page_link = render_page_link(
+        &options,
+        options.page + 1,
+        "次へ",
+        options.page < total_pages,
+    )?;
+
+    Ok(SITE_INDEX_TEMPLATE
+        .replace("{site_name}", &escape_html(site))
+        .replace(
+            "{search_value}",
+            &escape_html(options.search.as_deref().unwrap_or("")),
+        )
+        .replace(
+            "{type_all_selected}",
+            selected(options.work_type.as_deref(), None),
+        )
+        .replace(
+            "{type_novel_selected}",
+            selected(options.work_type.as_deref(), Some("novel")),
+        )
+        .replace(
+            "{type_comic_selected}",
+            selected(options.work_type.as_deref(), Some("comic")),
+        )
+        .replace(
+            "{serialization_all_selected}",
+            selected(options.serialization.as_deref(), None),
+        )
+        .replace(
+            "{serialization_short_selected}",
+            selected(options.serialization.as_deref(), Some("短編")),
+        )
+        .replace(
+            "{serialization_active_selected}",
+            selected(options.serialization.as_deref(), Some("連載中")),
+        )
+        .replace(
+            "{serialization_complete_selected}",
+            selected(options.serialization.as_deref(), Some("完結済")),
+        )
+        .replace(
+            "{sort_updated_desc_selected}",
+            selected_sort(options.sort, WorkListSort::UpdatedDesc),
+        )
+        .replace(
+            "{sort_updated_asc_selected}",
+            selected_sort(options.sort, WorkListSort::UpdatedAsc),
+        )
+        .replace(
+            "{sort_title_asc_selected}",
+            selected_sort(options.sort, WorkListSort::TitleAsc),
+        )
+        .replace(
+            "{sort_title_desc_selected}",
+            selected_sort(options.sort, WorkListSort::TitleDesc),
+        )
+        .replace(
+            "{sort_author_asc_selected}",
+            selected_sort(options.sort, WorkListSort::AuthorAsc),
+        )
+        .replace(
+            "{sort_author_desc_selected}",
+            selected_sort(options.sort, WorkListSort::AuthorDesc),
+        )
+        .replace(
+            "{per_page_10_selected}",
+            selected_usize(options.per_page, 10),
+        )
+        .replace(
+            "{per_page_25_selected}",
+            selected_usize(options.per_page, 25),
+        )
+        .replace(
+            "{per_page_50_selected}",
+            selected_usize(options.per_page, 50),
+        )
+        .replace(
+            "{per_page_100_selected}",
+            selected_usize(options.per_page, 100),
+        )
+        .replace("{initial_table_head}", &render_initial_site_head())
+        .replace("{initial_table_rows}", &initial_rows)
+        .replace(
+            "{page_info}",
+            &format!("{} / {}（全{}件）", options.page, total_pages, page.total),
+        )
+        .replace("{previous_page_link}", &previous_page_link)
+        .replace("{next_page_link}", &next_page_link))
+}
+
+fn selected(actual: Option<&str>, expected: Option<&str>) -> &'static str {
+    if actual == expected { " selected" } else { "" }
+}
+
+fn selected_sort(actual: WorkListSort, expected: WorkListSort) -> &'static str {
+    if actual == expected { " selected" } else { "" }
+}
+
+fn selected_usize(actual: usize, expected: usize) -> &'static str {
+    if actual == expected { " selected" } else { "" }
+}
+
+fn render_page_link(
+    options: &SiteIndexRenderOptions,
+    page: usize,
+    label: &str,
+    enabled: bool,
+) -> Result<String> {
+    if !enabled {
+        return Ok(format!(
+            r#"<span class="btn btn-outline" aria-disabled="true">{}</span>"#,
+            escape_html(label)
+        ));
+    }
+    let mut query = vec![
+        ("page", page.to_string()),
+        ("per_page", options.per_page.to_string()),
+        ("sort", work_list_sort_query_value(options.sort).to_string()),
+    ];
+    if let Some(value) = options.search.as_deref() {
+        query.push(("search", value.to_string()));
+    }
+    if let Some(value) = options.work_type.as_deref() {
+        query.push(("type", value.to_string()));
+    }
+    if let Some(value) = options.serialization.as_deref() {
+        query.push(("serialization", value.to_string()));
+    }
+    let href = format!("?{}", serde_urlencoded::to_string(query)?);
+    Ok(format!(
+        r#"<a class="btn btn-outline" href="{}">{}</a>"#,
+        escape_html(&href),
+        escape_html(label)
     ))
+}
+
+fn work_list_sort_query_value(sort: WorkListSort) -> &'static str {
+    match sort {
+        WorkListSort::UpdatedDesc => "updated_desc",
+        WorkListSort::UpdatedAsc => "updated_asc",
+        WorkListSort::TitleAsc => "title_asc",
+        WorkListSort::TitleDesc => "title_desc",
+        WorkListSort::AuthorAsc => "author_asc",
+        WorkListSort::AuthorDesc => "author_desc",
+    }
+}
+
+fn render_initial_site_head() -> String {
+    [
+        r#"<tr><th class="th-serialization" style="width:10ch">連載状況</th>"#,
+        r#"<th class="th-title" style="width:50%">タイトル</th>"#,
+        r#"<th class="th-author" style="width:20%">作者名</th>"#,
+        r#"<th class="th-type" style="width:8ch">形式</th>"#,
+        r#"<th class="th-tags" style="width:30%">タグ</th>"#,
+        r#"<th class="th-create_date" style="width:14ch">掲載日時</th>"#,
+        r#"<th class="th-update_date" style="width:14ch">更新日時</th></tr>"#,
+    ]
+    .concat()
+}
+
+fn render_initial_site_rows(entries: &[(String, SiteListEntry)]) -> String {
+    if entries.is_empty() {
+        return r#"<tr><td colspan="7">該当する作品はありません。</td></tr>"#.to_string();
+    }
+
+    let mut html = String::new();
+    for (work_key, entry) in entries {
+        let tags = entry
+            .all_tags
+            .iter()
+            .map(|tag| format!(r#"<span class="tag-item">{}</span>"#, escape_html(tag)))
+            .collect::<String>();
+        let author = entry
+            .author_url
+            .as_deref()
+            .filter(|url| !url.is_empty())
+            .map(|url| {
+                format!(
+                    r#"<a href="{}">{}</a>"#,
+                    escape_html(url),
+                    escape_html(&entry.author)
+                )
+            })
+            .unwrap_or_else(|| escape_html(&entry.author));
+        html.push_str(&format!(
+            concat!(
+                "<tr>",
+                r#"<td class="td-serialization" style="width:10ch">{serialization}</td>"#,
+                r#"<td class="td-title" style="width:50%"><a href="./{key}/">{title}</a></td>"#,
+                r#"<td class="td-author" style="width:20%">{author}</td>"#,
+                r#"<td class="td-type" style="width:8ch">{work_type}</td>"#,
+                r#"<td class="td-tags" style="width:30%">{tags}</td>"#,
+                r#"<td class="td-create_date" style="width:14ch">{create_date}</td>"#,
+                r#"<td class="td-update_date" style="width:14ch">{update_date}</td>"#,
+                "</tr>"
+            ),
+            key = escape_html(work_key),
+            serialization = escape_html(&entry.serialization),
+            title = escape_html(&entry.title),
+            author = author,
+            work_type = if entry.work_type == "novel" {
+                "小説"
+            } else {
+                "漫画"
+            },
+            tags = tags,
+            create_date = escape_html(&format_site_index_date(&entry.create_date)),
+            update_date = escape_html(&format_site_index_date(&entry.update_date)),
+        ));
+    }
+    html
+}
+
+fn format_site_index_date(value: &str) -> String {
+    DateTime::parse_from_rfc3339(value)
+        .map(|date| date.format("%Y/%m/%d %H:%M").to_string())
+        .unwrap_or_else(|_| value.to_string())
 }
 
 pub fn render_work_root_html_from_store(
@@ -779,16 +611,6 @@ fn load_image_assets_for_work(
         }
     }
     Ok(images)
-}
-
-fn render_site_index(
-    site: &str,
-    _works: &[RenderedWork],
-    _host_name: &str,
-    _img_url: &str,
-    _images: &HashMap<String, ImageAsset>,
-) -> String {
-    SITE_INDEX_TEMPLATE.replace("{site_name}", &escape_html(site))
 }
 
 fn render_work_root_html(
@@ -1319,9 +1141,8 @@ fn render_image(
         );
     }
 
-    // Migrated raw.json stores content-addressed filenames directly. They remain
-    // valid even when an old manifest entry was lost, so accept only the two
-    // canonical hash formats and a supported image extension.
+    // Canonical work data may already contain a content-addressed filename.
+    // Accept only the supported hash formats and image extensions.
     if split_hashed_name(logical_name).is_some() {
         return format!(
             r#"<img src="{}/{}" alt="">"#,
@@ -1611,23 +1432,7 @@ fn get_cover_image_file_name(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::model::ImageRecord;
     use serde_json::json;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn test_dir(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::current_dir()
-            .unwrap()
-            .join("target")
-            .join("test-output")
-            .join(format!("{name}-{unique}"));
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
 
     fn sample_raw_json() -> serde_json::Value {
         json!({
@@ -1666,269 +1471,6 @@ mod tests {
                 }
             }
         })
-    }
-
-    #[test]
-    fn render_site_refreshes_root_cover_manifest() {
-        let root = test_dir("renderer-cover-manifest");
-        let data_dir = root.join("data");
-
-        let store = Store::open_in_memory().expect("store");
-        store
-            .upsert_image(&ImageRecord {
-                logical_name: "pixiv_n123_cover.jpg".to_string(),
-                hash: "abc123def4567890".to_string(),
-                ext: "jpg".to_string(),
-                kind: "cover".to_string(),
-            })
-            .expect("upsert image");
-        store
-            .upsert_work(&WorkRecord {
-                site: "pixiv".to_string(),
-                work_key: "n123".to_string(),
-                title: "Example Title".to_string(),
-                author: "Example Author".to_string(),
-                author_id: None,
-                author_url: None,
-                r#type: "novel".to_string(),
-                serialization: "短編".to_string(),
-                caption: "Example Caption".to_string(),
-                create_date: "2025-01-01T00:00:00Z".to_string(),
-                update_date: "2025-01-01T00:00:00Z".to_string(),
-                raw_json: sample_raw_json(),
-            })
-            .expect("upsert work");
-
-        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", "", None)
-            .expect("render site");
-
-        let site_index = fs::read_to_string(data_dir.join("pixiv").join("index.json"))
-            .expect("read site index json");
-        let site_index: serde_json::Value =
-            serde_json::from_str(&site_index).expect("parse site index json");
-        assert_eq!(site_index["n123"]["title"].as_str(), Some("Example Title"));
-
-        let (_, cover) = build_image_manifest_jsons(&store).expect("build cover manifest");
-        assert_eq!(
-            cover,
-            json!({
-                "pixiv_n123_cover.jpg": "abc123def4567890"
-            })
-        );
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn refresh_image_manifests_adds_narou_cover_alias_from_raw_markup() {
-        let root = test_dir("renderer-narou-cover-alias");
-        let data_dir = root.join("data");
-
-        let store = Store::open_in_memory().expect("store");
-        store
-            .upsert_image(&ImageRecord {
-                logical_name: "cover.png".to_string(),
-                hash: "feedfacecafebeef".to_string(),
-                ext: "png".to_string(),
-                kind: "cover".to_string(),
-            })
-            .expect("upsert image");
-        let mut raw_json = sample_raw_json();
-        raw_json["episodes"]["1"]["text"] = json!("[image](cover.png)\n本文");
-        store
-            .upsert_work(&WorkRecord {
-                site: "narou".to_string(),
-                work_key: "n123".to_string(),
-                title: "Example Title".to_string(),
-                author: "Example Author".to_string(),
-                author_id: None,
-                author_url: None,
-                r#type: "novel".to_string(),
-                serialization: "短編".to_string(),
-                caption: "Example Caption".to_string(),
-                create_date: "2025-01-01T00:00:00Z".to_string(),
-                update_date: "2025-01-01T00:00:00Z".to_string(),
-                raw_json,
-            })
-            .expect("upsert work");
-
-        refresh_image_manifests(&store, data_dir.to_str().unwrap()).expect("refresh manifests");
-
-        let (_, cover) = build_image_manifest_jsons(&store).expect("build cover manifest");
-        assert_eq!(
-            cover["narou_n123_cover.png"].as_str(),
-            Some("feedfacecafebeef")
-        );
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn repair_site_uses_database_raw_json_without_rewriting_disk_raw() {
-        let root = test_dir("renderer-repair-from-store");
-        let data_dir = root.join("data");
-        let raw_dir = data_dir.join("pixiv").join("n123").join("raw");
-        fs::create_dir_all(&raw_dir).unwrap();
-
-        let mut disk_raw = sample_raw_json();
-        disk_raw["title"] = json!("Disk Title");
-        disk_raw["caption"] = json!("Disk Caption");
-        let disk_raw_text = serde_json::to_string(&disk_raw).unwrap();
-        fs::write(raw_dir.join("raw.json"), &disk_raw_text).unwrap();
-
-        let store = Store::open_in_memory().expect("store");
-        store
-            .upsert_work(&WorkRecord {
-                site: "pixiv".to_string(),
-                work_key: "n123".to_string(),
-                title: "Database Title".to_string(),
-                author: "Database Author".to_string(),
-                author_id: None,
-                author_url: None,
-                r#type: "novel".to_string(),
-                serialization: "短編".to_string(),
-                caption: "Database Caption".to_string(),
-                create_date: "2025-01-01T00:00:00Z".to_string(),
-                update_date: "2025-01-01T00:00:00Z".to_string(),
-                raw_json: {
-                    let mut raw = sample_raw_json();
-                    raw["title"] = json!("Database Title");
-                    raw["caption"] = json!("Database Caption");
-                    raw
-                },
-            })
-            .expect("upsert work");
-
-        repair_site_from_raw(&store, "pixiv", data_dir.to_str().unwrap(), "", "")
-            .expect("repair site from store");
-
-        let repaired_raw = fs::read_to_string(raw_dir.join("raw.json")).expect("read repaired raw");
-        assert_eq!(repaired_raw, disk_raw_text);
-
-        let repaired_html =
-            fs::read_to_string(data_dir.join("pixiv").join("n123").join("index.html"))
-                .expect("read repaired html");
-        let repaired_info = fs::read_to_string(
-            data_dir
-                .join("pixiv")
-                .join("n123")
-                .join("info")
-                .join("index.html"),
-        )
-        .expect("read repaired info html");
-        assert!(repaired_html.contains("Database Title"));
-        assert!(repaired_info.contains("Database Caption"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn incremental_render_updates_only_target_work_html() {
-        let root = test_dir("renderer-incremental-target");
-        let data_dir = root.join("data");
-        let store = Store::open_in_memory().expect("store");
-
-        let mut work_a = sample_raw_json();
-        work_a["title"] = json!("Work A");
-        work_a["id"] = json!("n123");
-        work_a["nid"] = json!("n123");
-        work_a["url"] = json!("https://example.invalid/n123");
-        work_a["episodes"]["1"]["id"] = json!("1");
-        store
-            .upsert_work(&WorkRecord {
-                site: "pixiv".to_string(),
-                work_key: "n123".to_string(),
-                title: "Work A".to_string(),
-                author: "Example Author".to_string(),
-                author_id: None,
-                author_url: None,
-                r#type: "novel".to_string(),
-                serialization: "短編".to_string(),
-                caption: "Caption A".to_string(),
-                create_date: "2025-01-01T00:00:00Z".to_string(),
-                update_date: "2025-01-01T00:00:00Z".to_string(),
-                raw_json: work_a,
-            })
-            .expect("upsert work a");
-
-        let mut work_b = sample_raw_json();
-        work_b["title"] = json!("Work B");
-        work_b["id"] = json!("n456");
-        work_b["nid"] = json!("n456");
-        work_b["url"] = json!("https://example.invalid/n456");
-        work_b["episodes"]["1"]["id"] = json!("2");
-        store
-            .upsert_work(&WorkRecord {
-                site: "pixiv".to_string(),
-                work_key: "n456".to_string(),
-                title: "Work B".to_string(),
-                author: "Example Author".to_string(),
-                author_id: None,
-                author_url: None,
-                r#type: "novel".to_string(),
-                serialization: "短編".to_string(),
-                caption: "Caption B".to_string(),
-                create_date: "2025-01-01T00:00:00Z".to_string(),
-                update_date: "2025-01-01T00:00:00Z".to_string(),
-                raw_json: work_b,
-            })
-            .expect("upsert work b");
-
-        render_site_from_store(&store, "pixiv", data_dir.to_str().unwrap(), "", "", None)
-            .expect("initial full render");
-
-        let untouched_html_path = data_dir.join("pixiv").join("n456").join("index.html");
-        fs::write(&untouched_html_path, "UNTOUCHED-WORK-B").expect("overwrite work b html");
-
-        let mut updated_work_a = sample_raw_json();
-        updated_work_a["title"] = json!("Work A Updated");
-        updated_work_a["id"] = json!("n123");
-        updated_work_a["nid"] = json!("n123");
-        updated_work_a["url"] = json!("https://example.invalid/n123");
-        updated_work_a["episodes"]["1"]["id"] = json!("1");
-        store
-            .upsert_work(&WorkRecord {
-                site: "pixiv".to_string(),
-                work_key: "n123".to_string(),
-                title: "Work A Updated".to_string(),
-                author: "Example Author".to_string(),
-                author_id: None,
-                author_url: None,
-                r#type: "novel".to_string(),
-                serialization: "短編".to_string(),
-                caption: "Caption A".to_string(),
-                create_date: "2025-01-01T00:00:00Z".to_string(),
-                update_date: "2025-01-02T00:00:00Z".to_string(),
-                raw_json: updated_work_a,
-            })
-            .expect("update work a");
-
-        render_site_from_store(
-            &store,
-            "pixiv",
-            data_dir.to_str().unwrap(),
-            "",
-            "",
-            Some("n123"),
-        )
-        .expect("incremental render");
-
-        assert!(
-            fs::read_to_string(data_dir.join("pixiv").join("n123").join("index.html"))
-                .expect("read work a html")
-                .contains("Work A Updated")
-        );
-        assert_eq!(
-            fs::read_to_string(&untouched_html_path).expect("read work b html"),
-            "UNTOUCHED-WORK-B"
-        );
-
-        let site_index =
-            build_site_index_json_from_store(&store, "pixiv").expect("site index json");
-        assert_eq!(site_index["n123"]["title"].as_str(), Some("Work A Updated"));
-        assert_eq!(site_index["n456"]["title"].as_str(), Some("Work B"));
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2046,7 +1588,6 @@ mod tests {
             parse_raw_work(&raw).expect("parse raw"),
             "narou".to_string(),
             "n123".to_string(),
-            raw,
         );
 
         let html = render_work_info("narou", "n123", &rendered, "", "", &HashMap::new());
@@ -2064,7 +1605,6 @@ mod tests {
             parse_raw_work(&raw).expect("parse raw"),
             "narou".to_string(),
             "n123".to_string(),
-            raw,
         );
         let mut images = HashMap::new();
         images.insert(
@@ -2099,7 +1639,6 @@ mod tests {
             parse_raw_work(&raw).expect("parse raw"),
             "narou".to_string(),
             "n123".to_string(),
-            raw,
         );
         let mut images = HashMap::new();
         images.insert(
@@ -2132,7 +1671,6 @@ mod tests {
             parse_raw_work(&raw).expect("parse raw"),
             "narou".to_string(),
             "n123".to_string(),
-            raw,
         );
         let (_, episode) = rendered.episodes.first().expect("episode");
 
@@ -2180,7 +1718,6 @@ mod tests {
             parse_raw_work(&raw).expect("parse raw"),
             "narou".to_string(),
             "n123".to_string(),
-            raw,
         );
 
         let html = render_work_index("narou", "n123", &rendered, "", "", &HashMap::new());
@@ -2188,46 +1725,50 @@ mod tests {
         assert!(html.contains(r#"<div class="p-eplist__chapter-title">第一章</div>"#));
         assert!(html.contains(r#"<div class="p-eplist__chapter-title">第二章</div>"#));
     }
-
     #[test]
-    fn build_site_index_json_includes_episode_chapter_and_update_date() {
-        let mut raw = sample_raw_json();
-        raw["episodes"]["1"]["chapter"] = json!("第一章");
-        raw["episodes"]["1"]["updateDate"] = json!("2025-01-02T00:00:00Z");
-        let rendered = build_rendered_work(
-            parse_raw_work(&raw).expect("parse raw"),
-            "narou".to_string(),
-            "n123".to_string(),
-            raw,
-        );
+    fn site_index_ssr_pages_sqlite_results_without_embedded_library_json() {
+        let store = Store::open_in_memory().expect("store");
+        for index in 1..=12 {
+            let title = format!("Work {index:02}");
+            let mut raw_json = sample_raw_json();
+            raw_json["title"] = json!(title);
+            store
+                .upsert_work(&WorkRecord {
+                    site: "pixiv".to_string(),
+                    work_key: format!("n{index:02}"),
+                    title,
+                    author: "Author".to_string(),
+                    author_id: Some("author-1".to_string()),
+                    author_url: Some("https://example.com/author-1".to_string()),
+                    r#type: "novel".to_string(),
+                    serialization: "連載中".to_string(),
+                    caption: String::new(),
+                    create_date: "2025-01-01T00:00:00Z".to_string(),
+                    update_date: format!("2025-01-{index:02}T00:00:00Z"),
+                    raw_json,
+                })
+                .expect("upsert work");
+        }
 
-        let value = build_site_index_json(&[rendered]);
+        let html = render_site_index_html_from_store(
+            &store,
+            "pixiv",
+            SiteIndexRenderOptions {
+                page: 2,
+                per_page: 10,
+                search: None,
+                work_type: Some("novel".to_string()),
+                serialization: None,
+                sort: WorkListSort::TitleAsc,
+            },
+        )
+        .expect("render site index");
 
-        assert_eq!(
-            value["n123"]["episodes_data"]["1"]["chapter"].as_str(),
-            Some("第一章")
-        );
-        assert_eq!(
-            value["n123"]["episodes_data"]["1"]["updateDate"].as_str(),
-            Some("2025-01-02T00:00:00Z")
-        );
-    }
-
-    #[test]
-    fn build_site_index_json_uses_python_author_id_fallback() {
-        let raw = sample_raw_json();
-        let rendered = build_rendered_work(
-            parse_raw_work(&raw).expect("parse raw"),
-            "narou".to_string(),
-            "n123".to_string(),
-            raw,
-        );
-
-        let value = build_site_index_json(&[rendered]);
-
-        assert_eq!(
-            value["n123"]["author_id"].as_str(),
-            Some("No author_id found")
-        );
+        assert!(html.contains("Work 11"));
+        assert!(html.contains("Work 12"));
+        assert!(!html.contains("Work 01"));
+        assert!(html.contains("2 / 2（全12件）"));
+        assert!(html.contains("page=1"));
+        assert!(!html.contains("site-index-data"));
     }
 }
