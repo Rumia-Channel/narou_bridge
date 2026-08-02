@@ -2,7 +2,10 @@ use crate::core::account::{
     rewrite_cookie_site_mirror as rewrite_cookie_site_mirror_impl, validate_account_file,
 };
 use crate::core::atomic_io::atomic_write;
-use crate::core::migration::{MigrationPlan, migrate_legacy_tree};
+use crate::core::migration::{
+    BOOTSTRAP_DOCUMENT_SCOPE, BOOTSTRAP_IMAGES_KEY, BOOTSTRAP_PIXIV_DOCUMENTS_KEY,
+    BOOTSTRAP_WORKS_KEY_PREFIX, MigrationPlan, migrate_legacy_tree,
+};
 use crate::core::model::{
     AccountFile, AccountRecord, AppConfig, ImageRecord, RequestData, TaskRecord, TaskStatus,
     WorkRecord, ZipImportMetadata,
@@ -42,6 +45,7 @@ use tracing::{error, info, warn};
 const AUTO_UPDATE_STARTUP_DELAY: Duration = Duration::from_secs(30);
 const JSON_FORM_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const MULTIPART_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+const BOOTSTRAP_WORK_BATCH_SIZE: usize = 512;
 
 #[derive(Clone)]
 pub struct RuntimeState {
@@ -170,26 +174,41 @@ async fn bootstrap_store_from_existing_data(state: &RuntimeState) -> Result<()> 
     let mut imported_images = 0usize;
     let mut imported_pixiv_docs = 0usize;
 
-    if store.list_works(None)?.is_empty() {
-        for site_name in &site_names {
-            imported_works += import_existing_site_records_from_tree(
-                &store,
-                &data_root.join(site_name),
-                site_name,
-            )?;
+    for site_name in &site_names {
+        let marker_key = format!("{BOOTSTRAP_WORKS_KEY_PREFIX}{site_name}");
+        if store
+            .get_site_document_record(BOOTSTRAP_DOCUMENT_SCOPE, &marker_key)?
+            .is_some()
+        {
+            continue;
         }
-    }
-
-    if store.list_images()?.is_empty() {
-        imported_images = import_existing_image_records(&store, &data_root.join("images"))?;
+        let imported =
+            import_existing_site_records_from_tree(&store, &data_root.join(site_name), site_name)?;
+        imported_works += imported;
+        store.upsert_site_document(
+            BOOTSTRAP_DOCUMENT_SCOPE,
+            &marker_key,
+            &json!({"imported": imported}),
+            &now_string(),
+        )?;
     }
 
     if store
-        .list_site_document_records(
-            crate::sites::pixiv::PIXIV_SITE_DOCUMENT_SCOPE,
-            Some("tracked_users/"),
-        )?
-        .is_empty()
+        .get_site_document_record(BOOTSTRAP_DOCUMENT_SCOPE, BOOTSTRAP_IMAGES_KEY)?
+        .is_none()
+    {
+        imported_images = import_existing_image_records(&store, &data_root.join("images"))?;
+        store.upsert_site_document(
+            BOOTSTRAP_DOCUMENT_SCOPE,
+            BOOTSTRAP_IMAGES_KEY,
+            &json!({"imported": imported_images}),
+            &now_string(),
+        )?;
+    }
+
+    if store
+        .get_site_document_record(BOOTSTRAP_DOCUMENT_SCOPE, BOOTSTRAP_PIXIV_DOCUMENTS_KEY)?
+        .is_none()
     {
         let pixiv_dir = data_root.join("pixiv");
         if pixiv_dir.exists() {
@@ -204,6 +223,12 @@ async fn bootstrap_store_from_existing_data(state: &RuntimeState) -> Result<()> 
                 )?
                 .len();
         }
+        store.upsert_site_document(
+            BOOTSTRAP_DOCUMENT_SCOPE,
+            BOOTSTRAP_PIXIV_DOCUMENTS_KEY,
+            &json!({"imported": imported_pixiv_docs}),
+            &now_string(),
+        )?;
     }
 
     drop(store);
@@ -1967,9 +1992,7 @@ fn import_site_records_from_tree(store: &Store, site_dir: &Path, site_name: &str
     }
 
     let count = records.len();
-    for record in records {
-        store.upsert_work(&record)?;
-    }
+    store.bulk_upsert_works(&records, |_| {})?;
     Ok(count)
 }
 
@@ -1999,6 +2022,7 @@ fn import_existing_site_records_from_tree(
 
     let bar = make_progress_bar(work_dirs.len() as u64, &format!("import {site_name}"));
     let mut imported = 0usize;
+    let mut batch = Vec::with_capacity(BOOTSTRAP_WORK_BATCH_SIZE);
     for work_path in work_dirs {
         let work_key = work_path
             .file_name()
@@ -2022,10 +2046,18 @@ fn import_existing_site_records_from_tree(
                 .with_context(|| format!("failed to open {}", payload_path.display()))?,
         )
         .with_context(|| format!("failed to parse {}", payload_path.display()))?;
-        let record = work_record_from_json(site_name, &work_key, raw_json)?;
-        store.upsert_work(&record)?;
-        imported += 1;
+        batch.push(work_record_from_json(site_name, &work_key, raw_json)?);
         bar.inc(1);
+
+        if batch.len() == BOOTSTRAP_WORK_BATCH_SIZE {
+            store.bulk_upsert_works(&batch, |_| {})?;
+            imported += batch.len();
+            batch.clear();
+        }
+    }
+    if !batch.is_empty() {
+        store.bulk_upsert_works(&batch, |_| {})?;
+        imported += batch.len();
     }
 
     bar.finish_with_message(format!("{site_name}: {imported} works imported"));
@@ -2358,8 +2390,7 @@ async fn sync_queue_state(state: &RuntimeState) -> Result<()> {
     };
     let task_json = serde_json::to_string_pretty(&task_state)?;
     let path = state.config.queue_task_json_path();
-    tokio::task::spawn_blocking(move || atomic_write(&path, task_json))
-        .await??;
+    tokio::task::spawn_blocking(move || atomic_write(&path, task_json)).await??;
     Ok(())
 }
 
@@ -2854,12 +2885,27 @@ mod tests {
 
         rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
 
-        assert!(!site_dir.join("stale.json").exists(), "stale files should be removed");
-        assert!(site_dir.join("alpha.json").exists(), "alpha account file should be written");
-        assert!(site_dir.join("beta.json").exists(), "beta account file should be written");
-        assert!(site_dir.join("login.json").exists(), "login mirror should be written for active account");
+        assert!(
+            !site_dir.join("stale.json").exists(),
+            "stale files should be removed"
+        );
+        assert!(
+            site_dir.join("alpha.json").exists(),
+            "alpha account file should be written"
+        );
+        assert!(
+            site_dir.join("beta.json").exists(),
+            "beta account file should be written"
+        );
+        assert!(
+            site_dir.join("login.json").exists(),
+            "login mirror should be written for active account"
+        );
         let login_content = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
-        assert!(login_content.contains("beta"), "login.json should contain active account data");
+        assert!(
+            login_content.contains("beta"),
+            "login.json should contain active account data"
+        );
 
         stdfs::remove_dir_all(root).unwrap();
     }
@@ -2890,11 +2936,23 @@ mod tests {
 
         rewrite_cookie_site_mirror(&config, "pixiv", &accounts).expect("rewrite mirrors");
 
-        assert!(!site_dir.join("alpha.json").exists(), "alpha not in accounts should be removed");
-        assert!(!site_dir.join("stale.json").exists(), "stale files should be removed");
-        assert!(site_dir.join("beta.json").exists(), "beta account file should be written");
+        assert!(
+            !site_dir.join("alpha.json").exists(),
+            "alpha not in accounts should be removed"
+        );
+        assert!(
+            !site_dir.join("stale.json").exists(),
+            "stale files should be removed"
+        );
+        assert!(
+            site_dir.join("beta.json").exists(),
+            "beta account file should be written"
+        );
         let active_login = stdfs::read_to_string(site_dir.join("login.json")).unwrap();
-        assert!(active_login.contains("beta"), "login.json should contain active account data");
+        assert!(
+            active_login.contains("beta"),
+            "login.json should contain active account data"
+        );
 
         stdfs::remove_dir_all(root).unwrap();
     }

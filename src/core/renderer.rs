@@ -655,19 +655,14 @@ pub fn build_site_index_json_from_store(store: &Store, site: &str) -> Result<ser
 }
 
 pub fn render_site_index_html_from_store(
-    store: &Store,
+    _store: &Store,
     site: &str,
     host_name: &str,
     img_url: &str,
 ) -> Result<String> {
-    let works = store.list_works(Some(site))?;
-    let rendered = works
-        .iter()
-        .map(rendered_work_from_record)
-        .collect::<Result<Vec<_>>>()?;
     Ok(render_site_index(
         site,
-        &rendered,
+        &[],
         host_name,
         img_url,
         &HashMap::new(),
@@ -685,7 +680,7 @@ pub fn render_work_root_html_from_store(
         return Ok(None);
     };
     let rendered = rendered_work_from_record(&work)?;
-    let images = load_image_assets(store)?;
+    let images = load_image_assets_for_work(store, site, work_key, &work.raw_json)?;
     Ok(Some(render_work_root_html(
         &rendered, host_name, img_url, &images,
     )))
@@ -702,7 +697,7 @@ pub fn render_work_info_html_from_store(
         return Ok(None);
     };
     let rendered = rendered_work_from_record(&work)?;
-    let images = load_image_assets(store)?;
+    let images = load_image_assets_for_work(store, site, work_key, &work.raw_json)?;
     Ok(Some(render_work_info(
         &rendered.site,
         &rendered.work_key,
@@ -728,7 +723,7 @@ pub fn render_episode_html_from_store(
     let Some((index, episode_key, episode)) = find_episode_for_route(&rendered, episode_id) else {
         return Ok(None);
     };
-    let images = load_image_assets(store)?;
+    let images = load_image_assets_for_work(store, site, work_key, &work.raw_json)?;
     let prev = index.checked_sub(1).and_then(|idx| {
         rendered
             .episodes
@@ -751,6 +746,39 @@ pub fn render_episode_html_from_store(
         img_url,
         &images,
     )))
+}
+
+fn load_image_assets_for_work(
+    store: &Store,
+    site: &str,
+    work_key: &str,
+    raw_json: &serde_json::Value,
+) -> Result<HashMap<String, ImageAsset>> {
+    const IMAGE_EXTENSIONS: &[&str] = &[
+        "jpg", "jpeg", "png", "gif", "apng", "webp", "bmp", "avif", "svg",
+    ];
+    let mut candidates = Vec::new();
+    for ext in IMAGE_EXTENSIONS {
+        candidates.push(format!("{site}_{work_key}_cover.{ext}"));
+    }
+    collect_narou_cover_candidates(raw_json, false, &mut candidates);
+
+    let mut images = HashMap::new();
+    for logical_name in candidates {
+        if split_hashed_name(&logical_name).is_some() || images.contains_key(&logical_name) {
+            continue;
+        }
+        if let Some(image) = store.get_image(&logical_name)? {
+            images.insert(
+                image.logical_name,
+                ImageAsset {
+                    hash: image.hash,
+                    ext: image.ext,
+                },
+            );
+        }
+    }
+    Ok(images)
 }
 
 fn render_site_index(
@@ -1291,21 +1319,15 @@ fn render_image(
         );
     }
 
-    // Fallback: pixiv (and migrated data) embed already-hashed filenames such as
-    // "abc1234567.jpg" directly into episode markup. These are not registered in
-    // the logical-name map, so emit the image tag if the name matches a stored
-    // image asset by hash + extension.
-    if let Some((stem, ext)) = split_hashed_name(logical_name) {
-        let matches_known_asset = images
-            .values()
-            .any(|asset| asset.hash == stem && asset.ext == ext);
-        if matches_known_asset {
-            return format!(
-                r#"<img src="{}/{}" alt="">"#,
-                escape_html(image_path_base),
-                escape_html(logical_name)
-            );
-        }
+    // Migrated raw.json stores content-addressed filenames directly. They remain
+    // valid even when an old manifest entry was lost, so accept only the two
+    // canonical hash formats and a supported image extension.
+    if split_hashed_name(logical_name).is_some() {
+        return format!(
+            r#"<img src="{}/{}" alt="">"#,
+            escape_html(image_path_base),
+            escape_html(logical_name)
+        );
     }
 
     format!("<p><code>{}</code></p>", escape_html(logical_name))
@@ -1321,7 +1343,10 @@ fn split_hashed_name(name: &str) -> Option<(&str, &str)> {
     if !looks_like_image_hash(stem) {
         return None;
     }
-    if !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+    if !matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "apng" | "webp" | "bmp" | "avif" | "svg"
+    ) {
         return None;
     }
     Some((stem, ext))
@@ -1571,16 +1596,12 @@ fn get_cover_image_file_name(
     work_key: &str,
     images: &HashMap<String, ImageAsset>,
 ) -> Option<String> {
-    let preferred_prefix = format!("{site}_{work_key}");
-    for (logical_name, image) in images.iter() {
-        if logical_name.contains(&preferred_prefix)
-            && (logical_name.contains("cover") || logical_name.contains("Cover"))
-        {
-            return Some(format!("{}.{}", image.hash, image.ext));
-        }
-    }
-    for (logical_name, image) in images.iter() {
-        if logical_name.contains("cover") || logical_name.contains("Cover") {
+    const COVER_EXTENSIONS: &[&str] = &[
+        "jpg", "jpeg", "png", "gif", "apng", "webp", "bmp", "avif", "svg",
+    ];
+    for ext in COVER_EXTENSIONS {
+        let logical_name = format!("{site}_{work_key}_cover.{ext}");
+        if let Some(image) = images.get(&logical_name) {
             return Some(format!("{}.{}", image.hash, image.ext));
         }
     }
@@ -1963,10 +1984,47 @@ mod tests {
     }
 
     #[test]
+    fn render_image_preserves_valid_unregistered_content_hash() {
+        let images = HashMap::new();
+        let hashed_name = "F2sqzifMxxNCurmu7wAvjp69qcDNJn7JOCuvA-23xwk.png";
+
+        let html = render_image(hashed_name, &images, "https://images.example");
+
+        assert_eq!(
+            html,
+            format!(r#"<img src="https://images.example/{hashed_name}" alt="">"#)
+        );
+    }
+
+    #[test]
+    fn render_image_rejects_non_image_hash_extension() {
+        let images = HashMap::new();
+        let hashed_name = "F2sqzifMxxNCurmu7wAvjp69qcDNJn7JOCuvA-23xwk.html";
+
+        let html = render_image(hashed_name, &images, "https://images.example");
+
+        assert_eq!(html, format!("<p><code>{hashed_name}</code></p>"));
+    }
+
+    #[test]
     fn render_image_falls_back_for_unknown_name() {
         let images: HashMap<String, ImageAsset> = HashMap::new();
         let html = render_image("not-an-image", &images, "../../images");
         assert_eq!(html, "<p><code>not-an-image</code></p>");
+    }
+
+    #[test]
+    fn cover_lookup_does_not_borrow_another_works_cover() {
+        let mut images = HashMap::new();
+        images.insert(
+            "pixiv_n999_cover.jpg".to_string(),
+            ImageAsset {
+                hash: "abc1234567".to_string(),
+                ext: "jpg".to_string(),
+            },
+        );
+
+        assert_eq!(get_cover_image_file_name("pixiv", "n123", &images), None);
     }
 
     #[test]

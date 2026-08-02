@@ -127,6 +127,16 @@ impl Store {
         )
     }
 
+    pub fn checkpoint_wal(&self) -> Result<()> {
+        if self.inner.in_memory {
+            return Ok(());
+        }
+        self.with_conn(|conn| {
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .context("failed to checkpoint sqlite WAL")
+        })
+    }
+
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let conn = self
             .inner
@@ -622,6 +632,51 @@ impl Store {
                     serde_json::to_string(&work.raw_json)?,
                 ],
             )?;
+            Ok(())
+        })
+    }
+
+    pub fn bulk_upsert_works<F>(&self, works: &[WorkRecord], mut on_progress: F) -> Result<()>
+    where
+        F: FnMut(usize),
+    {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            {
+                let mut stmt = tx.prepare(
+                    r#"INSERT INTO works (site, work_key, title, author, author_id, author_url, type, serialization, caption, create_date, update_date, raw_json)
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                       ON CONFLICT(site, work_key) DO UPDATE SET
+                           title=excluded.title,
+                           author=excluded.author,
+                           author_id=excluded.author_id,
+                           author_url=excluded.author_url,
+                           type=excluded.type,
+                           serialization=excluded.serialization,
+                           caption=excluded.caption,
+                           create_date=excluded.create_date,
+                           update_date=excluded.update_date,
+                           raw_json=excluded.raw_json"#,
+                )?;
+                for (idx, work) in works.iter().enumerate() {
+                    stmt.execute(params![
+                        work.site,
+                        work.work_key,
+                        work.title,
+                        work.author,
+                        work.author_id,
+                        work.author_url,
+                        work.r#type,
+                        work.serialization,
+                        work.caption,
+                        work.create_date,
+                        work.update_date,
+                        serde_json::to_string(&work.raw_json)?,
+                    ])?;
+                    on_progress(idx + 1);
+                }
+            }
+            tx.commit()?;
             Ok(())
         })
     }
@@ -1480,6 +1535,26 @@ mod tests {
     }
 
     #[test]
+    fn bulk_upsert_works_commits_every_record_and_reports_progress() {
+        let store = Store::open_in_memory().expect("store");
+        let works = vec![
+            sample_work("pixiv", "n1", "First", "Author"),
+            sample_work("pixiv", "n2", "Second", "Author"),
+        ];
+        let mut progress = Vec::new();
+
+        store
+            .bulk_upsert_works(&works, |done| progress.push(done))
+            .expect("bulk upsert works");
+
+        assert_eq!(progress, vec![1, 2]);
+        let stored = store.list_works(Some("pixiv")).expect("list works");
+        assert_eq!(stored.len(), 2);
+        assert!(stored.iter().any(|work| work.work_key == "n1"));
+        assert!(stored.iter().any(|work| work.work_key == "n2"));
+    }
+
+    #[test]
     fn list_work_summaries_pages_sorts_and_searches_without_raw_json() {
         let store = Store::open_in_memory().expect("store");
         store
@@ -1628,6 +1703,12 @@ mod tests {
             wal_path.exists(),
             "expected sqlite WAL file at {}",
             wal_path.display()
+        );
+        store.checkpoint_wal().expect("checkpoint WAL");
+        assert_eq!(
+            fs::metadata(&wal_path).expect("WAL metadata").len(),
+            0,
+            "checkpoint should truncate the WAL"
         );
 
         let _ = fs::remove_file(&wal_path);

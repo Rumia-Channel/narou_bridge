@@ -611,6 +611,31 @@ async fn build_runtime_state_bootstraps_empty_db_from_external_data_dir() {
     assert_eq!(raw_response.status(), StatusCode::OK);
     let raw_json = response_json(raw_response).await;
     assert_eq!(raw_json["title"].as_str(), Some("DB-backed work"));
+
+    std::fs::write(
+        external_data_root
+            .join("pixiv")
+            .join("n123")
+            .join("raw")
+            .join("raw.json"),
+        b"{corrupt after completed bootstrap",
+    )
+    .expect("corrupt source after bootstrap");
+    let restarted = build_runtime_state(
+        config.clone(),
+        Store::open(config.db_path_buf()).expect("reopen bootstrapped store"),
+        build_registry(),
+    )
+    .await
+    .expect("completed bootstrap marker should skip source rescan");
+    let restarted_store = restarted.store.lock().await;
+    assert_eq!(
+        restarted_store
+            .get_work("pixiv", "n123")
+            .expect("get restarted work")
+            .map(|work| work.title),
+        Some("DB-backed work".to_string())
+    );
 }
 
 #[tokio::test]

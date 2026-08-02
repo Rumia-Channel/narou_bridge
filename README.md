@@ -80,6 +80,20 @@ curl -X POST "http://127.0.0.1:8080/api/migrate?source_root=C:\Users\me\Desktop\
 - `source_root` を省略すると既定で `sample\` を参照します。
 - 取り込み後、旧ファイル群は `archive\` へ退避されます。
 
+## 大規模データからのSQLite再構築
+
+既存SQLiteを継ぎ足さず、`raw.json` と運用ファイルから新しいDBをオフライン再構築できます。
+
+```bash
+cargo run --release -- rebuild-store "<dataディレクトリ>" "<runtimeルート>" "<新規output.sqlite3>"
+```
+
+- 第1引数は `pixiv\`, `narou\`, `images\` を含むデータディレクトリです。
+- 第2引数は `cookie\`, `queue\` を含むランタイムルートです。データと同じ場所でも構いません。
+- 出力DBは存在していてはならず、2つの入力ディレクトリ外に指定してください。入力は読み取り専用で扱われます。
+- 作品、画像manifest、Pixiv追跡状態、Cookieアカウント、待機キューを取り込み、完了時にWALをcheckpointします。
+- 失敗した出力DBは本番へ切り替えず、原因を修正して別の新規出力先へ再実行してください。
+
 ## 主要エンドポイント
 
 | Endpoint | Method | 用途 |

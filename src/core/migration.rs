@@ -5,12 +5,59 @@ use crate::core::model::{
 use crate::core::storage::Store;
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub struct MigrationPlan {
     pub source_root: PathBuf,
     pub archive_root: PathBuf,
+}
+
+const WORK_IMPORT_BATCH_SIZE: usize = 512;
+pub const BOOTSTRAP_DOCUMENT_SCOPE: &str = "runtime";
+pub const BOOTSTRAP_WORKS_KEY_PREFIX: &str = "bootstrap/works/";
+pub const BOOTSTRAP_IMAGES_KEY: &str = "bootstrap/images";
+pub const BOOTSTRAP_PIXIV_DOCUMENTS_KEY: &str = "bootstrap/pixiv-site-documents";
+
+pub fn import_data_tree(store: &Store, data_root: &Path) -> Result<MigrationSummary> {
+    if !data_root.exists() {
+        anyhow::bail!("data root does not exist: {}", data_root.display());
+    }
+
+    let mut summary = MigrationSummary::default();
+    summary.works = migrate_works(store, data_root)?;
+    summary.images = migrate_images(store, data_root)?;
+    summary.site_documents = migrate_pixiv_site_documents(store, data_root)?;
+    record_data_tree_bootstrap_markers(store, data_root)?;
+    Ok(summary)
+}
+
+pub fn import_operational_state(store: &Store, runtime_root: &Path) -> Result<MigrationSummary> {
+    let mut summary = MigrationSummary::default();
+    summary.accounts = migrate_accounts(store, runtime_root)?;
+    summary.tasks = migrate_tasks(store, runtime_root)?;
+    Ok(summary)
+}
+
+fn record_data_tree_bootstrap_markers(store: &Store, data_root: &Path) -> Result<()> {
+    let completed_at = now_string();
+    let marker = json!({
+        "source": data_root.to_string_lossy(),
+        "completed_at": completed_at,
+    });
+    for site in ["pixiv", "narou"] {
+        store.upsert_site_document(
+            BOOTSTRAP_DOCUMENT_SCOPE,
+            &format!("{BOOTSTRAP_WORKS_KEY_PREFIX}{site}"),
+            &marker,
+            &completed_at,
+        )?;
+    }
+    for key in [BOOTSTRAP_IMAGES_KEY, BOOTSTRAP_PIXIV_DOCUMENTS_KEY] {
+        store.upsert_site_document(BOOTSTRAP_DOCUMENT_SCOPE, key, &marker, &completed_at)?;
+    }
+    Ok(())
 }
 
 pub fn migrate_legacy_tree(store: &Store, plan: MigrationPlan) -> Result<MigrationSummary> {
@@ -61,7 +108,8 @@ fn migrate_accounts(store: &Store, root: &Path) -> Result<usize> {
                     .and_then(|s| s.to_str())
                     .unwrap_or("login")
                     .to_string();
-                let account_json: AccountFile = load_json_or_default(&path)?;
+                let account_json: AccountFile = serde_json::from_value(load_json_strict(&path)?)
+                    .with_context(|| format!("invalid account file {}", path.display()))?;
                 let updated_at = file_modified_string(&path).unwrap_or_else(now_string);
                 let active = name == "login";
                 let record = AccountRecord {
@@ -81,31 +129,21 @@ fn migrate_accounts(store: &Store, root: &Path) -> Result<usize> {
 }
 
 fn migrate_tasks(store: &Store, root: &Path) -> Result<usize> {
-    let mut count = 0;
     let queue_dir = root.join("queue");
     if !queue_dir.exists() {
         return Ok(0);
     }
+    let mut count = 0;
 
     let task_json = queue_dir.join("task.json");
     if task_json.exists() {
-        let state: Value = load_json_or_default(&task_json)?;
-        if let Some(queue) = state.get("queue").and_then(|v| v.as_array()) {
-            for item in queue.iter() {
-                let req = parse_request_data(item);
-                let task = TaskRecord {
-                    id: 0,
-                    request_id: req.request_id.clone(),
-                    action: detect_action(&req),
-                    param: detect_param(&req),
-                    request: req,
-                    status: TaskStatus::Queued,
-                    error: None,
-                    created_at: now_string(),
-                    updated_at: now_string(),
-                };
-                store.enqueue_task(&task)?;
-                count += 1;
+        let state = load_json_strict(&task_json)?;
+        if let Some(current) = state.get("current_task").filter(|value| !value.is_null()) {
+            count += enqueue_migrated_task(store, current)?;
+        }
+        if let Some(queue) = state.get("queue").and_then(Value::as_array) {
+            for item in queue {
+                count += enqueue_migrated_task(store, item)?;
             }
         }
     }
@@ -116,20 +154,7 @@ fn migrate_tasks(store: &Store, root: &Path) -> Result<usize> {
         match serde_pickle::from_slice::<Vec<Value>>(&data, Default::default()) {
             Ok(values) => {
                 for item in values {
-                    let req = parse_request_data(&item);
-                    let task = TaskRecord {
-                        id: 0,
-                        request_id: req.request_id.clone(),
-                        action: detect_action(&req),
-                        param: detect_param(&req),
-                        request: req,
-                        status: TaskStatus::Queued,
-                        error: None,
-                        created_at: now_string(),
-                        updated_at: now_string(),
-                    };
-                    store.enqueue_task(&task)?;
-                    count += 1;
+                    count += enqueue_migrated_task(store, &item)?;
                 }
             }
             Err(err) => tracing::warn!(
@@ -142,12 +167,39 @@ fn migrate_tasks(store: &Store, root: &Path) -> Result<usize> {
     Ok(count)
 }
 
+fn enqueue_migrated_task(store: &Store, value: &Value) -> Result<usize> {
+    let mut request = parse_request_data(value);
+    if request.request_id.trim().is_empty() {
+        request.request_id = uuid::Uuid::new_v4().to_string();
+    }
+    let action = detect_action(&request);
+    if action.is_empty() {
+        anyhow::bail!(
+            "queued request {} has no supported action",
+            request.request_id
+        );
+    }
+    let task = TaskRecord {
+        id: 0,
+        request_id: request.request_id.clone(),
+        action,
+        param: detect_param(&request),
+        request,
+        status: TaskStatus::Queued,
+        error: None,
+        created_at: now_string(),
+        updated_at: now_string(),
+    };
+    Ok(usize::from(store.enqueue_task(&task)? != 0))
+}
+
 fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
     let Some(root) = legacy_data_dir(root) else {
         tracing::warn!("legacy works directory not found under {}", root.display());
         return Ok(0);
     };
     let mut count = 0;
+    let mut batch = Vec::with_capacity(WORK_IMPORT_BATCH_SIZE);
     for site_dir in fs::read_dir(root)? {
         let site_dir = site_dir?;
         if !site_dir.file_type()?.is_dir() {
@@ -163,152 +215,110 @@ fn migrate_works(store: &Store, root: &Path) -> Result<usize> {
                 continue;
             }
             let raw_path = work_dir.path().join("raw").join("raw.json");
-            if !raw_path.exists() {
-                let alt_json = work_dir.path().join("data.json");
-                if alt_json.exists() {
-                    let alt: Value = load_json_or_default(&alt_json)?;
-                    let record = WorkRecord {
-                        site: site_name.clone(),
-                        work_key: work_dir.file_name().to_string_lossy().to_string(),
-                        title: alt
-                            .get("title")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        author: alt
-                            .get("author")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        author_id: alt
-                            .get("author_id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string()),
-                        author_url: alt
-                            .get("author_url")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string()),
-                        r#type: alt
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        serialization: alt
-                            .get("serialization")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        caption: alt
-                            .get("caption")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        create_date: pick_first_str(&alt, &["createDate", "create_date"]),
-                        update_date: pick_first_str(&alt, &["updateDate", "update_date"]),
-                        raw_json: alt,
-                    };
-                    store.upsert_work(&record)?;
-                    count += 1;
-                }
+            let alt_path = work_dir.path().join("data.json");
+            let payload_path = if raw_path.exists() {
+                raw_path
+            } else if alt_path.exists() {
+                alt_path
+            } else {
                 continue;
-            }
-            let raw_json: Value = load_json_or_default(&raw_path)?;
-            let record = WorkRecord {
-                site: site_name.clone(),
-                work_key: work_dir.file_name().to_string_lossy().to_string(),
-                title: raw_json
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                author: raw_json
-                    .get("author")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                author_id: raw_json
-                    .get("author_id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                author_url: raw_json
-                    .get("author_url")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                r#type: raw_json
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                serialization: raw_json
-                    .get("serialization")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                caption: raw_json
-                    .get("caption")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                create_date: pick_first_str(&raw_json, &["createDate", "create_date"]),
-                update_date: pick_first_str(&raw_json, &["updateDate", "update_date"]),
-                raw_json,
             };
-            store.upsert_work(&record)?;
-            count += 1;
+            let raw_json = load_json_strict(&payload_path)?;
+            batch.push(work_record_from_legacy_value(
+                &site_name,
+                &work_dir.file_name().to_string_lossy(),
+                raw_json,
+            ));
+
+            if batch.len() == WORK_IMPORT_BATCH_SIZE {
+                store.bulk_upsert_works(&batch, |_| {})?;
+                count += batch.len();
+                batch.clear();
+            }
         }
+    }
+    if !batch.is_empty() {
+        store.bulk_upsert_works(&batch, |_| {})?;
+        count += batch.len();
     }
     Ok(count)
 }
 
+fn work_record_from_legacy_value(site: &str, work_key: &str, raw_json: Value) -> WorkRecord {
+    WorkRecord {
+        site: site.to_string(),
+        work_key: work_key.to_string(),
+        title: pick_first_str(&raw_json, &["title"]),
+        author: pick_first_str(&raw_json, &["author"]),
+        author_id: raw_json
+            .get("author_id")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        author_url: raw_json
+            .get("author_url")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        r#type: pick_first_str(&raw_json, &["type"]),
+        serialization: pick_first_str(&raw_json, &["serialization"]),
+        caption: pick_first_str(&raw_json, &["caption"]),
+        create_date: pick_first_str(&raw_json, &["createDate", "create_date"]),
+        update_date: pick_first_str(&raw_json, &["updateDate", "update_date"]),
+        raw_json,
+    }
+}
+
 fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
-    let mut count = 0;
     let Some(image_dir) = legacy_data_dir(root).map(|path| path.join("images")) else {
         return Ok(0);
     };
+    let mut records = BTreeMap::<String, ImageRecord>::new();
+
     let db_path = image_dir.join("database.json");
     if db_path.exists() {
-        let db_json: Value = load_json_or_default(&db_path)?;
+        let db_json = load_json_strict(&db_path)?;
         if let Some(map) = db_json.as_object() {
             for (logical_name, hash_value) in map {
                 let ext = Path::new(logical_name)
                     .extension()
-                    .and_then(|s| s.to_str())
+                    .and_then(|value| value.to_str())
                     .unwrap_or_default()
                     .to_string();
-                let record = ImageRecord {
-                    logical_name: logical_name.clone(),
-                    hash: hash_value.as_str().unwrap_or_default().to_string(),
-                    ext,
-                    kind: if logical_name.contains("cover") {
-                        "cover".to_string()
-                    } else {
-                        "image".to_string()
+                records.insert(
+                    logical_name.clone(),
+                    ImageRecord {
+                        logical_name: logical_name.clone(),
+                        hash: hash_value.as_str().unwrap_or_default().to_string(),
+                        ext,
+                        kind: if logical_name.contains("cover") {
+                            "cover".to_string()
+                        } else {
+                            "image".to_string()
+                        },
                     },
-                };
-                store.upsert_image(&record)?;
-                count += 1;
+                );
             }
         }
     }
 
     let cover_path = image_dir.join("cover.json");
     if cover_path.exists() {
-        let cover_json: Value = load_json_or_default(&cover_path)?;
+        let cover_json = load_json_strict(&cover_path)?;
         if let Some(map) = cover_json.as_object() {
             for (logical_name, hash_value) in map {
                 let ext = Path::new(logical_name)
                     .extension()
-                    .and_then(|s| s.to_str())
+                    .and_then(|value| value.to_str())
                     .unwrap_or_default()
                     .to_string();
-                let record = ImageRecord {
-                    logical_name: logical_name.clone(),
-                    hash: hash_value.as_str().unwrap_or_default().to_string(),
-                    ext,
-                    kind: "cover".to_string(),
-                };
-                store.upsert_image(&record)?;
-                count += 1;
+                records.insert(
+                    logical_name.clone(),
+                    ImageRecord {
+                        logical_name: logical_name.clone(),
+                        hash: hash_value.as_str().unwrap_or_default().to_string(),
+                        ext,
+                        kind: "cover".to_string(),
+                    },
+                );
             }
         }
     }
@@ -324,15 +334,12 @@ fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            let logical_name = name.clone();
-            let record = ImageRecord {
-                logical_name,
+            records.entry(name.clone()).or_insert_with(|| ImageRecord {
+                logical_name: name.clone(),
                 hash: name.trim_end_matches(&format!(".{ext}")).to_string(),
                 ext: ext.to_string(),
                 kind: "image".to_string(),
-            };
-            store.upsert_image(&record)?;
-            count += 1;
+            });
         }
     }
 
@@ -343,15 +350,15 @@ fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
                 continue;
             }
             let path = entry.path();
-            let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+            let Some(ext) = path.extension().and_then(|value| value.to_str()) else {
                 continue;
             };
             if !supported_image_extensions().contains(&ext) {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            let record = ImageRecord {
-                logical_name: name.clone(),
+            records.entry(name.clone()).or_insert_with(|| ImageRecord {
+                logical_name: name,
                 hash: path
                     .file_stem()
                     .and_then(|stem| stem.to_str())
@@ -359,12 +366,13 @@ fn migrate_images(store: &Store, root: &Path) -> Result<usize> {
                     .to_string(),
                 ext: ext.to_string(),
                 kind: "image".to_string(),
-            };
-            store.upsert_image(&record)?;
-            count += 1;
+            });
         }
     }
-    Ok(count)
+
+    let images: Vec<_> = records.into_values().collect();
+    store.bulk_upsert_images(&images, |_| {})?;
+    Ok(images.len())
 }
 
 fn migrate_pixiv_site_documents(store: &Store, root: &Path) -> Result<usize> {
@@ -543,10 +551,12 @@ fn detect_action(req: &RequestData) -> String {
         "update".to_string()
     } else if req.re_download.is_some() {
         "re_download".to_string()
-    } else if req.convert.is_some() {
+    } else if req.convert.is_some() || req.pdf_path.is_some() || req.zip_name.is_some() {
         "convert".to_string()
-    } else {
+    } else if req.add.is_some() {
         "download".to_string()
+    } else {
+        String::new()
     }
 }
 
@@ -557,6 +567,8 @@ fn detect_param(req: &RequestData) -> String {
         .or(req.update.clone())
         .or(req.re_download.clone())
         .or(req.convert.clone())
+        .or_else(|| req.pdf_path.as_ref().map(|_| "pdf".to_string()))
+        .or_else(|| req.zip_name.as_ref().map(|_| "zip".to_string()))
         .or(req.add.clone())
         .unwrap_or_default()
 }
@@ -639,6 +651,12 @@ fn pick_first_str(value: &Value, keys: &[&str]) -> String {
         .find_map(|key| value.get(*key).and_then(Value::as_str))
         .unwrap_or_default()
         .to_string()
+}
+
+fn load_json_strict(path: &Path) -> Result<Value> {
+    let file =
+        fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    serde_json::from_reader(file).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 fn load_json_or_default<T>(path: &Path) -> Result<T>
@@ -771,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_works_accepts_direct_data_root() {
+    fn import_data_tree_accepts_direct_root_and_records_bootstrap_markers() {
         let root = test_dir("migration-direct-data-root-works");
         let raw_dir = root.join("pixiv").join("n123").join("raw");
         fs::create_dir_all(root.join("images")).unwrap();
@@ -793,12 +811,26 @@ mod tests {
         .unwrap();
 
         let store = Store::open_in_memory().expect("store");
-        let migrated = migrate_works(&store, &root).expect("migrate works");
+        let summary = import_data_tree(&store, &root).expect("import data tree");
 
-        assert_eq!(migrated, 1);
+        assert_eq!(summary.works, 1);
         let works = store.list_works(Some("pixiv")).expect("list works");
         assert_eq!(works.len(), 1);
         assert_eq!(works[0].title, "Direct Root Work");
+        for key in [
+            "bootstrap/works/pixiv",
+            "bootstrap/works/narou",
+            BOOTSTRAP_IMAGES_KEY,
+            BOOTSTRAP_PIXIV_DOCUMENTS_KEY,
+        ] {
+            assert!(
+                store
+                    .get_site_document_record(BOOTSTRAP_DOCUMENT_SCOPE, key)
+                    .expect("load bootstrap marker")
+                    .is_some(),
+                "missing bootstrap marker {key}"
+            );
+        }
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -909,11 +941,66 @@ mod tests {
         let store = Store::open_in_memory().expect("store");
         let migrated = migrate_images(&store, &root).expect("migrate images");
 
-        assert_eq!(migrated, 3);
+        assert_eq!(migrated, 2);
         let images = store.list_images().expect("list images");
         assert!(images.iter().any(|image| image.logical_name == "cover.jpg"));
         assert!(images.iter().any(|image| image.logical_name == "abc.png"));
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn import_data_tree_rejects_corrupt_raw_json() {
+        let root = test_dir("migration-corrupt-raw");
+        let raw_dir = root.join("pixiv").join("n123").join("raw");
+        fs::create_dir_all(&raw_dir).unwrap();
+        fs::create_dir_all(root.join("images")).unwrap();
+        fs::write(raw_dir.join("raw.json"), b"{not json").unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        let err = import_data_tree(&store, &root).expect_err("corrupt raw must fail");
+
+        assert!(err.to_string().contains("failed to parse"));
+        assert!(store.list_works(None).expect("works").is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn import_operational_state_restores_current_and_queued_actions() {
+        let root = test_dir("migration-operational-state");
+        let queue_dir = root.join("queue");
+        fs::create_dir_all(&queue_dir).unwrap();
+        fs::write(
+            queue_dir.join("task.json"),
+            serde_json::to_vec_pretty(&json!({
+                "current_task": {
+                    "request_id": "current-pdf",
+                    "pdf_path": "pdf/current.pdf",
+                    "pdf_name": "current.pdf"
+                },
+                "queue": [{
+                    "request_id": "queued-download",
+                    "add": "https://example.com/work"
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = Store::open_in_memory().expect("store");
+        let summary = import_operational_state(&store, &root).expect("import operations");
+        let tasks = store.list_tasks().expect("tasks");
+
+        assert_eq!(summary.tasks, 2);
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().any(|task| task.request_id == "current-pdf"
+            && task.action == "convert"
+            && task.param == "pdf"));
+        assert!(
+            tasks
+                .iter()
+                .any(|task| task.request_id == "queued-download" && task.action == "download")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

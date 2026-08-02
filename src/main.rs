@@ -1,6 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use narou_bridge::core::bootstrap::load_app_config;
-use narou_bridge::core::migration::{MigrationPlan, migrate_legacy_tree};
+use narou_bridge::core::migration::{
+    MigrationPlan, import_data_tree, import_operational_state, migrate_legacy_tree,
+};
 use narou_bridge::core::registry::build_registry;
 use narou_bridge::core::renderer;
 use narou_bridge::core::runtime::run;
@@ -16,9 +18,13 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[tokio::main]
 async fn main() -> Result<()> {
     let root = std::env::current_dir()?;
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("rebuild-store") {
+        return rebuild_store(&args);
+    }
+
     let config = load_app_config(&root)?;
     let _guard = init_logging(&config.log_dir_path());
-    let args: Vec<String> = std::env::args().collect();
     fs::create_dir_all(config.data_dir_path())?;
     let store = Store::open(config.db_path_buf())?;
 
@@ -49,6 +55,49 @@ async fn main() -> Result<()> {
     let registry = build_registry();
     info!(bind_addr = %config.bind_addr, host_name = %config.host_name, "starting server");
     run(config, store, registry).await
+}
+
+fn rebuild_store(args: &[String]) -> Result<()> {
+    if args.len() != 5 {
+        bail!(
+            "usage: narou_bridge rebuild-store <source-data-dir> <source-runtime-root> <output-db>"
+        );
+    }
+
+    let source_root = std::path::PathBuf::from(&args[2]);
+    let runtime_root = std::path::PathBuf::from(&args[3]);
+    let output_db = std::path::PathBuf::from(&args[4]);
+    if !source_root.is_dir() {
+        bail!(
+            "source data directory does not exist: {}",
+            source_root.display()
+        );
+    }
+    if !runtime_root.is_dir() {
+        bail!(
+            "source runtime directory does not exist: {}",
+            runtime_root.display()
+        );
+    }
+    if output_db.exists() {
+        bail!("output database already exists: {}", output_db.display());
+    }
+    if output_db.starts_with(&source_root) || output_db.starts_with(&runtime_root) {
+        bail!("output database must be outside the read-only source directories");
+    }
+    if let Some(parent) = output_db.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let store = Store::open(&output_db)?;
+    let mut summary = import_data_tree(&store, &source_root)?;
+    let operational = import_operational_state(&store, &runtime_root)?;
+    summary.accounts = operational.accounts;
+    summary.tasks = operational.tasks;
+    store.checkpoint_wal()?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
 }
 
 fn init_logging(log_dir: &std::path::Path) -> WorkerGuard {
