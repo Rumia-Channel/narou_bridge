@@ -5,7 +5,7 @@
 ## Runtime Architecture
 
 `src/main.rs`
-- `setting.ini` を読み、SQLite を開き、Axum サーバーを起動する唯一の entrypoint
+- `setting.ini` を読み、SQLite を開き、Axum サーバーを起動する唯一の entrypoint。`setting.ini` が無ければ Git 管理外の `setting/setting.ini` から起動時に自動コピーする
 - `rebuild-store <source.sqlite3> <output.sqlite3>` と `install-store <source.sqlite3> <destination.sqlite3>` の DB 保守 CLI もここから実行
 
 `src/core/runtime.rs`
@@ -65,7 +65,6 @@
 - `images/database.json`, `images/cover.json`
 - `queue/task.json`
 - `cookie/<site>/*.json`, `login.json` mirror
-- `setting/setting.ini`
 - migration HTTP API、JSON tree import、archive flow
 
 ## Canonical Work Model

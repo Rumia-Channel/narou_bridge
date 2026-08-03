@@ -5,11 +5,27 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 const ROOT_SETTING_FILE: &str = "setting.ini";
+const LEGACY_SETTING_FILE: &str = "setting/setting.ini";
 
 pub fn load_app_config(repo_root: &Path) -> Result<AppConfig> {
     let setting_path = repo_root.join(ROOT_SETTING_FILE);
     if !setting_path.exists() {
-        bail!("missing setting.ini at {}", setting_path.display());
+        let legacy_path = repo_root.join(LEGACY_SETTING_FILE);
+        if legacy_path.exists() {
+            std::fs::copy(&legacy_path, &setting_path).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    legacy_path.display(),
+                    setting_path.display()
+                )
+            })?;
+        } else {
+            bail!(
+                "missing setting.ini at {} (also checked {})",
+                setting_path.display(),
+                legacy_path.display()
+            );
+        }
     }
     let document = IniDocument::from_file(&setting_path)?;
     Ok(build_app_config(repo_root, &document))
@@ -228,8 +244,8 @@ impl IniDocument {
 #[cfg(test)]
 mod tests {
     use super::{
-        IniDocument, build_app_config, derive_bind_addr, derive_host_name, parse_u64,
-        resolve_runtime_dir,
+        IniDocument, build_app_config, derive_bind_addr, derive_host_name, load_app_config,
+        parse_u64, resolve_runtime_dir,
     };
     use std::path::Path;
 
@@ -339,5 +355,41 @@ img_url=https://cdn.example.invalid/novels/
         let config = build_app_config(root, &document);
         assert_eq!(config.host_name, "http://example.invalid:8080");
         assert_eq!(config.img_url, "https://cdn.example.invalid/novels/");
+    }
+
+    #[test]
+    fn load_app_config_copies_legacy_setting_file_when_root_missing() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let legacy_dir = root.path().join("setting");
+        std::fs::create_dir_all(&legacy_dir).expect("create setting dir");
+        std::fs::write(
+            legacy_dir.join("setting.ini"),
+            r#"
+[setting]
+data=C:\Users\user\Documents\Webnovel\narou_bridge
+auto_update=1
+
+[server]
+domain=localhost
+port=8080
+"#,
+        )
+        .expect("write legacy setting");
+
+        let config = load_app_config(root.path()).expect("load from legacy copy");
+        assert_eq!(
+            config.data_dir,
+            r"C:\Users\user\Documents\Webnovel\narou_bridge"
+        );
+        assert!(config.auto_update);
+        assert!(root.path().join("setting.ini").is_file());
+    }
+
+    #[test]
+    fn load_app_config_errors_when_both_setting_files_missing() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let err = load_app_config(root.path()).expect_err("should fail");
+        assert!(err.to_string().contains("missing setting.ini"));
+        assert!(!root.path().join("setting.ini").exists());
     }
 }

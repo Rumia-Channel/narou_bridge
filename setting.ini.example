@@ -1,0 +1,15 @@
+[setting]
+data=
+log=
+pdf=
+auto_update=0
+auto_update_interval=43200
+
+[server]
+domain=localhost
+port=8080
+use_proxy=0
+proxy_port=443
+proxy_ssl=1
+# すべてサーバーで運用する場合は空欄にしてください。末尾の/はあってもなくても構いません。
+img_url=

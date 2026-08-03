@@ -4,7 +4,9 @@ Pixiv と PDF / ZIP 入力を共通作品モデルへ正規化し、SQLite か�
 
 ## 起動
 
-リポジトリ直下の `setting.ini` を編集し、次のコマンドで起動します。
+設定は Git 管理外の `setting/setting.ini` を正本とします。起動時にリポジトリ直下の `setting.ini` が存在しない場合、`setting/setting.ini` があれば自動コピーして読み込みます。どちらも無い場合は起動エラーになります。
+
+新規導入時は、`setting.ini.example` を `setting.ini` にコピーして編集するか、`setting/setting.ini` を用意してください。`setting.ini` と `setting/` は `.gitignore` で管理対象外です。
 
 ```bash
 cargo run --release
@@ -16,7 +18,7 @@ cargo run --release
 curl http://127.0.0.1:8080/api/health
 ```
 
-`setting.ini` だけが設定の正本です。旧 `setting/setting.ini` へのコピーやフォールバックはありません。
+設定項目の例は `setting.ini.example` を参照してください。
 
 ```ini
 [setting]

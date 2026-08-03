@@ -13,6 +13,7 @@ data
 cookie
 log
 setting
+setting.ini
 queue
 pdf
 *.json
